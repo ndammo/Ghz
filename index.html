@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Pixel Runner RPG</title>
+<!--
+  ══════════════════════════════════════════════════════
+  index.html — Точка входа
+  Содержит: HTML-разметку всех экранов (выбор персонажа,
+  HUD, панели инвентаря/улучшений/этажей/рейтинга/кошелька,
+  нижняя навигация, модальные окна, HUD скиллов).
+  Подключает все CSS и JS файлы проекта.
+
+  ПОРЯДОК ПОДКЛЮЧЕНИЯ СКРИПТОВ ВАЖЕН:
+  1. data.js    — константы (CHARS, FLOORS, RARITIES, ...)
+  2. state.js   — объект G, calcCP, floorCfg
+  3. render.js  — canvas, спрайты, функции рисования
+  4. skills.js  — система навыков, баффы, HUD скиллов
+  5. game.js    — player, update loop, монстры, боёвка
+  6. inventory.js — предметы, заточка, рендер инвентаря
+  7. ui.js      — панели, вкладки, выбор персонажа
+  ══════════════════════════════════════════════════════
+-->
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ══════════════════════════════════
+       ЭКРАН ВЫБОРА ПЕРСОНАЖА
+       Показывается до старта игры
+       ══════════════════════════════════ -->
+  <div id="charSelect">
+    <div class="cs-bg"></div>
+    <canvas class="cs-particles" id="csParticles"></canvas>
+
+    <div class="cs-title">PIXEL RUNNER RPG</div>
+    <div class="cs-subtitle">ВЫБОР ПЕРСОНАЖА</div>
+
+    <div class="cs-cards">
+
+      <!-- Огненный маг -->
+      <div class="cs-card fire" id="card-fire" onclick="selectChar('fire')">
+        <div class="cs-sprite-wrap">
+          <div class="cs-sprite-glow"></div>
+          <canvas class="cs-sprite-canvas" id="cs-canvas-fire" width="80" height="80"></canvas>
+        </div>
+        <div class="cs-class-name">ПИРОКАН</div>
+        <div class="cs-class-title">Огненный маг</div>
+        <div class="cs-bars">
+          <div class="cs-bar-row"><span class="cs-bar-label">ATK</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:95%"></div></div></div>
+          <div class="cs-bar-row"><span class="cs-bar-label">DEF</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:35%"></div></div></div>
+          <div class="cs-bar-row"><span class="cs-bar-label">SPD</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:55%"></div></div></div>
+          <div class="cs-bar-row"><span class="cs-bar-label">CRIT</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:40%"></div></div></div>
+          <div class="cs-bar-row"><span class="cs-bar-label">HP</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:45%"></div></div></div>
+        </div>
+        <div class="cs-perk">🔥 Огненный взрыв<br>+80% урон · -30% защита</div>
+      </div>
+
+      <!-- Маг света -->
+      <div class="cs-card light" id="card-light" onclick="selectChar('light')">
+        <div class="cs-sprite-wrap">
+          <div class="cs-sprite-glow"></div>
+          <canvas class="cs-sprite-canvas" id="cs-canvas-light" width="80" height="80"></canvas>
+        </div>
+        <div class="cs-class-name">ЛЮМОС</div>
+        <div class="cs-class-title">Маг света</div>
+        <div class="cs-bars">
+          <div class="cs-bar-row"><span class="cs-bar-label">ATK</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:45%"></div></div></div>
+          <div class="cs-bar-row"><span class="cs-bar-label">DEF</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:90%"></div></div></div>
+          <div class="cs-bar-row"><span class="cs-bar-label">SPD</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:50%"></div></div></div>
+          <div class="cs-bar-row"><span class="cs-bar-label">CRIT</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:30%"></div></div></div>
+          <div class="cs-bar-row"><span class="cs-bar-label">HP</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:75%"></div></div></div>
+        </div>
+        <div class="cs-perk">✨ Исцеление светом<br>+70% защита · 1% вампиризм</div>
+      </div>
+
+      <!-- Маг воды -->
+      <div class="cs-card water" id="card-water" onclick="selectChar('water')">
+        <div class="cs-sprite-wrap">
+          <div class="cs-sprite-glow"></div>
+          <canvas class="cs-sprite-canvas" id="cs-canvas-water" width="80" height="80"></canvas>
+        </div>
+        <div class="cs-class-name">АКВАС</div>
+        <div class="cs-class-title">Маг воды</div>
+        <div class="cs-bars">
+          <div class="cs-bar-row"><span class="cs-bar-label">ATK</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:60%"></div></div></div>
+          <div class="cs-bar-row"><span class="cs-bar-label">DEF</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:50%"></div></div></div>
+          <div class="cs-bar-row"><span class="cs-bar-label">SPD</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:70%"></div></div></div>
+          <div class="cs-bar-row"><span class="cs-bar-label">CRIT</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:95%"></div></div></div>
+          <div class="cs-bar-row"><span class="cs-bar-label">HP</span><div class="cs-bar-track"><div class="cs-bar-fill" style="width:55%"></div></div></div>
+        </div>
+        <div class="cs-perk">💧 Криозаряд<br>+90% крит · шанс заморозки</div>
+      </div>
+
+    </div>
+
+    <div class="cs-confirm" id="csConfirm" onclick="confirmChar()">
+      ВЫБЕРИТЕ ПЕРСОНАЖА
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════
+       ИГРОВОЙ КАНВАС (рендерится через render.js)
+       ══════════════════════════════════ -->
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- ══════════════════════════════════
+       TOP HUD — HP, XP, золото, этаж, CP
+       ══════════════════════════════════ -->
+  <div id="hud">
+    <div class="hud-avatar">🧙</div>
+    <div class="hud-stats">
+      <div class="hud-row">
+        <span class="bar-label">HP</span>
+        <div class="bar-wrap"><div class="bar-fill bar-hp" id="barHp" style="width:100%"></div></div>
+        <span class="bar-val" id="valHp">100/100</span>
+      </div>
+      <div class="hud-row">
+        <span class="bar-label">XP</span>
+        <div class="bar-wrap"><div class="bar-fill bar-xp" id="barXp" style="width:0%"></div></div>
+        <span class="bar-val" id="valXp">Lv.1</span>
+      </div>
+    </div>
+    <div class="hud-right">
+      <div class="hud-gold">💰 <span id="hudGold">0</span></div>
+      <div class="hud-floor">Этаж <span id="hudFloor">1</span></div>
+      <div class="hud-cp">⚔️ CP <span id="hudCp">0</span></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════
+       ПАНЕЛИ (полноэкранные вкладки)
+       ══════════════════════════════════ -->
+
+  <!-- Инвентарь -->
+  <div class="panel" id="panelInv">
+    <div class="panel-header">🎒 ИНВЕНТАРЬ</div>
+    <div class="panel-body" id="invBody"></div>
+  </div>
+
+  <!-- Улучшения характеристик и навыков -->
+  <div class="panel" id="panelUpgrades">
+    <div class="panel-header">⚒️ УЛУЧШЕНИЯ</div>
+    <div class="panel-body" id="upgradesBody"></div>
+  </div>
+
+  <!-- Рейтинг игроков -->
+  <div class="panel" id="panelRating">
+    <div class="panel-header">🏆 РЕЙТИНГ</div>
+    <div class="panel-body" id="ratingBody"></div>
+  </div>
+
+  <!-- Кошелёк и статистика -->
+  <div class="panel" id="panelWallet">
+    <div class="panel-header">👛 КОШЕЛЁК</div>
+    <div class="panel-body" id="walletBody"></div>
+  </div>
+
+  <!-- Список этажей -->
+  <div class="panel" id="panelFloors">
+    <div class="panel-header">🏰 ЭТАЖИ</div>
+    <div class="panel-body" id="floorsBody"></div>
+  </div>
+
+  <!-- ══════════════════════════════════
+       НИЖНЯЯ НАВИГАЦИЯ
+       ══════════════════════════════════ -->
+  <div id="nav">
+    <button class="nav-btn active" id="navGame"     onclick="switchTab('game')">
+      <span class="nav-icon">🎮</span>ИГРА
+    </button>
+    <button class="nav-btn" id="navInv"             onclick="switchTab('inv')">
+      <span class="nav-icon">🎒</span>ИНВЕНТ
+    </button>
+    <button class="nav-btn" id="navUpgrades"        onclick="switchTab('upgrades')">
+      <span class="nav-icon">⚒️</span>УЛУЧШ
+    </button>
+    <button class="nav-btn" id="navFloors"          onclick="switchTab('floors')">
+      <span class="nav-icon">🏰</span>ЭТАЖИ
+    </button>
+    <button class="nav-btn" id="navRating"          onclick="switchTab('rating')">
+      <span class="nav-icon">🏆</span>ТОП
+    </button>
+    <button class="nav-btn" id="navWallet"          onclick="switchTab('wallet')">
+      <span class="nav-icon">👛</span>КОШЕЛЁК
+    </button>
+  </div>
+
+  <!-- ══════════════════════════════════
+       МОДАЛЬНОЕ ОКНО ПРЕДМЕТА
+       ══════════════════════════════════ -->
+  <div id="itemModal" onclick="closeItemModal()">
+    <div id="itemModalCard" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-icon" id="mIcon"></div>
+        <div class="modal-title">
+          <div class="modal-name" id="mName"></div>
+          <div class="modal-sub"  id="mSub"></div>
+        </div>
+      </div>
+      <div class="modal-stats"   id="mStats"></div>
+      <div class="modal-actions" id="mActions"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════
+       ОВЕРЛЕЙ РЕЗУЛЬТАТА ЗАТОЧКИ
+       ══════════════════════════════════ -->
+  <div id="refineOverlay">
+    <div class="refine-result-icon" id="refineIcon"></div>
+    <div class="refine-result-text" id="refineText"></div>
+    <div class="refine-result-sub"  id="refineSub"></div>
+  </div>
+
+  <!-- ══════════════════════════════════
+       МОДАЛЬНОЕ ОКНО ДРОПА ЭТАЖА
+       ══════════════════════════════════ -->
+  <div id="floorLootModal" onclick="closeFloorLootModal()">
+    <div id="floorLootCard" onclick="event.stopPropagation()">
+      <div id="floorLootContent"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════
+       HUD НАВЫКОВ (3 кнопки над ИГРА)
+       ══════════════════════════════════ -->
+  <div id="skillsHud">
+    <div class="sk-btn" id="sk0btn" onclick="castSkillManual(0)">
+      <span id="sk0icon">?</span>
+      <div class="sk-cd-fill"      id="sk0fill" style="display:none"></div>
+      <div class="sk-cd-num"       id="sk0cd"></div>
+      <div class="sk-locked-overlay" id="sk0lock">📖</div>
+    </div>
+    <div class="sk-btn" id="sk1btn" onclick="castSkillManual(1)">
+      <span id="sk1icon">?</span>
+      <div class="sk-cd-fill"      id="sk1fill" style="display:none"></div>
+      <div class="sk-cd-num"       id="sk1cd"></div>
+      <div class="sk-locked-overlay" id="sk1lock">📖</div>
+    </div>
+    <div class="sk-btn" id="sk2btn" onclick="castSkillManual(2)">
+      <span id="sk2icon">?</span>
+      <div class="sk-cd-fill"      id="sk2fill" style="display:none"></div>
+      <div class="sk-cd-num"       id="sk2cd"></div>
+      <div class="sk-locked-overlay" id="sk2lock">📖</div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════
+       ТОСТ НОВОГО ЭТАЖА
+       ══════════════════════════════════ -->
+  <div id="floorUnlock">
+    <div class="fu-title">🎉 НОВЫЙ ЭТАЖ ОТКРЫТ!</div>
+    <div class="fu-sub" id="fuText"></div>
+  </div>
+
+</div><!-- #app -->
+
+<!-- ══════════════════════════════════
+     СКРИПТЫ — порядок подключения важен!
+     ══════════════════════════════════ -->
+<script src="data.js"></script>       <!-- Игровые данные: персонажи, этажи, предметы -->
+<script src="state.js"></script>      <!-- Состояние игры (объект G) и расчёт CP -->
+<script src="render.js"></script>     <!-- Canvas-движок: небо, земля, спрайты, частицы -->
+<script src="skills.js"></script>     <!-- Система навыков: баффы, кулдауны, HUD скиллов -->
+<script src="game.js"></script>       <!-- Игровая логика: update, монстры, боёвка, XP -->
+<script src="inventory.js"></script>  <!-- Инвентарь: предметы, заточка, книги навыков -->
+<script src="ui.js"></script>         <!-- UI-панели: этажи, улучшения, рейтинг, кошелёк -->
+
+</body>
+</html>
