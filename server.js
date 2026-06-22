@@ -28,7 +28,7 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '1mb', type: ['application/json', 'text/plain'] }));
 
 // ═══════════════════════════════
-//  MongoDB — БЕЗ SNAPPY
+//  MongoDB
 // ═══════════════════════════════
 const MONGODB_URI = process.env.MONGODB_URI;
 if (!MONGODB_URI) {
@@ -44,7 +44,6 @@ mongoose.connect(MONGODB_URI, {
   maxPoolSize: 50,
   minPoolSize: 10,
   maxIdleTimeMS: 10000,
-  // ❌ УБРАЛИ compressors: ['snappy']
 })
 .then(() => {
   console.log('✅ MongoDB подключена');
@@ -300,7 +299,7 @@ app.post('/api/save', async (req, res) => {
   }
 });
 
-// ── Выбор персонажа ──
+// ── Выбор персонажа (ИСПРАВЛЕН) ──
 app.post('/api/character', async (req, res) => {
   const tg = authUser(req, res); 
   if (!tg) return;
@@ -313,23 +312,36 @@ app.post('/api/character', async (req, res) => {
   console.log(`🎭 [character] tgId: ${tg.id}, charId: ${charId}`);
   
   try {
-    await Save.findOneAndUpdate(
-      { tgId: tg.id },
-      { 
-        $set: { 
-          charId: charId,
-          'data.charId': charId,
-          'data.tgId': tg.id,
-          username: tg.username,
-          firstName: tg.firstName,
-        }
-      },
-      { upsert: true }
-    );
+    // 🔥 ИСПРАВЛЕНИЕ: сначала проверяем существование документа
+    let doc = await Save.findOne({ tgId: tg.id });
+    
+    if (!doc) {
+      // Создаем нового пользователя с data как объект
+      doc = await Save.create({
+        tgId: tg.id,
+        username: tg.username,
+        firstName: tg.firstName,
+        charId: charId,
+        data: { tgId: tg.id, charId: charId },
+      });
+      console.log(`🆕 [character] Создан новый пользователь: ${tg.id}`);
+    } else {
+      // Обновляем существующего
+      // 🔥 Убеждаемся что data не null
+      if (!doc.data || typeof doc.data !== 'object') {
+        doc.data = {};
+      }
+      doc.data.tgId = tg.id;
+      doc.data.charId = charId;
+      doc.charId = charId;
+      await doc.save();
+      console.log(`✅ [character] Обновлен персонаж для ${tg.id}: ${charId}`);
+    }
     
     res.json({ ok: true });
   } catch (e) { 
     console.error('❌ [character] error:', e.message);
+    console.error('  - Стек:', e.stack);
     res.status(500).json({ ok: false, error: 'server_error' }); 
   }
 });
