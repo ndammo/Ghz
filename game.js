@@ -340,8 +340,6 @@ function update(dt) {
       }
       updateHUD();
       checkFloorUnlock();
-      // Баланс и HP сохраняем локально при каждом убийстве
-      if (typeof API !== 'undefined') API.saveLocal();
       return false;
     }
     return true;
@@ -366,7 +364,6 @@ function gainXP(amount) {
     G.hp = G.maxHp;
     showDmgPop('LV UP!', W * 0.4, GROUND * 0.5, '#fa0');
     updateHUD();
-    if (typeof API !== 'undefined') API.saveCritical();
   }
 }
 
@@ -397,7 +394,6 @@ function gameOverSequence() {
       : 'Вы погибли в бою';
   }
   if (modal) modal.classList.remove('hidden');
-  if (typeof API !== 'undefined') API.saveCritical();
 }
 
 function revivePlayer() {
@@ -495,7 +491,6 @@ function upgPotion() {
   G.potionLv = lv + 1;
   updateHUD();
   openPotionModal();
-  if (typeof API !== 'undefined') API.saveCritical();
 }
 function closePotionModal() {
   document.getElementById('potionModal').classList.add('hidden');
@@ -509,7 +504,6 @@ function buyPotions(n) {
   updatePotionHud();
   document.getElementById('pmCount').textContent = G.potions;
   document.getElementById('pmGold').textContent = G.gold;
-  if (typeof API !== 'undefined') API.saveCritical();
 }
 function savePotionThreshold(val) {
   var v = parseInt(val);
@@ -599,7 +593,6 @@ function buyBattlePass() {
   G.gram = parseFloat(((G.gram || 0) - 10).toFixed(3));
   G.bp.active = true;
   renderBattlePass();
-  if (typeof API !== 'undefined') API.saveCritical();
 }
 function claimBpReward(idx) {
   if (!G.bp || !G.bp.active) return;
@@ -610,7 +603,6 @@ function claimBpReward(idx) {
   r.apply();
   G.bp.claimed.push(idx);
   renderBattlePass();
-  if (typeof API !== 'undefined') API.saveCritical();
 }
 function renderBattlePass() {
   if (!G.bp) G.bp = { active: false, claimed: [] };
@@ -711,5 +703,4 @@ function buyPrem(tier) {
   updatePremStatus();
   closePremModal();
   showDmgPop('👑 ' + t.name + ' активен!', PLAYER_SCREEN_X, player.y - 30, '#c080ff');
-  if (typeof API !== 'undefined') API.saveCritical();
 }

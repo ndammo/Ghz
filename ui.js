@@ -27,7 +27,6 @@ function buyUpgrade(u) {
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
-  if (typeof API !== 'undefined') API.saveCritical();
 }
 
 function renderUpgrades() {
@@ -253,7 +252,6 @@ function goToFloor(n) {
   monsters = [];
   nextMonsterSpawn = player.worldX + 400;
   updateHUD(); switchTab('game');
-  if (typeof API !== 'undefined') API.saveCritical();
 }
 
 // ═══════════════════════════════
@@ -345,7 +343,6 @@ function exchangePixr() {
   G.gram = parseFloat(((G.gram || 0) + 1).toFixed(3));
   updateHUD();
   renderWallet();
-  if (typeof API !== 'undefined') API.saveCritical();
 }
 
 // ═══════════════════════════════
@@ -404,7 +401,6 @@ function confirmChar() {
   applyCharacter(G_CHAR);
   document.getElementById('charSelect').classList.add('hidden');
   startGame();
-  if (typeof API !== 'undefined') API.saveCritical();
 }
 
 function applyCharacter(ch) {
@@ -483,9 +479,14 @@ function initCsParticles() {
 }
 
 // ── Инициализация экрана выбора при загрузке страницы ──
-// Теперь управляется loader.js — initCharSelectSprites и initCsParticles
-// вызываются оттуда только для нового игрока
+window.addEventListener('load', function() {
+  initCharSelectSprites();
+  initCsParticles();
+});
 
 // ── resize и Telegram SDK ──
 window.addEventListener('resize', resize);
-// Telegram SDK ready/expand теперь в loader.js
+if (window.Telegram && window.Telegram.WebApp) {
+  Telegram.WebApp.ready();
+  Telegram.WebApp.expand();
+}
