@@ -4,8 +4,7 @@
   Содержит: renderUpgrades, buyUpgrade, renderFloors,
   openFloorLoot, goToFloor, renderRating, renderWallet,
   switchTab, экран выбора персонажа (selectChar,
-  confirmChar, applyCharacter, startGame, анимации),
-  Telegram WebApp интеграция
+  confirmChar, applyCharacter, startGame, анимации)
   ══════════════════════════════════════════════════════
 */
 
@@ -28,7 +27,7 @@ function buyUpgrade(u) {
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
-  // ✅ Простое улучшение — помечаем dirty для автосохранения
+  // ✅ Помечаем dirty — сохранится локально мгновенно и на сервер через 30 сек
   API.markDirty();
 }
 
@@ -487,43 +486,7 @@ function initCsParticles() {
 }
 
 // ══════════════════════════════════════════════════════
-//  TELEGRAM WEBAPP ИНТЕГРАЦИЯ
-// ══════════════════════════════════════════════════════
-
-function initTelegramWebApp() {
-  if (!window.Telegram || !window.Telegram.WebApp) {
-    console.warn('[Telegram] WebApp not available');
-    return;
-  }
-
-  var tg = window.Telegram.WebApp;
-  
-  // Сообщаем, что приложение готово
-  tg.ready();
-  
-  // Растягиваем на весь экран
-  tg.expand();
-  
-  // ОСНОВНОЙ МЕТОД: при закрытии Telegram WebApp
-  tg.onEvent('viewportChanged', function() {
-    // Если приложение свернулось или закрылось
-    if (tg.isExpanded === false) {
-      console.log('[Telegram] Closing, saving...');
-      API.saveOnClose();
-    }
-  });
-  
-  // При изменении темы (тоже сигнал о перезагрузке)
-  tg.onEvent('themeChanged', function() {
-    console.log('[Telegram] Theme changed, saving...');
-    API.saveOnClose();
-  });
-  
-  console.log('[Telegram] WebApp initialized');
-}
-
-// ══════════════════════════════════════════════════════
-//  ИНИЦИАЛИЗАЦИЯ
+//  ИНИЦИАЛИЗАЦИЯ (упрощенная)
 // ══════════════════════════════════════════════════════
 
 window.addEventListener('load', async function() {
@@ -574,13 +537,9 @@ window.addEventListener('load', async function() {
   if (charId && CHARS[charId]) {
     G_CHAR = CHARS[charId];
 
-    // applyCharacter перезапишет G.hp базовыми статами персонажа
     applyCharacter(G_CHAR);
-
-    // Восстанавливаем реальные улучшения поверх базовых статов
     recalcStats();
 
-    // Восстанавливаем сохранённое HP (было до applyCharacter в API.savedHp)
     var saved = API.savedHp;
     if (saved && saved.hp > 0 && saved.maxHp > 0) {
       G.maxHp = saved.maxHp;
@@ -588,10 +547,6 @@ window.addEventListener('load', async function() {
     }
 
     document.getElementById('charSelect').classList.add('hidden');
-    
-    // ✅ Инициализируем Telegram WebApp после загрузки
-    initTelegramWebApp();
-    
     startGame();
   }
   // Иначе — показываем экран выбора
@@ -600,18 +555,6 @@ window.addEventListener('load', async function() {
 // ── resize ──
 window.addEventListener('resize', resize);
 
-// ── Принудительное сохранение при закрытии/сворачивании ──
-// ✅ Все методы сохранения при закрытии
-window.addEventListener('beforeunload', function() {
-  if (G_CHAR) API.saveOnClose();
-});
-
-window.addEventListener('pagehide', function() {
-  if (G_CHAR) API.saveOnClose();
-});
-
-document.addEventListener('visibilitychange', function() {
-  if (document.visibilityState === 'hidden' && G_CHAR) {
-    API.saveOnClose();
-  }
-});
+// ❌ НЕТ обработчиков закрытия!
+// Данные уже сохранены локально при каждом изменении
+// Никаких beforeunload, pagehide, visibilitychange
