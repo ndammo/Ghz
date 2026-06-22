@@ -109,49 +109,6 @@ function resize() {
   player.y = GROUND - 128;
   worldX   = player.worldX - PLAYER_SCREEN_X;
   positionSkillsHud();
-  // Сбрасываем кэш градиентов при изменении размера экрана
-  _gradCache = {};
-}
-
-// ══════════════════════════════════════════════════════
-//  КЭШ ГРАДИЕНТОВ ФОНА
-//  Градиенты неба/земли/тумана зависят только от W/H/GROUND —
-//  пересоздаём только при resize, не каждый кадр.
-// ══════════════════════════════════════════════════════
-let _gradCache = {};
-
-// Небо: ключ = строка из stops
-function fillSkyC(key, stops) {
-  if (!_gradCache[key]) {
-    const g = ctx.createLinearGradient(0, HUD_H, 0, GROUND);
-    stops.forEach(([p, c]) => g.addColorStop(p, c));
-    _gradCache[key] = g;
-  }
-  ctx.fillStyle = _gradCache[key];
-  ctx.fillRect(0, HUD_H, W, GROUND - HUD_H);
-}
-
-// Земля: ключ = строка из stops
-function fillGroundC(key, stops) {
-  if (!_gradCache[key]) {
-    const g = ctx.createLinearGradient(0, GROUND, 0, H - NAV_H);
-    stops.forEach(([p, c]) => g.addColorStop(p, c));
-    _gradCache[key] = g;
-  }
-  ctx.fillStyle = _gradCache[key];
-  ctx.fillRect(0, GROUND, W, H - NAV_H - GROUND);
-}
-
-// Туман: ключ = 'fog_r_g_b_op'
-function groundFogC(key, r, g2, b, opacity) {
-  if (!_gradCache[key]) {
-    const fog = ctx.createLinearGradient(0, GROUND * 0.72, 0, GROUND);
-    fog.addColorStop(0, `rgba(${r},${g2},${b},0)`);
-    fog.addColorStop(1, `rgba(${r},${g2},${b},${opacity})`);
-    _gradCache[key] = fog;
-  }
-  ctx.fillStyle = _gradCache[key];
-  ctx.fillRect(0, GROUND * 0.72, W, GROUND * 0.28);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -296,21 +253,28 @@ function moonPos(worldOff, period, yFrac) {
   return { x: (raw / period) * W * 1.4 - W * 0.2, y: GROUND * yFrac };
 }
 
-// Универсальный кэш линейного градиента по фиксированным координатам
-// key — уникальный строковый ключ, coords — [x0,y0,x1,y1], stops — [[pos,color],...]
-function linGradC(key, x0, y0, x1, y1, stops) {
-  if (!_gradCache[key]) {
-    const g = ctx.createLinearGradient(x0, y0, x1, y1);
-    stops.forEach(([p, c]) => g.addColorStop(p, c));
-    _gradCache[key] = g;
-  }
-  return _gradCache[key];
+// ── Утилиты заливок ──
+function fillSky(stops) {
+  const g = ctx.createLinearGradient(0, HUD_H, 0, GROUND);
+  stops.forEach(([p, c]) => g.addColorStop(p, c));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, HUD_H, W, GROUND - HUD_H);
 }
 
-// ── Утилиты заливок (оставлены для совместимости, используют кэш) ──
-function fillSky(stops)               { fillSkyC(JSON.stringify(stops), stops); }
-function fillGround(stops)            { fillGroundC(JSON.stringify(stops), stops); }
-function groundFog(r, g2, b, opacity) { groundFogC('fog_'+r+'_'+g2+'_'+b+'_'+opacity, r, g2, b, opacity); }
+function fillGround(stops) {
+  const g = ctx.createLinearGradient(0, GROUND, 0, H - NAV_H);
+  stops.forEach(([p, c]) => g.addColorStop(p, c));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, GROUND, W, H - NAV_H - GROUND);
+}
+
+function groundFog(r, g2, b, opacity) {
+  const fog = ctx.createLinearGradient(0, GROUND * 0.72, 0, GROUND);
+  fog.addColorStop(0, `rgba(${r},${g2},${b},0)`);
+  fog.addColorStop(1, `rgba(${r},${g2},${b},${opacity})`);
+  ctx.fillStyle = fog;
+  ctx.fillRect(0, GROUND * 0.72, W, GROUND * 0.28);
+}
 
 // ── Звёзды — позиция через TILE_W, без W в диапазоне ──
 function drawStars(seed, count, t, colorFn) {
@@ -425,12 +389,14 @@ function bg_ice(t) {
 
   // ЗЕМЛЯ сразу после гор
   fillGround([[0,'#081828'],[0.5,'#050f1c'],[1,'#030810']]);
-  ctx.fillStyle = linGradC('iceLine', 0, GROUND-2, 0, GROUND+6, [[0,'rgba(100,180,255,0.6)'],[0.4,'rgba(60,130,220,0.4)'],[1,'rgba(20,70,160,0)']]);
-  ctx.fillRect(0, GROUND-2, W, 8);
+  const iceLine = ctx.createLinearGradient(0, GROUND-2, 0, GROUND+6);
+  iceLine.addColorStop(0,'rgba(100,180,255,0.6)'); iceLine.addColorStop(0.4,'rgba(60,130,220,0.4)'); iceLine.addColorStop(1,'rgba(20,70,160,0)');
+  ctx.fillStyle = iceLine; ctx.fillRect(0, GROUND-2, W, 8);
 
   // Туман поверх стыка
-  ctx.fillStyle = linGradC('ifog', 0, GROUND*0.82, 0, GROUND+6, [[0,'rgba(10,40,100,0)'],[0.7,'rgba(5,25,70,0.18)'],[1,'rgba(2,15,50,0.40)']]);
-  ctx.fillRect(0, GROUND*0.82, W, GROUND*0.18+6);
+  const ifog = ctx.createLinearGradient(0, GROUND*0.82, 0, GROUND+6);
+  ifog.addColorStop(0,'rgba(10,40,100,0)'); ifog.addColorStop(0.7,'rgba(5,25,70,0.18)'); ifog.addColorStop(1,'rgba(2,15,50,0.40)');
+  ctx.fillStyle = ifog; ctx.fillRect(0, GROUND*0.82, W, GROUND*0.18+6);
 
   // Снежинки
   const rngSn = lcg(321);
@@ -491,8 +457,9 @@ function bg_mars(t) {
   ctx.restore();
 
   // Пылевая дымка по небу
-  ctx.fillStyle = linGradC('dustHaze', 0, HUD_H, 0, GROUND, [[0,'rgba(120,55,15,0)'],[0.4,'rgba(100,45,10,0.08)'],[1,'rgba(80,35,5,0.22)']]);
-  ctx.fillRect(0, HUD_H, W, GROUND - HUD_H);
+  const dustHaze = ctx.createLinearGradient(0, HUD_H, 0, GROUND);
+  dustHaze.addColorStop(0,'rgba(120,55,15,0)'); dustHaze.addColorStop(0.4,'rgba(100,45,10,0.08)'); dustHaze.addColorStop(1,'rgba(80,35,5,0.22)');
+  ctx.fillStyle = dustHaze; ctx.fillRect(0, HUD_H, W, GROUND - HUD_H);
 
   // Марсианские горы
   tileRange(75, GROUND,      GROUND*0.13, 'rgba(30,8,1,0.88)',  10, 0.130);
@@ -513,12 +480,14 @@ function bg_mars(t) {
 
   // ЗЕМЛЯ сразу после гор
   fillGround([[0,'#3a1004'],[0.3,'#2c0c02'],[1,'#1a0801']]);
-  ctx.fillStyle = linGradC('groundLine', 0, GROUND-3, 0, GROUND+8, [[0,'rgba(180,80,25,0.7)'],[0.4,'rgba(140,55,15,0.4)'],[1,'rgba(80,25,5,0)']]);
-  ctx.fillRect(0, GROUND-3, W, 11);
+  const groundLine = ctx.createLinearGradient(0, GROUND-3, 0, GROUND+8);
+  groundLine.addColorStop(0,'rgba(180,80,25,0.7)'); groundLine.addColorStop(0.4,'rgba(140,55,15,0.4)'); groundLine.addColorStop(1,'rgba(80,25,5,0)');
+  ctx.fillStyle = groundLine; ctx.fillRect(0, GROUND-3, W, 11);
 
   // Туман поверх стыка
-  ctx.fillStyle = linGradC('marsFog', 0, GROUND*0.80, 0, GROUND+6, [[0,'rgba(90,38,8,0)'],[0.6,'rgba(75,30,5,0.22)'],[1,'rgba(60,22,3,0.48)']]);
-  ctx.fillRect(0, GROUND*0.80, W, GROUND*0.20+6);
+  const marsFog = ctx.createLinearGradient(0, GROUND*0.80, 0, GROUND+6);
+  marsFog.addColorStop(0,'rgba(90,38,8,0)'); marsFog.addColorStop(0.6,'rgba(75,30,5,0.22)'); marsFog.addColorStop(1,'rgba(60,22,3,0.48)');
+  ctx.fillStyle = marsFog; ctx.fillRect(0, GROUND*0.80, W, GROUND*0.20+6);
 
   // Камни
   const rngR = lcg(737);
@@ -553,12 +522,14 @@ function bg_heavens(t) {
 
   // ЗЕМЛЯ сразу после гор
   fillGround([[0,'#0e0c28'],[0.4,'#080820'],[1,'#050518']]);
-  ctx.fillStyle = linGradC('eg', 0, GROUND-3, 0, GROUND+4, [[0,'rgba(160,140,255,0.4)'],[1,'rgba(80,60,200,0)']]);
-  ctx.fillRect(0, GROUND-3, W, 7);
+  const eg = ctx.createLinearGradient(0, GROUND-3, 0, GROUND+4);
+  eg.addColorStop(0,'rgba(160,140,255,0.4)'); eg.addColorStop(1,'rgba(80,60,200,0)');
+  ctx.fillStyle = eg; ctx.fillRect(0, GROUND-3, W, 7);
 
   // Туман поверх стыка
-  ctx.fillStyle = linGradC('hfog', 0, GROUND*0.83, 0, GROUND+6, [[0,'rgba(70,60,200,0)'],[1,'rgba(40,30,150,0.28)']]);
-  ctx.fillRect(0, GROUND*0.83, W, GROUND*0.17+6);
+  const hfog = ctx.createLinearGradient(0, GROUND*0.83, 0, GROUND+6);
+  hfog.addColorStop(0,'rgba(70,60,200,0)'); hfog.addColorStop(1,'rgba(40,30,150,0.28)');
+  ctx.fillStyle = hfog; ctx.fillRect(0, GROUND*0.83, W, GROUND*0.17+6);
 
   // Блики на полу
   for (let i = 0; i < 22; i++) {
@@ -605,8 +576,9 @@ function bg_abyss(t) {
   ctx.fillStyle = 'rgba(70,0,150,0.3)';  ctx.fillRect(0, GROUND+2, W, 3);
 
   // Туман поверх стыка
-  ctx.fillStyle = linGradC('abFog', 0, GROUND*0.83, 0, GROUND+6, [[0,'rgba(90,0,190,0)'],[1,'rgba(60,0,140,0.35)']]);
-  ctx.fillRect(0, GROUND*0.83, W, GROUND*0.17+6);
+  const abFog = ctx.createLinearGradient(0, GROUND*0.83, 0, GROUND+6);
+  abFog.addColorStop(0,'rgba(90,0,190,0)'); abFog.addColorStop(1,'rgba(60,0,140,0.35)');
+  ctx.fillStyle = abFog; ctx.fillRect(0, GROUND*0.83, W, GROUND*0.17+6);
 
   // Фиолетовые трещины
   for (let i = 0; i < 8; i++) {
@@ -625,8 +597,9 @@ function bg_ghost(t) {
   drawStars(55, 100, t, (i, br) => `rgba(${140+i%50},${160+i%40},${200+i%30},${br*0.7})`);
 
   // Призрачное зелёное свечение
-  ctx.fillStyle = linGradC('gl2', 0, GROUND*0.5, 0, GROUND, [[0,'rgba(20,80,40,0)'],[0.7,'rgba(10,60,25,0.08)'],[1,'rgba(5,40,15,0.18)']]);
-  ctx.fillRect(0, GROUND*0.5, W, GROUND*0.5);
+  const gl2 = ctx.createLinearGradient(0, GROUND*0.5, 0, GROUND);
+  gl2.addColorStop(0,'rgba(20,80,40,0)'); gl2.addColorStop(0.7,'rgba(10,60,25,0.08)'); gl2.addColorStop(1,'rgba(5,40,15,0.18)');
+  ctx.fillStyle = gl2; ctx.fillRect(0, GROUND*0.5, W, GROUND*0.5);
 
   // Башни замка — spacing 280, range 1680
   for (let b = 0; b < 6; b++) {
@@ -649,8 +622,9 @@ function bg_ghost(t) {
   ctx.fillStyle = '#222240'; ctx.fillRect(0, GROUND, W, 2);
 
   // Туман поверх стыка
-  ctx.fillStyle = linGradC('ghFog', 0, GROUND*0.84, 0, GROUND+6, [[0,'rgba(15,40,25,0)'],[1,'rgba(8,25,15,0.38)']]);
-  ctx.fillRect(0, GROUND*0.84, W, GROUND*0.16+6);
+  const ghFog = ctx.createLinearGradient(0, GROUND*0.84, 0, GROUND+6);
+  ghFog.addColorStop(0,'rgba(15,40,25,0)'); ghFog.addColorStop(1,'rgba(8,25,15,0.38)');
+  ctx.fillStyle = ghFog; ctx.fillRect(0, GROUND*0.84, W, GROUND*0.16+6);
 
   // Брусчатка
   for (let i = 0; i < 20; i++) {
@@ -696,8 +670,9 @@ function bg_crystal(t) {
   ctx.fillStyle = '#103070'; ctx.fillRect(0, GROUND, W, 2);
 
   // Туман поверх стыка
-  ctx.fillStyle = linGradC('crFog', 0, GROUND*0.84, 0, GROUND+6, [[0,'rgba(20,60,180,0)'],[1,'rgba(10,35,120,0.35)']]);
-  ctx.fillRect(0, GROUND*0.84, W, GROUND*0.16+6);
+  const crFog = ctx.createLinearGradient(0, GROUND*0.84, 0, GROUND+6);
+  crFog.addColorStop(0,'rgba(20,60,180,0)'); crFog.addColorStop(1,'rgba(10,35,120,0.35)');
+  ctx.fillStyle = crFog; ctx.fillRect(0, GROUND*0.84, W, GROUND*0.16+6);
 
   // Кристаллы на полу
   for (let i = 0; i < 15; i++) {
@@ -734,8 +709,9 @@ function bg_desert(t) {
   ctx.fillStyle = '#4a2000'; ctx.fillRect(0, GROUND, W, 2);
 
   // Туман + пыль поверх стыка
-  ctx.fillStyle = linGradC('dsFog', 0, GROUND*0.82, 0, GROUND+6, [[0,'rgba(180,90,10,0)'],[1,'rgba(140,70,5,0.38)']]);
-  ctx.fillRect(0, GROUND*0.82, W, GROUND*0.18+6);
+  const dsFog = ctx.createLinearGradient(0, GROUND*0.82, 0, GROUND+6);
+  dsFog.addColorStop(0,'rgba(180,90,10,0)'); dsFog.addColorStop(1,'rgba(140,70,5,0.38)');
+  ctx.fillStyle = dsFog; ctx.fillRect(0, GROUND*0.82, W, GROUND*0.18+6);
 
   // Пылевые вихри
   for (let d = 0; d < 3; d++) {
@@ -798,8 +774,9 @@ function bg_ocean(t) {
   ctx.fillStyle = '#001c40'; ctx.fillRect(0, GROUND, W, 2);
 
   // Туман поверх стыка (вода)
-  ctx.fillStyle = linGradC('ocFog', 0, GROUND*0.83, 0, GROUND+6, [[0,'rgba(0,40,90,0)'],[1,'rgba(0,25,70,0.42)']]);
-  ctx.fillRect(0, GROUND*0.83, W, GROUND*0.17+6);
+  const ocFog = ctx.createLinearGradient(0, GROUND*0.83, 0, GROUND+6);
+  ocFog.addColorStop(0,'rgba(0,40,90,0)'); ocFog.addColorStop(1,'rgba(0,25,70,0.42)');
+  ctx.fillStyle = ocFog; ctx.fillRect(0, GROUND*0.83, W, GROUND*0.17+6);
 
   // Пузыри
   for (let b = 0; b < 12; b++) {
@@ -844,12 +821,14 @@ function bg_citadel(t) {
 
   // ЗЕМЛЯ сразу после гор
   fillGround([[0,'#0e0c28'],[0.4,'#080820'],[1,'#050518']]);
-  ctx.fillStyle = linGradC('edge', 0, GROUND-4, 0, GROUND+4, [[0,'rgba(200,170,60,0.35)'],[1,'rgba(100,80,20,0)']]);
-  ctx.fillRect(0, GROUND-4, W, 8);
+  const edge = ctx.createLinearGradient(0, GROUND-4, 0, GROUND+4);
+  edge.addColorStop(0,'rgba(200,170,60,0.35)'); edge.addColorStop(1,'rgba(100,80,20,0)');
+  ctx.fillStyle = edge; ctx.fillRect(0, GROUND-4, W, 8);
 
   // Золотой туман поверх стыка
-  ctx.fillStyle = linGradC('gfog', 0, GROUND*0.83, 0, GROUND+6, [[0,'rgba(120,90,20,0)'],[1,'rgba(80,60,15,0.32)']]);
-  ctx.fillRect(0, GROUND*0.83, W, GROUND*0.17+6);
+  const gfog = ctx.createLinearGradient(0, GROUND*0.83, 0, GROUND+6);
+  gfog.addColorStop(0,'rgba(120,90,20,0)'); gfog.addColorStop(1,'rgba(80,60,15,0.32)');
+  ctx.fillStyle = gfog; ctx.fillRect(0, GROUND*0.83, W, GROUND*0.17+6);
 
   // Мозаика
   for (let i = 0; i < 22; i++) {

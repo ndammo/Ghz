@@ -27,8 +27,8 @@ function buyUpgrade(u) {
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
-  // ✅ Помечаем dirty — сохранится локально мгновенно и на сервер через 30 сек
-  API.markDirty();
+  SaveSystem.markDirty();
+  SaveSystem.saveServer();
 }
 
 function renderUpgrades() {
@@ -254,7 +254,8 @@ function goToFloor(n) {
   monsters = [];
   nextMonsterSpawn = player.worldX + 400;
   updateHUD(); switchTab('game');
-  API.partial({ floor: G.floor, maxFloor: G.maxFloor });
+  SaveSystem.markDirty();
+  SaveSystem.saveServer();
 }
 
 // ═══════════════════════════════
@@ -346,7 +347,6 @@ function exchangePixr() {
   G.gram = parseFloat(((G.gram || 0) + 1).toFixed(3));
   updateHUD();
   renderWallet();
-  API.partial({ pixr: G.pixr, gram: G.gram });
 }
 
 // ═══════════════════════════════
@@ -378,15 +378,14 @@ function switchTab(tab) {
   if (tab === 'wallet')   renderWallet();
 }
 
-// ══════════════════════════════════════════════════════
+// ═══════════════════════════════
 //  ЭКРАН ВЫБОРА ПЕРСОНАЖА
-// ══════════════════════════════════════════════════════
-
+// ═══════════════════════════════
 let _csSelected      = null;
 let _csParticleTimer = null;
 let _csSpriteTimers  = {};
 let _csIdleImgs      = {};
-var G_CHAR           = null;
+let G_CHAR           = null;  // задаётся после выбора
 
 function selectChar(id) {
   _csSelected = id;
@@ -405,11 +404,21 @@ function confirmChar() {
   G_CHAR = CHARS[_csSelected];
   applyCharacter(G_CHAR);
   document.getElementById('charSelect').classList.add('hidden');
-  
-  // ✅ Вместо API.save() используем markDirty (мгновенно локально)
-  API.markDirty();
-  
-  startGame();
+
+  // Инициализируем систему сохранений, загружаем сейв, затем стартуем
+  SaveSystem.init(_csSelected).then(function(result) {
+    // Если загрузился сейв — применяем персонажа из сейва (или выбранного)
+    var savedChar = result.data && result.data.charId;
+    if (savedChar && CHARS[savedChar]) {
+      G_CHAR = CHARS[savedChar];
+      applyCharacter(G_CHAR);
+    }
+    recalcStats();
+    startGame();
+  }).catch(function() {
+    // На случай ошибки — просто стартуем
+    startGame();
+  });
 }
 
 function applyCharacter(ch) {
@@ -424,9 +433,8 @@ function applyCharacter(ch) {
   window.IDLE_FW_CUR     = ch.idleFW;
   G.baseStats = Object.assign({}, ch.baseStats);
   Object.assign(G.stats, ch.baseStats);
-  // HP устанавливаем только при первом выборе персонажа (не при загрузке сохранения)
-  // При загрузке hp восстанавливается из API.savedHp после этого вызова
   G.hp = G.stats.hp; G.maxHp = G.stats.hp;
+  // аватар теперь SVG, не трогаем
 }
 
 function startGame() {
@@ -488,108 +496,15 @@ function initCsParticles() {
   tick();
 }
 
-// ══════════════════════════════════════════════════════
-//  ИНИЦИАЛИЗАЦИЯ (упрощенная)
-// ══════════════════════════════════════════════════════
-
-window.addEventListener('load', async function() {
-  if (window.Telegram && window.Telegram.WebApp) {
-    Telegram.WebApp.ready();
-    Telegram.WebApp.expand();
-  }
-
+// ── Инициализация экрана выбора при загрузке страницы ──
+window.addEventListener('load', function() {
   initCharSelectSprites();
   initCsParticles();
-
-  var loadStatus = document.getElementById('loadingStatus');
-  if (loadStatus) loadStatus.textContent = 'Загрузка данных...';
-
-  var charId = null;
-  try {
-    charId = await API.init();
-    if (loadStatus) loadStatus.textContent = 'Данные загружены';
-  } catch(e) {
-    console.warn('[UI] API.init error:', e);
-    if (loadStatus) loadStatus.textContent = 'Офлайн режим';
-  }
-
-  var loadScreen = document.getElementById('loadingScreen');
-  if (loadScreen) loadScreen.style.display = 'none';
-
-  // ✅ Если есть персонаж — запускаем игру
-  if (charId && CHARS[charId]) {
-    G_CHAR = CHARS[charId];
-    applyCharacter(G_CHAR);
-    recalcStats();
-
-    var saved = API.savedHp;
-    if (saved && saved.hp > 0 && saved.maxHp > 0) {
-      G.maxHp = saved.maxHp;
-      G.hp    = Math.min(saved.hp, saved.maxHp);
-    }
-
-    document.getElementById('charSelect').classList.add('hidden');
-    startGame();
-    return;
-  }
-  
-  // ✅ Если персонаж уже есть в G (загружен из локального)
-  if (G_CHAR) {
-    document.getElementById('charSelect').classList.add('hidden');
-    startGame();
-    return;
-  }
-  
-  // ✅ Пытаемся восстановить из localStorage напрямую
-  try {
-    // Ищем с userId
-    var keys = [];
-    for (var i = 0; i < localStorage.length; i++) {
-      var key = localStorage.key(i);
-      if (key && key.startsWith('pixelrpg_save')) {
-        keys.push(key);
-      }
-    }
-    
-    for (var k = 0; k < keys.length; k++) {
-      var raw = localStorage.getItem(keys[k]);
-      if (!raw) continue;
-      var parsed = JSON.parse(raw);
-      if (parsed.data && parsed.data.charId && CHARS[parsed.data.charId]) {
-        console.log('[UI] Restoring from localStorage:', keys[k]);
-        var charId2 = parsed.data.charId;
-        G_CHAR = CHARS[charId2];
-        applyCharacter(G_CHAR);
-        
-        var scalars = ['gold','pixr','gram','level','xp','xpNeeded','floor','maxFloor','killCount','potionLv','potions','potionThreshold'];
-        scalars.forEach(function(s) {
-          if (parsed.data[s] !== undefined) G[s] = parsed.data[s];
-        });
-        if (parsed.data.hp) G.hp = parsed.data.hp;
-        if (parsed.data.maxHp) G.maxHp = parsed.data.maxHp;
-        if (parsed.data.baseStats) Object.assign(G.baseStats, parsed.data.baseStats);
-        if (parsed.data.stats) Object.assign(G.stats, parsed.data.stats);
-        if (parsed.data.upg) Object.assign(G.upg, parsed.data.upg);
-        if (parsed.data.equipped) Object.assign(G.equipped, parsed.data.equipped);
-        if (Array.isArray(parsed.data.inventory)) G.inventory = parsed.data.inventory;
-        if (parsed.data.skills) Object.assign(G.skills, parsed.data.skills);
-        recalcStats();
-        document.getElementById('charSelect').classList.add('hidden');
-        startGame();
-        return;
-      }
-    }
-  } catch(e) {
-    console.warn('[UI] Failed to restore from localStorage:', e);
-  }
-
-  // ✅ Иначе — показываем экран выбора
-  document.getElementById('charSelect').classList.remove('hidden');
 });
 
-// ── resize ──
+// ── resize и Telegram SDK ──
 window.addEventListener('resize', resize);
-
-// ❌ НЕТ обработчиков закрытия!
-// Данные уже сохранены локально при каждом изменении
-// Никаких beforeunload, pagehide, visibilitychange
+if (window.Telegram && window.Telegram.WebApp) {
+  Telegram.WebApp.ready();
+  Telegram.WebApp.expand();
+}

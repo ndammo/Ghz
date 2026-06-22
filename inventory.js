@@ -175,7 +175,6 @@ function equipItem(itemId) {
   item._equipped = true;
   recalcStats(); updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
-  API.markDirty(); // ✅ вместо API.save()
 }
 
 // ── Снять предмет ──
@@ -186,7 +185,6 @@ function unequipItem(itemId) {
   item._equipped = false;
   recalcStats(); updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
-  API.markDirty(); // ✅ вместо API.save()
 }
 
 // ── Уничтожить предмет ──
@@ -198,7 +196,6 @@ function destroyItem(itemId) {
   G.inventory.splice(idx, 1);
   updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
-  API.markDirty(); // ✅ вместо API.save()
 }
 
 // ═══════════════════════════════
@@ -242,7 +239,6 @@ function refineItem(itemId) {
     showRefineResult(false, item, false, cost);
   }
   updateHUD();
-  API.markDirty(); // ✅ вместо API.save()
 }
 
 // ── Оверлей результата заточки ──
@@ -316,7 +312,6 @@ function useSkillBook(skillId) {
   updateSkillsHud();
   renderUpgrades();
   if (activeTab === 'inv') renderInventory();
-  API.markDirty(); // ✅ вместо API.save()
 }
 
 // ═══════════════════════════════
@@ -348,7 +343,6 @@ function invSelectAll() {
   renderInventory();
 }
 function invDeselectAll() { _invSelected = {}; renderInventory(); }
-
 function deleteSelected() {
   var ids = Object.keys(_invSelected).map(Number);
   if (!ids.length) return;
@@ -361,9 +355,6 @@ function deleteSelected() {
   });
   _invSelected = {};
   updateHUD(); renderInventory();
-  
-  // ✅ Сохраняем изменения
-  API.markDirty();
 }
 
 // ── Закрытие модалки предмета ──
