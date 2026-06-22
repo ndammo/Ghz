@@ -491,56 +491,5 @@
 <script src="inventory.js"></script>  <!-- Инвентарь: предметы, заточка, книги навыков -->
 <script src="ui.js"></script>         <!-- UI-панели: этажи, улучшения, рейтинг, кошелёк -->
 
-<!-- Добавить в конец body, после всех скриптов -->
-
-<script>
-  // ── ИНИЦИАЛИЗАЦИЯ ИГРЫ ──
-  (async function() {
-    console.log('🚀 Initializing Pixel Runner...');
-    
-    // 1. Инициализируем Telegram и загружаем данные
-    await initGame();
-    
-    // 2. Инициализируем UI
-    initCharSelectSprites();
-    initCsParticles();
-    
-    // 3. Проверяем, есть ли сохранённый персонаж
-    if (G.character && G_CHAR) {
-      // Персонаж уже выбран — загружаем игру
-      applyCharacter(G_CHAR);
-      document.getElementById('charSelect').classList.add('hidden');
-      startGame();
-    } else {
-      // Показываем экран выбора персонажа
-      document.getElementById('charSelect').classList.remove('hidden');
-    }
-    
-    console.log('✅ Game ready!');
-  })();
-  
-  // ── ОБРАБОТЧИКИ СОХРАНЕНИЯ ──
-  
-  // Сохраняем при потере фокуса
-  document.addEventListener('visibilitychange', function() {
-    if (document.hidden) {
-      saveGameToServer();
-    }
-  });
-  
-  // Сохраняем при закрытии
-  window.addEventListener('beforeunload', function(e) {
-    saveGameToServerSync();
-    e.preventDefault();
-    e.returnValue = '';
-  });
-  
-  // Сохраняем при перезагрузке
-  window.addEventListener('unload', function() {
-    saveGameToServerSync();
-  });
-  
-  console.log('💾 Save handlers registered');
-</script>
 </body>
 </html>
