@@ -23,6 +23,7 @@
   ══════════════════════════════════════════════════════
 -->
 <link rel="stylesheet" href="style.css">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
 <div id="app">
@@ -36,6 +37,7 @@
     <canvas class="cs-particles" id="csParticles"></canvas>
 
     <div class="cs-title">PIXEL RUNNER RPG</div>
+    <div id="tgUserName" style="position:absolute;top:14px;right:16px;font-size:11px;color:#a78bfa;font-family:'Courier New',monospace;letter-spacing:1px;opacity:0.8;"></div>
     <div class="cs-subtitle">ВЫБОР ПЕРСОНАЖА</div>
 
     <div class="cs-cards">
@@ -483,6 +485,7 @@
 <!-- ══════════════════════════════════
      СКРИПТЫ — порядок подключения важен!
      ══════════════════════════════════ -->
+<script src="api.js"></script>         <!-- Telegram авторизация + сохранение -->
 <script src="data.js"></script>       <!-- Игровые данные: персонажи, этажи, предметы -->
 <script src="state.js"></script>      <!-- Состояние игры (объект G) и расчёт CP -->
 <script src="render.js"></script>     <!-- Canvas-движок: небо, земля, спрайты, частицы -->

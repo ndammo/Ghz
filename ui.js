@@ -258,19 +258,50 @@ function goToFloor(n) {
 //  ВКЛАДКА РЕЙТИНГА
 // ═══════════════════════════════
 function renderRating() {
-  const cp      = calcCP();
-  const myEntry = { name: '👤 Ты', cp, isMe: true };
-  const all     = [...FAKE_PLAYERS, myEntry].sort((a, b) => b.cp - a.cp);
-  const medals  = ['🥇', '🥈', '🥉'];
-  document.getElementById('ratingBody').innerHTML =
-    '<div style="font-size:10px;color:#778;margin-bottom:12px;">Топ игроков по Боевой мощи</div>' +
-    all.map((p, i) =>
-      `<div class="rating-row" style="${p.isMe ? 'border-color:#fa0;background:rgba(245,197,66,0.06)' : ''}">
-        <div class="rating-rank">${medals[i] || (i + 1)}</div>
-        <div class="rating-name">${p.name}</div>
-        <div class="rating-cp"><svg width="12" height="12" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="2" height="7" fill="#ffaa00"/><rect x="2" y="3" width="6" height="2" fill="#ffaa00"/><rect x="4" y="7" width="2" height="1" fill="#c8850a"/><rect x="3" y="8" width="4" height="1" fill="#c8850a"/><rect x="4" y="9" width="2" height="1" fill="#c8850a"/></svg> ${p.cp}</div>
-      </div>`
-    ).join('');
+  var el = document.getElementById('ratingBody');
+  var cp = calcCP();
+  var medals = ['🥇', '🥈', '🥉'];
+
+  function renderRows(list) {
+    return '<div style="font-size:10px;color:#778;margin-bottom:12px;">Топ игроков по Боевой мощи</div>' +
+      list.map(function(p, i) {
+        return '<div class="rating-row" style="' + (p.isMe ? 'border-color:#fa0;background:rgba(245,197,66,0.06)' : '') + '">' +
+          '<div class="rating-rank">' + (medals[i] || (i + 1)) + '</div>' +
+          '<div class="rating-name">' + p.name + '</div>' +
+          '<div class="rating-cp"><svg width="12" height="12" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="2" height="7" fill="#ffaa00"/><rect x="2" y="3" width="6" height="2" fill="#ffaa00"/><rect x="4" y="7" width="2" height="1" fill="#c8850a"/><rect x="3" y="8" width="4" height="1" fill="#c8850a"/><rect x="4" y="9" width="2" height="1" fill="#c8850a"/></svg> ' + p.cp + '</div>' +
+        '</div>';
+      }).join('');
+  }
+
+  // Пробуем загрузить с сервера
+  if (window.API && window.API.userId) {
+    el.innerHTML = '<div style="font-size:10px;color:#778;margin-bottom:12px;">Загрузка...</div>';
+    window.API.leaderboard().then(function(r) {
+      if (r.ok && r.list && r.list.length) {
+        var myUserId = window.API.userId;
+        var list = r.list.map(function(p) {
+          return {
+            name: p.userId === myUserId ? ('👤 ' + p.name) : p.name,
+            cp:   p.cp,
+            isMe: p.userId === myUserId,
+          };
+        });
+        // Если меня нет в топе — добавляем
+        var inList = list.some(function(p) { return p.isMe; });
+        if (!inList) list.push({ name: '👤 ' + (window.API.userName || 'Ты'), cp: cp, isMe: true });
+        el.innerHTML = renderRows(list);
+      } else {
+        // Фоллбэк на фейков
+        var myEntry = { name: '👤 Ты', cp: cp, isMe: true };
+        var all = FAKE_PLAYERS.concat([myEntry]).sort(function(a, b) { return b.cp - a.cp; });
+        el.innerHTML = renderRows(all);
+      }
+    });
+  } else {
+    var myEntry = { name: '👤 Ты', cp: cp, isMe: true };
+    var all = FAKE_PLAYERS.concat([myEntry]).sort(function(a, b) { return b.cp - a.cp; });
+    el.innerHTML = renderRows(all);
+  }
 }
 
 // ── SVG иконки для кошелька/статистики ──
@@ -400,7 +431,19 @@ function confirmChar() {
   G_CHAR = CHARS[_csSelected];
   applyCharacter(G_CHAR);
   document.getElementById('charSelect').classList.add('hidden');
-  startGame();
+
+  // Загружаем прогресс с сервера перед стартом
+  if (window.API && window.API.userId) {
+    window.API.loadProgress().then(function(r) {
+      if (r.ok && r.data && r.data.charId && CHARS[r.data.charId]) {
+        G_CHAR = CHARS[r.data.charId];
+        applyCharacter(G_CHAR);
+      }
+      startGame();
+    });
+  } else {
+    startGame();
+  }
 }
 
 function applyCharacter(ch) {
@@ -482,11 +525,25 @@ function initCsParticles() {
 window.addEventListener('load', function() {
   initCharSelectSprites();
   initCsParticles();
+
+  // Инициализация Telegram WebApp
+  if (window.Telegram && window.Telegram.WebApp) {
+    Telegram.WebApp.ready();
+    Telegram.WebApp.expand();
+  }
+
+  // Авторизация через API
+  if (window.API) {
+    window.API.auth().then(function(r) {
+      if (r.ok) {
+        // Показываем имя пользователя на экране выбора
+        var nameEl = document.getElementById('tgUserName');
+        if (nameEl) nameEl.textContent = window.API.userName || '';
+        console.log('[TG] Authorized:', window.API.userName);
+      }
+    });
+  }
 });
 
-// ── resize и Telegram SDK ──
+// ── resize ──
 window.addEventListener('resize', resize);
-if (window.Telegram && window.Telegram.WebApp) {
-  Telegram.WebApp.ready();
-  Telegram.WebApp.expand();
-}
