@@ -340,6 +340,8 @@ function update(dt) {
       }
       updateHUD();
       checkFloorUnlock();
+      // Баланс и HP сохраняем локально при каждом убийстве
+      if (typeof API !== 'undefined') API.saveLocal();
       return false;
     }
     return true;
