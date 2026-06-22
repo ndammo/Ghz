@@ -27,7 +27,10 @@ function buyUpgrade(u) {
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
-  if (window.API) API.onEvent();
+  // Отмечаем что есть изменения для синхронизации
+  if (window.apiSaveQueue !== undefined) {
+    window.apiSaveQueue.push(Date.now());
+  }
 }
 
 function renderUpgrades() {
@@ -253,57 +256,50 @@ function goToFloor(n) {
   monsters = [];
   nextMonsterSpawn = player.worldX + 400;
   updateHUD(); switchTab('game');
-  if (window.API) API.onEvent();
+  if (window.apiSaveQueue !== undefined) {
+    window.apiSaveQueue.push(Date.now());
+  }
 }
 
 // ═══════════════════════════════
 //  ВКЛАДКА РЕЙТИНГА
 // ═══════════════════════════════
-function renderRating() {
-  var el = document.getElementById('ratingBody');
-  var cp = calcCP();
-  var medals = ['🥇', '🥈', '🥉'];
-
-  function renderRows(list) {
-    return '<div style="font-size:10px;color:#778;margin-bottom:12px;">Топ игроков по Боевой мощи</div>' +
-      list.map(function(p, i) {
-        return '<div class="rating-row" style="' + (p.isMe ? 'border-color:#fa0;background:rgba(245,197,66,0.06)' : '') + '">' +
-          '<div class="rating-rank">' + (medals[i] || (i + 1)) + '</div>' +
-          '<div class="rating-name">' + p.name + '</div>' +
-          '<div class="rating-cp"><svg width="12" height="12" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="2" height="7" fill="#ffaa00"/><rect x="2" y="3" width="6" height="2" fill="#ffaa00"/><rect x="4" y="7" width="2" height="1" fill="#c8850a"/><rect x="3" y="8" width="4" height="1" fill="#c8850a"/><rect x="4" y="9" width="2" height="1" fill="#c8850a"/></svg> ' + p.cp + '</div>' +
-        '</div>';
-      }).join('');
+async function renderRating() {
+  const cp = calcCP();
+  const myEntry = { name: '👤 Ты', cp, isMe: true };
+  
+  let rankingData = [];
+  try {
+    if (typeof apiLoadRanking === 'function') {
+      rankingData = await apiLoadRanking(50);
+    }
+  } catch (e) {
+    console.warn('Failed to load ranking from server, using fake players');
   }
-
-  // Пробуем загрузить с сервера
-  if (window.API && window.API.userId) {
-    el.innerHTML = '<div style="font-size:10px;color:#778;margin-bottom:12px;">Загрузка...</div>';
-    window.API.leaderboard().then(function(r) {
-      if (r.ok && r.list && r.list.length) {
-        var myUserId = window.API.userId;
-        var list = r.list.map(function(p) {
-          return {
-            name: p.userId === myUserId ? ('👤 ' + p.name) : p.name,
-            cp:   p.cp,
-            isMe: p.userId === myUserId,
-          };
-        });
-        // Если меня нет в топе — добавляем
-        var inList = list.some(function(p) { return p.isMe; });
-        if (!inList) list.push({ name: '👤 ' + (window.API.userName || 'Ты'), cp: cp, isMe: true });
-        el.innerHTML = renderRows(list);
-      } else {
-        // Фоллбэк на фейков
-        var myEntry = { name: '👤 Ты', cp: cp, isMe: true };
-        var all = FAKE_PLAYERS.concat([myEntry]).sort(function(a, b) { return b.cp - a.cp; });
-        el.innerHTML = renderRows(all);
-      }
-    });
+  
+  let all;
+  if (rankingData.length > 0) {
+    all = rankingData.map(p => ({
+      name: p.username || 'Player',
+      cp: p.cp || 0,
+      isMe: false
+    }));
+    all.push(myEntry);
+    all.sort((a, b) => b.cp - a.cp);
   } else {
-    var myEntry = { name: '👤 Ты', cp: cp, isMe: true };
-    var all = FAKE_PLAYERS.concat([myEntry]).sort(function(a, b) { return b.cp - a.cp; });
-    el.innerHTML = renderRows(all);
+    all = [...FAKE_PLAYERS, myEntry].sort((a, b) => b.cp - a.cp);
   }
+  
+  const medals = ['🥇', '🥈', '🥉'];
+  document.getElementById('ratingBody').innerHTML =
+    '<div style="font-size:10px;color:#778;margin-bottom:12px;">Топ игроков по Боевой мощи</div>' +
+    all.map((p, i) =>
+      `<div class="rating-row" style="${p.isMe ? 'border-color:#fa0;background:rgba(245,197,66,0.06)' : ''}">
+        <div class="rating-rank">${medals[i] || (i + 1)}</div>
+        <div class="rating-name">${p.name}</div>
+        <div class="rating-cp"><svg width="12" height="12" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="2" height="7" fill="#ffaa00"/><rect x="2" y="3" width="6" height="2" fill="#ffaa00"/><rect x="4" y="7" width="2" height="1" fill="#c8850a"/><rect x="3" y="8" width="4" height="1" fill="#c8850a"/><rect x="4" y="9" width="2" height="1" fill="#c8850a"/></svg> ${p.cp}</div>
+      </div>`
+    ).join('');
 }
 
 // ── SVG иконки для кошелька/статистики ──
@@ -376,6 +372,9 @@ function exchangePixr() {
   G.gram = parseFloat(((G.gram || 0) + 1).toFixed(3));
   updateHUD();
   renderWallet();
+  if (window.apiSaveQueue !== undefined) {
+    window.apiSaveQueue.push(Date.now());
+  }
 }
 
 // ═══════════════════════════════
@@ -414,7 +413,7 @@ let _csSelected      = null;
 let _csParticleTimer = null;
 let _csSpriteTimers  = {};
 let _csIdleImgs      = {};
-let G_CHAR           = null;  // задаётся после выбора
+let G_CHAR           = null;
 
 function selectChar(id) {
   _csSelected = id;
@@ -426,15 +425,27 @@ function selectChar(id) {
   btn.classList.add('ready');
 }
 
-function confirmChar() {
+async function confirmChar() {
   if (!_csSelected) return;
-  Object.values(_csSpriteTimers).forEach(clearInterval);
-  if (_csParticleTimer) cancelAnimationFrame(_csParticleTimer);
+  
+  // Сохраняем выбор на сервер
+  const saved = await apiSaveChar(_csSelected);
+  if (!saved) {
+    showDmgPop('Ошибка сохранения!', PLAYER_SCREEN_X, player.y - 30, '#e74c3c');
+    return;
+  }
+  
+  // Применяем персонажа
   G_CHAR = CHARS[_csSelected];
   applyCharacter(G_CHAR);
-  // Запомнить выбор персонажа
-  if (window.API) API.saveChar(_csSelected);
+  
+  // Обновляем G объект
+  G.charClass = _csSelected;
+  
+  // Скрываем экран выбора
   document.getElementById('charSelect').classList.add('hidden');
+  
+  // Запускаем игру
   startGame();
 }
 
@@ -451,7 +462,6 @@ function applyCharacter(ch) {
   G.baseStats = Object.assign({}, ch.baseStats);
   Object.assign(G.stats, ch.baseStats);
   G.hp = G.stats.hp; G.maxHp = G.stats.hp;
-  // аватар теперь SVG, не трогаем
 }
 
 function startGame() {
@@ -513,66 +523,62 @@ function initCsParticles() {
   tick();
 }
 
+// ── Проверка интернета ──
+async function checkInternet() {
+  try {
+    const response = await fetch('https://ghz-production.up.railway.app/api/health');
+    return response.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
 // ── Инициализация экрана выбора при загрузке страницы ──
-window.addEventListener('load', function() {
-  // Инициализация Telegram WebApp
-  if (window.Telegram && window.Telegram.WebApp) {
-    Telegram.WebApp.ready();
-    Telegram.WebApp.expand();
+window.addEventListener('load', async function() {
+  // Проверяем интернет
+  const hasInternet = await checkInternet();
+  if (!hasInternet) {
+    document.body.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#0d0d1a;color:#aaa;font-family:'Courier New',monospace;padding:20px;text-align:center;">
+        <div style="font-size:48px;margin-bottom:20px;">🌐</div>
+        <div style="font-size:20px;font-weight:bold;color:#e74c3c;">НЕТ ПОДКЛЮЧЕНИЯ</div>
+        <div style="font-size:14px;color:#778;margin-top:8px;">Для игры требуется интернет</div>
+        <div style="font-size:12px;color:#556;margin-top:12px;">Проверьте соединение и обновите страницу</div>
+        <button onclick="location.reload()" style="margin-top:20px;padding:12px 30px;border-radius:10px;border:1.5px solid #f5c542;background:rgba(245,197,66,0.1);color:#f5c542;font-size:14px;font-family:'Courier New',monospace;cursor:pointer;">🔄 Обновить</button>
+      </div>
+    `;
+    return;
   }
 
-  // Авторизация + загрузка прогресса
-  if (window.API) {
-    // Показываем заглушку "Загрузка..."
-    var csTitle = document.querySelector('.cs-title');
-    var csCards = document.querySelector('.cs-cards');
-    var csConfirm = document.getElementById('csConfirm');
-    if (csCards) csCards.style.opacity = '0.3';
-    if (csConfirm) { csConfirm.textContent = 'ЗАГРУЗКА...'; csConfirm.classList.remove('ready'); }
+  // Инициализация API
+  const initResult = await initAPI();
+  
+  if (!initResult.success) {
+    document.body.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#0d0d1a;color:#aaa;font-family:'Courier New',monospace;padding:20px;text-align:center;">
+        <div style="font-size:48px;margin-bottom:20px;">⚠️</div>
+        <div style="font-size:20px;font-weight:bold;color:#e74c3c;">ОШИБКА АВТОРИЗАЦИИ</div>
+        <div style="font-size:14px;color:#778;margin-top:8px;">Не удалось авторизоваться через Telegram</div>
+        <button onclick="location.reload()" style="margin-top:20px;padding:12px 30px;border-radius:10px;border:1.5px solid #f5c542;background:rgba(245,197,66,0.1);color:#f5c542;font-size:14px;font-family:'Courier New',monospace;cursor:pointer;">🔄 Попробовать снова</button>
+      </div>
+    `;
+    return;
+  }
 
-    API.auth().then(function(r) {
-      if (r.ok) {
-        var nameEl = document.getElementById('tgUserName');
-        if (nameEl) nameEl.textContent = API.userName || '';
-
-        // Загружаем прогресс с сервера
-        return API.loadProgress();
-      }
-      return Promise.resolve({ ok: false });
-    }).then(function(r) {
-      // Проверяем: есть ли сохранённый персонаж
-      var savedChar = API.getSavedChar ? API.getSavedChar() : null;
-      // Также смотрим charId из серверных данных
-      if (!savedChar && r && r.charId && CHARS[r.charId]) savedChar = r.charId;
-
-      if (savedChar && CHARS[savedChar]) {
-        // Персонаж уже выбран — пропускаем экран выбора
-        Object.values(_csSpriteTimers).forEach(clearInterval);
-        if (_csParticleTimer) cancelAnimationFrame(_csParticleTimer);
-        G_CHAR = CHARS[savedChar];
-        applyCharacter(G_CHAR);
-        document.getElementById('charSelect').classList.add('hidden');
-        startGame();
-      } else {
-        // Первый вход — показываем экран выбора
-        if (csCards) csCards.style.opacity = '';
-        if (csConfirm) csConfirm.textContent = 'ВЫБЕРИТЕ ПЕРСОНАЖА';
-        initCharSelectSprites();
-        initCsParticles();
-      }
-    }).catch(function() {
-      // Нет сети — показываем экран выбора
-      if (csCards) csCards.style.opacity = '';
-      if (csConfirm) csConfirm.textContent = 'ВЫБЕРИТЕ ПЕРСОНАЖА';
-      initCharSelectSprites();
-      initCsParticles();
-    });
+  // Если есть персонаж - сразу запускаем игру
+  if (!initResult.needCharSelect) {
+    document.getElementById('charSelect').classList.add('hidden');
+    startGame();
   } else {
-    // API недоступен — классический старт
+    // Показываем экран выбора
     initCharSelectSprites();
     initCsParticles();
   }
 });
 
-// ── resize ──
+// ── resize и Telegram SDK ──
 window.addEventListener('resize', resize);
+if (window.Telegram && window.Telegram.WebApp) {
+  Telegram.WebApp.ready();
+  Telegram.WebApp.expand();
+}

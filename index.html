@@ -4,26 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Pixel Runner RPG</title>
-<!--
-  ══════════════════════════════════════════════════════
-  index.html — Точка входа
-  Содержит: HTML-разметку всех экранов (выбор персонажа,
-  HUD, панели инвентаря/улучшений/этажей/рейтинга/кошелька,
-  нижняя навигация, модальные окна, HUD скиллов).
-  Подключает все CSS и JS файлы проекта.
-
-  ПОРЯДОК ПОДКЛЮЧЕНИЯ СКРИПТОВ ВАЖЕН:
-  1. data.js    — константы (CHARS, FLOORS, RARITIES, ...)
-  2. state.js   — объект G, calcCP, floorCfg
-  3. render.js  — canvas, спрайты, функции рисования
-  4. skills.js  — система навыков, баффы, HUD скиллов
-  5. game.js    — player, update loop, монстры, боёвка
-  6. inventory.js — предметы, заточка, рендер инвентаря
-  7. ui.js      — панели, вкладки, выбор персонажа
-  ══════════════════════════════════════════════════════
--->
 <link rel="stylesheet" href="style.css">
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
 <div id="app">
@@ -37,7 +18,6 @@
     <canvas class="cs-particles" id="csParticles"></canvas>
 
     <div class="cs-title">PIXEL RUNNER RPG</div>
-    <div id="tgUserName" style="position:absolute;top:14px;right:16px;font-size:11px;color:#a78bfa;font-family:'Courier New',monospace;letter-spacing:1px;opacity:0.8;"></div>
     <div class="cs-subtitle">ВЫБОР ПЕРСОНАЖА</div>
 
     <div class="cs-cards">
@@ -485,7 +465,6 @@
 <!-- ══════════════════════════════════
      СКРИПТЫ — порядок подключения важен!
      ══════════════════════════════════ -->
-<script src="api.js"></script>         <!-- Telegram авторизация + сохранение -->
 <script src="data.js"></script>       <!-- Игровые данные: персонажи, этажи, предметы -->
 <script src="state.js"></script>      <!-- Состояние игры (объект G) и расчёт CP -->
 <script src="render.js"></script>     <!-- Canvas-движок: небо, земля, спрайты, частицы -->
@@ -493,6 +472,7 @@
 <script src="game.js"></script>       <!-- Игровая логика: update, монстры, боёвка, XP -->
 <script src="inventory.js"></script>  <!-- Инвентарь: предметы, заточка, книги навыков -->
 <script src="ui.js"></script>         <!-- UI-панели: этажи, улучшения, рейтинг, кошелёк -->
+<script src="api.js"></script>        <!-- API клиент для сервера -->
 
 </body>
 </html>

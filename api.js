@@ -1,235 +1,447 @@
 /*
-  api.js — Pixel Runner RPG
-  
-  Стратегия сохранения:
-  - localStorage: hp + gold мгновенно (каждое изменение)
-  - сервер: при ключевых событиях (levelup, floor, upgrade, death, buy)
-  - сервер: полный сейв каждые 30 сек
-  - visibilitychange: полный сейв при уходе в фон
-  
-  Загрузка:
-  - сначала localStorage (hp, gold)
-  - потом сервер (полный прогресс)
-  - экран выбора персонажа скрывается если charId уже сохранён
+  ══════════════════════════════════════════════════════
+  api.js — Клиент для общения с сервером
+  ══════════════════════════════════════════════════════
 */
 
-(function() {
-  'use strict';
+const API_URL = 'https://ghz-production.up.railway.app/api';
 
-  var BASE_URL = 'https://ghz-production.up.railway.app';
-  var LS_FAST  = 'prpg_fast';   // hp + gold
-  var LS_CHAR  = 'prpg_char';   // выбранный персонаж
+// ============================================
+// СОСТОЯНИЕ
+// ============================================
+let apiTelegramId = null;
+let apiCharClass = null;
+let apiHasCharacter = false;
+let apiIsAuthenticated = false;
+let apiSaveQueue = [];
+let apiIsSaving = false;
+let apiVersion = 0;
 
-  // ══════════════════════════════
-  //  localStorage helpers
-  // ══════════════════════════════
-  function lsGet(key) {
-    try { return JSON.parse(localStorage.getItem(key)); } catch(e) { return null; }
-  }
-  function lsSet(key, val) {
-    try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {}
-  }
-
-  // ── Мгновенное сохранение hp + gold в localStorage ──
-  function saveFast() {
-    if (typeof G === 'undefined') return;
-    lsSet(LS_FAST, { hp: G.hp, gold: G.gold, pixr: G.pixr || 0, ts: Date.now() });
-  }
-
-  // ── Восстановить hp + gold из localStorage ──
-  function loadFast() {
-    if (typeof G === 'undefined') return;
-    var d = lsGet(LS_FAST);
-    if (!d) return;
-    if (typeof d.hp   === 'number') G.hp   = d.hp;
-    if (typeof d.gold === 'number') G.gold = d.gold;
-    if (typeof d.pixr === 'number') G.pixr = d.pixr;
-  }
-
-  // ══════════════════════════════
-  //  Telegram token
-  // ══════════════════════════════
-  function getTgToken() {
-    if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) {
-      return window.Telegram.WebApp.initData;
+// ============================================
+// АВТОРИЗАЦИЯ
+// ============================================
+async function apiAuth() {
+  try {
+    const tg = window.Telegram?.WebApp;
+    if (!tg) {
+      console.warn('⚠️ Telegram WebApp not available');
+      return false;
     }
-    return '';
-  }
 
-  function reqHeaders() {
-    return { 'Content-Type': 'application/json', 'x-tg-token': getTgToken() };
-  }
+    const initData = tg.initData;
+    if (!initData) {
+      console.warn('⚠️ No initData');
+      return false;
+    }
 
-  // ══════════════════════════════
-  //  fetch с таймаутом
-  // ══════════════════════════════
-  function apiFetch(path, opts) {
-    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    var timer = ctrl ? setTimeout(function() { ctrl.abort(); }, 8000) : null;
-    return fetch(BASE_URL + path, Object.assign({ signal: ctrl ? ctrl.signal : undefined }, opts))
-      .then(function(r) { if (timer) clearTimeout(timer); return r.json(); })
-      .catch(function(e) { if (timer) clearTimeout(timer); return { ok: false, error: e.message }; });
-  }
-
-  // ══════════════════════════════
-  //  Снимок G для сервера
-  // ══════════════════════════════
-  function snapshotG() {
-    if (typeof G === 'undefined') return {};
-    return {
-      gold: G.gold || 0,
-      pixr: G.pixr || 0,
-      gram: G.gram || 0,
-      level: G.level || 1,
-      xp: G.xp || 0,
-      xpNeeded: G.xpNeeded || 100,
-      floor: G.floor || 1,
-      maxFloor: G.maxFloor || 1,
-      killCount: G.killCount || 0,
-      hp: G.hp || 1,
-      maxHp: G.maxHp || 100,
-      charId: (typeof G_CHAR !== 'undefined' && G_CHAR) ? G_CHAR.id : (lsGet(LS_CHAR) || 'fire'),
-      stats: G.stats || {},
-      baseStats: G.baseStats || {},
-      upg: G.upg || {},
-      potionLv: G.potionLv || 0,
-      potions: G.potions || 0,
-      potionThreshold: G.potionThreshold || 30,
-      bp: G.bp || { active: false, claimed: [] },
-      prem: G.prem || { tier: null, expiresAt: 0 },
-      owned: G.owned || {},
-      skills: G.skills || {},
-      inventory: Array.isArray(G.inventory) ? G.inventory.slice(0, 500) : [],
-      equipped: G.equipped || {},
-      invFilter: G.invFilter || 'all',
-    };
-  }
-
-  // ══════════════════════════════
-  //  Применить данные с сервера к G
-  // ══════════════════════════════
-  function applyToG(data) {
-    if (!data || typeof G === 'undefined') return;
-    var fields = ['gold','pixr','gram','level','xp','xpNeeded','floor','maxFloor',
-      'killCount','hp','maxHp','upg','potionLv','potions','potionThreshold',
-      'bp','prem','owned','skills','inventory','equipped','invFilter'];
-    fields.forEach(function(k) { if (data[k] !== undefined) G[k] = data[k]; });
-    if (data.stats)     Object.assign(G.stats,     data.stats);
-    if (data.baseStats) Object.assign(G.baseStats, data.baseStats);
-    if (G.hp > G.maxHp) G.hp = G.maxHp;
-  }
-
-  // ══════════════════════════════
-  //  Очередь серверного сохранения
-  // ══════════════════════════════
-  var _saving  = false;
-  var _queued  = false;
-
-  function serverSave() {
-    if (!API.userId) return;
-    if (_saving) { _queued = true; return; }
-    _saving = true;
-    _queued = false;
-    var snap = snapshotG();
-    var cp   = (typeof calcCP === 'function') ? calcCP() : 0;
-    apiFetch('/save', {
+    const response = await fetch(`${API_URL}/auth`, {
       method: 'POST',
-      headers: reqHeaders(),
-      body: JSON.stringify({ gameData: snap, cp: cp }),
-    }).then(function() {
-      _saving = false;
-      if (_queued) { _queued = false; serverSave(); }
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData })
     });
+
+    if (!response.ok) {
+      throw new Error('Auth failed');
+    }
+
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error('Auth failed');
+    }
+
+    apiTelegramId = data.player.telegramId;
+    apiCharClass = data.player.charClass;
+    apiHasCharacter = data.player.hasCharacter;
+    apiIsAuthenticated = true;
+
+    console.log(`✅ Authenticated: ${apiTelegramId}`);
+    return true;
+
+  } catch (error) {
+    console.error('❌ Auth error:', error);
+    return false;
+  }
+}
+
+// ============================================
+// ЗАГРУЗКА ИГРОКА С СЕРВЕРА
+// ============================================
+async function apiLoadPlayer() {
+  if (!apiTelegramId) {
+    console.error('❌ Not authenticated');
+    return null;
   }
 
-  // ══════════════════════════════
-  //  Автосейв каждые 30 сек
-  // ══════════════════════════════
-  function startAutoSave() {
-    setInterval(function() {
-      saveFast();
-      if (API.userId) serverSave();
-    }, 30000);
+  try {
+    const response = await fetch(`${API_URL}/player/${apiTelegramId}`);
+    if (!response.ok) {
+      throw new Error('Failed to load player');
+    }
+
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error('Failed to load player');
+    }
+
+    apiVersion = data.player.version || 0;
+    return data.player;
+
+  } catch (error) {
+    console.error('❌ Load player error:', error);
+    return null;
+  }
+}
+
+// ============================================
+// СОХРАНЕНИЕ ВЫБОРА ПЕРСОНАЖА
+// ============================================
+async function apiSaveChar(charClass) {
+  if (!apiTelegramId) {
+    console.error('❌ Not authenticated');
+    return false;
   }
 
-  // ── Сохранение при уходе в фон ──
-  document.addEventListener('visibilitychange', function() {
+  try {
+    const response = await fetch(`${API_URL}/char`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telegramId: apiTelegramId, charClass })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to save character');
+    }
+
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error('Failed to save character');
+    }
+
+    apiCharClass = charClass;
+    apiHasCharacter = true;
+    console.log(`✅ Character saved: ${charClass}`);
+    return true;
+
+  } catch (error) {
+    console.error('❌ Save char error:', error);
+    return false;
+  }
+}
+
+// ============================================
+// СОХРАНЕНИЕ ПОЛНОГО СНЕПШОТА
+// ============================================
+async function apiSaveFullSnapshot() {
+  if (!apiTelegramId) {
+    console.error('❌ Not authenticated');
+    return false;
+  }
+
+  if (apiIsSaving) {
+    // Если уже сохраняем, добавляем в очередь
+    return false;
+  }
+
+  apiIsSaving = true;
+
+  try {
+    // Формируем данные для сохранения
+    const data = {
+      level: G.level,
+      xp: G.xp,
+      xpNeeded: G.xpNeeded,
+      floor: G.floor,
+      maxFloor: G.maxFloor,
+      killCount: G.killCount,
+      stats: G.stats,
+      hp: G.hp,
+      maxHp: G.maxHp,
+      upg: G.upg,
+      inventory: G.inventory,
+      equipped: G.equipped,
+      skills: G.skills,
+      gold: G.gold,
+      pixr: G.pixr,
+      gram: G.gram,
+      potions: G.potions,
+      potionLv: G.potionLv,
+      potionThreshold: G.potionThreshold,
+      bp: G.bp,
+      prem: G.prem
+    };
+
+    const response = await fetch(`${API_URL}/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        telegramId: apiTelegramId,
+        data: data,
+        version: apiVersion
+      })
+    });
+
+    if (response.status === 409) {
+      // Конфликт версий - загружаем свежие данные
+      console.warn('⚠️ Version conflict, reloading...');
+      await syncFullReload();
+      apiIsSaving = false;
+      return false;
+    }
+
+    if (!response.ok) {
+      throw new Error('Save failed');
+    }
+
+    const result = await response.json();
+    apiVersion = result.version;
+
+    // Очищаем очередь сохранений
+    apiSaveQueue = [];
+    return true;
+
+  } catch (error) {
+    console.error('❌ Save error:', error);
+    // Добавляем в очередь для повторной попытки
+    apiSaveQueue.push(Date.now());
+    return false;
+  } finally {
+    apiIsSaving = false;
+  }
+}
+
+// ============================================
+// ПОЛНАЯ СИНХРОНИЗАЦИЯ
+// ============================================
+async function syncFullReload() {
+  try {
+    const player = await apiLoadPlayer();
+    if (!player) return false;
+
+    // Обновляем G объект
+    Object.assign(G, {
+      level: player.level,
+      xp: player.xp,
+      xpNeeded: player.xpNeeded,
+      floor: player.floor,
+      maxFloor: player.maxFloor,
+      killCount: player.killCount,
+      stats: player.stats,
+      hp: player.hp,
+      maxHp: player.maxHp,
+      upg: player.upg,
+      inventory: player.inventory,
+      equipped: player.equipped,
+      skills: player.skills,
+      gold: player.gold,
+      pixr: player.pixr,
+      gram: player.gram,
+      potions: player.potions,
+      potionLv: player.potionLv,
+      potionThreshold: player.potionThreshold,
+      bp: player.bp,
+      prem: player.prem
+    });
+
+    // Обновляем базовые статы
+    G.baseStats = { ...player.stats };
+
+    // Применяем персонажа
+    if (player.charClass && player.charClass !== G_CHAR?.id) {
+      const charData = CHARS[player.charClass];
+      if (charData) {
+        G_CHAR = charData;
+        applyCharacter(charData);
+      }
+    }
+
+    // Пересчитываем статы и обновляем HUD
+    recalcStats();
+    updateHUD();
+    updatePotionHud();
+    updateSkillsHud();
+
+    console.log('✅ Full sync completed');
+    return true;
+
+  } catch (error) {
+    console.error('❌ Full reload error:', error);
+    return false;
+  }
+}
+
+// ============================================
+// СИНХРОНИЗАЦИЯ ПО РАСПИСАНИЮ
+// ============================================
+function apiStartSync(intervalMs = 30000) {
+  // Очищаем старый интервал
+  if (window._syncInterval) {
+    clearInterval(window._syncInterval);
+  }
+
+  // Запускаем новый
+  window._syncInterval = setInterval(async () => {
+    // Проверяем есть ли изменения
+    const hasChanges = apiSaveQueue.length > 0 || true; // Сохраняем всегда
+    if (hasChanges) {
+      await apiSaveFullSnapshot();
+    }
+  }, intervalMs);
+
+  console.log(`🔄 Sync started (interval: ${intervalMs}ms)`);
+}
+
+// ============================================
+// ЭКСТРЕННОЕ СОХРАНЕНИЕ (при закрытии)
+// ============================================
+function apiEmergencySave() {
+  // Используем sendBeacon для надежности
+  if (!apiTelegramId) return;
+
+  try {
+    const data = {
+      telegramId: apiTelegramId,
+      data: {
+        level: G.level,
+        xp: G.xp,
+        floor: G.floor,
+        stats: G.stats,
+        hp: G.hp,
+        maxHp: G.maxHp,
+        inventory: G.inventory,
+        equipped: G.equipped,
+        gold: G.gold,
+        pixr: G.pixr,
+        gram: G.gram,
+        potions: G.potions
+      },
+      version: apiVersion
+    };
+
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    navigator.sendBeacon(`${API_URL}/save`, blob);
+
+    console.log('📤 Emergency save sent');
+
+  } catch (error) {
+    console.error('❌ Emergency save error:', error);
+  }
+}
+
+// ============================================
+// ЗАГРУЗКА РЕЙТИНГА
+// ============================================
+async function apiLoadRanking(limit = 50) {
+  try {
+    const response = await fetch(`${API_URL}/ranking?limit=${limit}`);
+    if (!response.ok) {
+      throw new Error('Failed to load ranking');
+    }
+
+    const data = await response.json();
+    return data.ranking || [];
+
+  } catch (error) {
+    console.error('❌ Ranking error:', error);
+    return [];
+  }
+}
+
+// ============================================
+// ПРОВЕРКА СОЕДИНЕНИЯ С СЕРВЕРОМ
+// ============================================
+async function apiCheckHealth() {
+  try {
+    const response = await fetch(`${API_URL}/health`);
+    return response.ok;
+  } catch (error) {
+    return false;
+  }
+}
+
+// ============================================
+// ИНИЦИАЛИЗАЦИЯ API
+// ============================================
+async function initAPI() {
+  // 1. Авторизация
+  const authOk = await apiAuth();
+  if (!authOk) {
+    return { success: false, error: 'auth' };
+  }
+
+  // 2. Загрузка игрока
+  const player = await apiLoadPlayer();
+  if (!player) {
+    return { success: false, error: 'load' };
+  }
+
+  // 3. Проверяем есть ли персонаж
+  if (!apiHasCharacter) {
+    return { success: true, needCharSelect: true };
+  }
+
+  // 4. Применяем данные
+  Object.assign(G, {
+    level: player.level,
+    xp: player.xp,
+    xpNeeded: player.xpNeeded,
+    floor: player.floor,
+    maxFloor: player.maxFloor,
+    killCount: player.killCount,
+    stats: player.stats,
+    hp: player.hp,
+    maxHp: player.maxHp,
+    upg: player.upg,
+    inventory: player.inventory,
+    equipped: player.equipped,
+    skills: player.skills,
+    gold: player.gold,
+    pixr: player.pixr,
+    gram: player.gram,
+    potions: player.potions,
+    potionLv: player.potionLv,
+    potionThreshold: player.potionThreshold,
+    bp: player.bp,
+    prem: player.prem
+  });
+
+  G.baseStats = { ...player.stats };
+  apiVersion = player.version;
+
+  // 5. Применяем персонажа
+  if (player.charClass) {
+    const charData = CHARS[player.charClass];
+    if (charData) {
+      G_CHAR = charData;
+      applyCharacter(charData);
+    }
+  }
+
+  // 6. Пересчитываем и обновляем
+  recalcStats();
+  updateHUD();
+  updatePotionHud();
+  updateSkillsHud();
+
+  // 7. Запускаем синхронизацию
+  apiStartSync(30000);
+
+  // 8. Настраиваем экстренное сохранение
+  window.addEventListener('pagehide', apiEmergencySave);
+  window.addEventListener('visibilitychange', () => {
     if (document.hidden) {
-      saveFast();
-      if (API.userId) serverSave();
+      apiEmergencySave();
     }
   });
 
-  // ══════════════════════════════
-  //  PUBLIC API
-  // ══════════════════════════════
-  var API = {
-    userId:   null,
-    userName: null,
-    ready:    false,
+  // 9. Настраиваем Telegram события
+  const tg = window.Telegram?.WebApp;
+  if (tg) {
+    tg.onEvent('viewportChanged', () => {
+      if (tg.viewportHeight < 100) {
+        apiEmergencySave();
+      }
+    });
+  }
 
-    // ── Авторизация ──
-    auth: function() {
-      return apiFetch('/auth', { method: 'POST', headers: reqHeaders(), body: '{}' })
-        .then(function(r) {
-          if (r.ok) {
-            API.userId   = r.user.userId;
-            API.userName = r.user.firstName || r.user.username || ('Player' + String(r.user.userId).slice(-4));
-            API.ready    = true;
-            startAutoSave();
-          }
-          return r;
-        });
-    },
-
-    // ── Загрузка прогресса с сервера ──
-    loadProgress: function() {
-      if (!API.userId) return Promise.resolve({ ok: false });
-      return apiFetch('/save', { method: 'GET', headers: reqHeaders() })
-        .then(function(r) {
-          if (r.ok && r.data) {
-            applyToG(r.data);
-            // После загрузки с сервера перезаписываем hp/gold из localStorage
-            // только если localStorage свежее (играл без связи)
-            var fast = lsGet(LS_FAST);
-            if (fast && fast.ts && r.data) {
-              // localStorage всегда актуальнее для hp/gold
-              if (typeof fast.hp   === 'number') G.hp   = fast.hp;
-              if (typeof fast.gold === 'number') G.gold = fast.gold;
-              if (typeof fast.pixr === 'number') G.pixr = fast.pixr;
-            }
-            return { ok: true, charId: r.data.charId };
-          }
-          return { ok: false };
-        });
-    },
-
-    // ── Вызывается при ключевых событиях ──
-    // levelup, floor, upgrade, death, buy
-    onEvent: function() {
-      saveFast();
-      serverSave();
-    },
-
-    // ── Мгновенное сохранение hp/gold (вызывается из updateHUD) ──
-    onHpGoldChange: function() {
-      saveFast();
-    },
-
-    // ── Запомнить выбранного персонажа ──
-    saveChar: function(charId) {
-      lsSet(LS_CHAR, charId);
-    },
-
-    // ── Есть ли сохранённый персонаж ──
-    getSavedChar: function() {
-      return lsGet(LS_CHAR);
-    },
-
-    leaderboard: function() {
-      return apiFetch('/leaderboard', { method: 'GET', headers: reqHeaders() });
-    },
-  };
-
-  window.API = API;
-})();
+  return { success: true, needCharSelect: false };
+}

@@ -1,303 +1,395 @@
-/*
-  ══════════════════════════════════════════════════════
-  server.js — Pixel Runner RPG Backend
-  Railway + MongoDB
-  
-  Routes:
-    POST /auth          — Telegram HMAC-SHA256 авторизация
-    GET  /save          — Загрузка прогресса
-    POST /save          — Сохранение прогресса
-    GET  /leaderboard   — Топ 50 по CP
-  ══════════════════════════════════════════════════════
-*/
-
-'use strict';
 require('dotenv').config();
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const crypto = require('crypto');
 
-const express   = require('express');
-const mongoose  = require('mongoose');
-const cors      = require('cors');
-const crypto    = require('crypto');
-const rateLimit = require('express-rate-limit');
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
 
-const app  = express();
+// ============================================
+// КОНФИГУРАЦИЯ
+// ============================================
 const PORT = process.env.PORT || 3000;
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/pixelrunner';
+const BOT_TOKEN = process.env.BOT_TOKEN;
 
-// ── CORS ──
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-tg-token'],
-}));
-app.options('*', cors());
-app.use(express.json({ limit: '512kb' }));
-app.set('trust proxy', 1);
+// ============================================
+// ПОДКЛЮЧЕНИЕ К MONGODB
+// ============================================
+mongoose.connect(MONGODB_URI);
+const db = mongoose.connection;
+db.on('error', console.error.bind(console, 'MongoDB error:'));
+db.once('open', () => console.log('✅ MongoDB connected'));
 
-// ── Rate Limit ──
-const limiter = rateLimit({
-  windowMs: 60_000,
-  max: 60,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use('/save', limiter);
+// ============================================
+// СХЕМА ИГРОКА
+// ============================================
+const playerSchema = new mongoose.Schema({
+  // Telegram данные
+  telegramId: { type: String, required: true, unique: true },
+  username: String,
+  firstName: String,
+  lastName: String,
+  photoUrl: String,
 
-// ═══════════════════════════════
-//  MongoDB Schema
-// ═══════════════════════════════
-mongoose.connect(process.env.MONGODB_URI, {
-  serverSelectionTimeoutMS: 10000,
-}).then(() => console.log('[DB] MongoDB connected'))
-  .catch(e => { console.error('[DB] connect error:', e.message); process.exit(1); });
+  // Выбранный персонаж
+  charClass: { type: String, default: null }, // fire | light | water | null
 
-const saveSchema = new mongoose.Schema({
-  userId:   { type: String, required: true, unique: true, index: true },
-  username: { type: String, default: '' },
-  firstName:{ type: String, default: '' },
+  // Прогресс
+  level: { type: Number, default: 1 },
+  xp: { type: Number, default: 0 },
+  xpNeeded: { type: Number, default: 100 },
+  floor: { type: Number, default: 1 },
+  maxFloor: { type: Number, default: 1 },
+  killCount: { type: Number, default: 0 },
 
-  // Прогресс игры — сырой снимок объекта G
-  gameData: {
-    gold:     { type: Number, default: 1000000 },
-    pixr:     { type: Number, default: 0 },
-    gram:     { type: Number, default: 0 },
-    level:    { type: Number, default: 1 },
-    xp:       { type: Number, default: 0 },
-    xpNeeded: { type: Number, default: 100 },
-    floor:    { type: Number, default: 1 },
-    maxFloor: { type: Number, default: 1 },
-    killCount:{ type: Number, default: 0 },
-    hp:       { type: Number, default: 100 },
-    maxHp:    { type: Number, default: 100 },
-    charId:   { type: String, default: 'fire' },
-    stats:    { type: mongoose.Schema.Types.Mixed, default: {} },
-    baseStats:{ type: mongoose.Schema.Types.Mixed, default: {} },
-    upg:      { type: mongoose.Schema.Types.Mixed, default: {} },
-    potionLv: { type: Number, default: 0 },
-    potions:  { type: Number, default: 0 },
-    potionThreshold: { type: Number, default: 30 },
-    bp:       { type: mongoose.Schema.Types.Mixed, default: { active: false, claimed: [] } },
-    prem:     { type: mongoose.Schema.Types.Mixed, default: { tier: null, expiresAt: 0 } },
-    owned:    { type: mongoose.Schema.Types.Mixed, default: {} },
-    skills:   { type: mongoose.Schema.Types.Mixed, default: {} },
-    inventory:{ type: mongoose.Schema.Types.Mixed, default: [] },
-    equipped: { type: mongoose.Schema.Types.Mixed, default: {} },
-    invFilter:{ type: String, default: 'all' },
+  // Характеристики
+  stats: {
+    atk: { type: Number, default: 10 },
+    def: { type: Number, default: 5 },
+    spd: { type: Number, default: 3 },
+    hp: { type: Number, default: 100 },
+    crit: { type: Number, default: 5 },
+    dodge: { type: Number, default: 3 },
+    atkSpd: { type: Number, default: 1.0 }
+  },
+  hp: { type: Number, default: 100 },
+  maxHp: { type: Number, default: 100 },
+
+  // Улучшения
+  upg: {
+    atk: { type: Number, default: 0 },
+    def: { type: Number, default: 0 },
+    hp: { type: Number, default: 0 },
+    spd: { type: Number, default: 0 },
+    crit: { type: Number, default: 0 },
+    dodge: { type: Number, default: 0 },
+    atkSpd: { type: Number, default: 0 }
   },
 
-  cp:        { type: Number, default: 0 },   // для лидерборда
-  updatedAt: { type: Date,   default: Date.now },
-}, { versionKey: false });
+  // Инвентарь (полный массив)
+  inventory: { type: Array, default: [] },
 
-const Save = mongoose.model('Save', saveSchema);
+  // Экипировка
+  equipped: {
+    weapon: { type: Object, default: null },
+    body: { type: Object, default: null },
+    legs: { type: Object, default: null },
+    gloves: { type: Object, default: null },
+    boots: { type: Object, default: null },
+    helmet: { type: Object, default: null },
+    ring: { type: Object, default: null },
+    belt: { type: Object, default: null }
+  },
 
-// ═══════════════════════════════
-//  Telegram Auth Helper
-// ═══════════════════════════════
-function verifyTelegramInitData(initData) {
-  if (!initData) return null;
+  // Навыки
+  skills: { type: Object, default: {} },
+
+  // Ресурсы
+  gold: { type: Number, default: 0 },
+  pixr: { type: Number, default: 0 },
+  gram: { type: Number, default: 0 },
+  potions: { type: Number, default: 0 },
+  potionLv: { type: Number, default: 0 },
+  potionThreshold: { type: Number, default: 30 },
+
+  // Battle Pass
+  bp: {
+    active: { type: Boolean, default: false },
+    claimed: { type: Array, default: [] }
+  },
+
+  // Premium
+  prem: {
+    tier: { type: String, default: null },
+    expiresAt: { type: Number, default: 0 }
+  },
+
+  // Версия и метаданные
+  version: { type: Number, default: 0 },
+  updatedAt: { type: Number, default: Date.now },
+  createdAt: { type: Number, default: Date.now }
+});
+
+const Player = mongoose.model('Player', playerSchema);
+
+// ============================================
+// ВАЛИДАЦИЯ TELEGRAM INITDATA
+// ============================================
+function validateTelegramInitData(initData) {
+  if (!initData || !BOT_TOKEN) return false;
 
   const params = new URLSearchParams(initData);
-  const hash   = params.get('hash');
-  if (!hash) return null;
-
+  const hash = params.get('hash');
   params.delete('hash');
 
-  // Сортируем ключи и собираем строку
-  const dataCheckString = [...params.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}=${v}`)
-    .join('\n');
+  const sortedKeys = Array.from(params.keys()).sort();
+  const dataCheckString = sortedKeys.map(key => `${key}=${params.get(key)}`).join('\n');
 
-  const secret = crypto
-    .createHmac('sha256', 'WebAppData')
-    .update(process.env.BOT_TOKEN)
-    .digest();
+  const secretKey = crypto.createHmac('sha256', 'WebAppData').update(BOT_TOKEN).digest();
+  const computedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(dataCheckString)
-    .digest('hex');
-
-  if (expected !== hash) return null;
-
-  // Проверяем свежесть (5 минут)
-  const authDate = parseInt(params.get('auth_date') || '0', 10);
-  if (Date.now() / 1000 - authDate > 300) return null;
-
-  const userStr = params.get('user');
-  if (!userStr) return null;
-
-  try {
-    return JSON.parse(userStr);
-  } catch {
-    return null;
-  }
+  return computedHash === hash;
 }
 
-// ── Middleware для проверки токена ──
-function authMiddleware(req, res, next) {
-  const token = req.headers['x-tg-token'] || '';
-
-  // DEV: если передан x-dev-userid, пропускаем в dev-режиме
-  if (process.env.NODE_ENV !== 'production' && req.headers['x-dev-userid']) {
-    req.tgUser = { id: req.headers['x-dev-userid'], first_name: 'Dev', username: 'dev' };
-    return next();
-  }
-
-  const user = verifyTelegramInitData(token);
-  if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
-
-  req.tgUser = user;
-  next();
+// ============================================
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// ============================================
+function getDefaultPlayer() {
+  return {
+    level: 1,
+    xp: 0,
+    xpNeeded: 100,
+    floor: 1,
+    maxFloor: 1,
+    killCount: 0,
+    stats: { atk: 10, def: 5, spd: 3, hp: 100, crit: 5, dodge: 3, atkSpd: 1.0 },
+    hp: 100,
+    maxHp: 100,
+    upg: { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 },
+    inventory: [],
+    equipped: { weapon: null, body: null, legs: null, gloves: null, boots: null, helmet: null, ring: null, belt: null },
+    skills: {},
+    gold: 0,
+    pixr: 0,
+    gram: 0,
+    potions: 0,
+    potionLv: 0,
+    potionThreshold: 30,
+    bp: { active: false, claimed: [] },
+    prem: { tier: null, expiresAt: 0 },
+    version: 0
+  };
 }
 
-// ═══════════════════════════════
-//  POST /auth
-//  Авторизация и получение/создание профиля
-// ═══════════════════════════════
-app.post('/auth', authMiddleware, async (req, res) => {
-  try {
-    const { id, username, first_name } = req.tgUser;
-    const userId = String(id);
+// ============================================
+// API РОУТЫ
+// ============================================
 
-    let doc = await Save.findOne({ userId });
-    if (!doc) {
-      doc = await Save.create({
-        userId,
-        username: username || '',
-        firstName: first_name || '',
-        gameData: {},
-        cp: 0,
+// ─── АВТОРИЗАЦИЯ ───
+app.post('/api/auth', async (req, res) => {
+  try {
+    const { initData } = req.body;
+    
+    if (!validateTelegramInitData(initData)) {
+      return res.status(401).json({ error: 'Invalid Telegram data' });
+    }
+
+    const params = new URLSearchParams(initData);
+    const userData = JSON.parse(params.get('user') || '{}');
+    
+    const telegramId = String(userData.id);
+    const username = userData.username || userData.first_name || 'Player';
+
+    // Ищем или создаем игрока
+    let player = await Player.findOne({ telegramId });
+
+    if (!player) {
+      player = new Player({
+        telegramId,
+        username,
+        firstName: userData.first_name,
+        lastName: userData.last_name,
+        photoUrl: userData.photo_url,
+        ...getDefaultPlayer()
       });
+      await player.save();
+      console.log(`🆕 New player: ${username} (${telegramId})`);
     }
 
     res.json({
-      ok: true,
-      user: { userId, username, firstName: first_name },
-      hasProgress: !!doc.updatedAt && doc.gameData.level > 1,
+      success: true,
+      player: {
+        telegramId: player.telegramId,
+        username: player.username,
+        charClass: player.charClass,
+        hasCharacter: !!player.charClass
+      }
     });
-  } catch (e) {
-    console.error('[/auth]', e);
-    res.status(500).json({ ok: false, error: 'Server error' });
+
+  } catch (error) {
+    console.error('Auth error:', error);
+    res.status(500).json({ error: 'Auth failed' });
   }
 });
 
-// ═══════════════════════════════
-//  GET /save
-//  Загрузка прогресса
-// ═══════════════════════════════
-app.get('/save', authMiddleware, async (req, res) => {
+// ─── ПОЛУЧИТЬ ИГРОКА ───
+app.get('/api/player/:telegramId', async (req, res) => {
   try {
-    const userId = String(req.tgUser.id);
-    const doc    = await Save.findOne({ userId });
-    if (!doc) return res.json({ ok: true, data: null });
+    const { telegramId } = req.params;
+    const player = await Player.findOne({ telegramId });
 
-    res.json({ ok: true, data: doc.gameData });
-  } catch (e) {
-    console.error('[GET /save]', e);
-    res.status(500).json({ ok: false, error: 'Server error' });
+    if (!player) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+
+    res.json({
+      success: true,
+      player: {
+        telegramId: player.telegramId,
+        username: player.username,
+        charClass: player.charClass,
+        level: player.level,
+        xp: player.xp,
+        xpNeeded: player.xpNeeded,
+        floor: player.floor,
+        maxFloor: player.maxFloor,
+        killCount: player.killCount,
+        stats: player.stats,
+        hp: player.hp,
+        maxHp: player.maxHp,
+        upg: player.upg,
+        inventory: player.inventory,
+        equipped: player.equipped,
+        skills: player.skills,
+        gold: player.gold,
+        pixr: player.pixr,
+        gram: player.gram,
+        potions: player.potions,
+        potionLv: player.potionLv,
+        potionThreshold: player.potionThreshold,
+        bp: player.bp,
+        prem: player.prem,
+        version: player.version,
+        updatedAt: player.updatedAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Get player error:', error);
+    res.status(500).json({ error: 'Failed to get player' });
   }
 });
 
-// ═══════════════════════════════
-//  POST /save
-//  Сохранение прогресса
-// ═══════════════════════════════
-app.post('/save', authMiddleware, async (req, res) => {
+// ─── СОХРАНИТЬ ВЫБОР ПЕРСОНАЖА ───
+app.post('/api/char', async (req, res) => {
   try {
-    const userId   = String(req.tgUser.id);
-    const gameData = req.body.gameData;
-    const cp       = req.body.cp || 0;
+    const { telegramId, charClass } = req.body;
 
-    if (!gameData) return res.status(400).json({ ok: false, error: 'No gameData' });
+    if (!['fire', 'light', 'water'].includes(charClass)) {
+      return res.status(400).json({ error: 'Invalid character class' });
+    }
 
-    // Санитизация: только безопасные числа
-    const sanitize = (v, def = 0, max = 1e12) => {
-      const n = Number(v);
-      return isFinite(n) ? Math.min(Math.max(n, 0), max) : def;
-    };
+    const player = await Player.findOne({ telegramId });
+    if (!player) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
 
-    const safe = {
-      gold:      sanitize(gameData.gold,      0, 1e12),
-      pixr:      sanitize(gameData.pixr,      0, 1e12),
-      gram:      sanitize(gameData.gram,      0, 1e9),
-      level:     sanitize(gameData.level,     1, 9999),
-      xp:        sanitize(gameData.xp,        0, 1e9),
-      xpNeeded:  sanitize(gameData.xpNeeded,  100, 1e9),
-      floor:     sanitize(gameData.floor,     1, 9999),
-      maxFloor:  sanitize(gameData.maxFloor,  1, 9999),
-      killCount: sanitize(gameData.killCount, 0, 1e9),
-      hp:        sanitize(gameData.hp,        1, 9999),
-      maxHp:     sanitize(gameData.maxHp,     1, 9999),
-      charId:    ['fire','light','water'].includes(gameData.charId) ? gameData.charId : 'fire',
-      stats:      gameData.stats     || {},
-      baseStats:  gameData.baseStats || {},
-      upg:        gameData.upg       || {},
-      potionLv:  sanitize(gameData.potionLv,  0, 10),
-      potions:   sanitize(gameData.potions,   0, 9999),
-      potionThreshold: sanitize(gameData.potionThreshold, 30, 99),
-      bp:        gameData.bp      || { active: false, claimed: [] },
-      prem:      gameData.prem    || { tier: null, expiresAt: 0 },
-      owned:     gameData.owned   || {},
-      skills:    gameData.skills  || {},
-      inventory: Array.isArray(gameData.inventory) ? gameData.inventory.slice(0, 500) : [],
-      equipped:  gameData.equipped  || {},
-      invFilter: gameData.invFilter || 'all',
-    };
+    player.charClass = charClass;
+    player.version += 1;
+    player.updatedAt = Date.now();
+    await player.save();
 
-    await Save.findOneAndUpdate(
-      { userId },
-      {
-        $set: {
-          gameData: safe,
-          cp: sanitize(cp, 0, 1e9),
-          updatedAt: new Date(),
-          username:  req.tgUser.username  || '',
-          firstName: req.tgUser.first_name || '',
-        },
-      },
-      { upsert: true }
-    );
+    res.json({ success: true, charClass });
 
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[POST /save]', e);
-    res.status(500).json({ ok: false, error: 'Server error' });
+  } catch (error) {
+    console.error('Save char error:', error);
+    res.status(500).json({ error: 'Failed to save character' });
   }
 });
 
-// ═══════════════════════════════
-//  GET /leaderboard
-//  Топ-50 игроков по CP
-// ═══════════════════════════════
-app.get('/leaderboard', async (req, res) => {
+// ─── СОХРАНИТЬ ПОЛНЫЙ СНЕПШОТ ───
+app.post('/api/save', async (req, res) => {
   try {
-    const rows = await Save
-      .find({}, { userId: 1, username: 1, firstName: 1, cp: 1, 'gameData.level': 1, 'gameData.maxFloor': 1 })
-      .sort({ cp: -1 })
-      .limit(50)
-      .lean();
+    const { telegramId, data, version } = req.body;
 
-    const list = rows.map((r, i) => ({
-      rank:      i + 1,
-      userId:    r.userId,
-      name:      r.firstName || r.username || `Player${r.userId.slice(-4)}`,
-      cp:        r.cp || 0,
-      level:     r.gameData?.level || 1,
-      maxFloor:  r.gameData?.maxFloor || 1,
-    }));
+    if (!telegramId || !data) {
+      return res.status(400).json({ error: 'Missing data' });
+    }
 
-    res.json({ ok: true, list });
-  } catch (e) {
-    console.error('[/leaderboard]', e);
-    res.status(500).json({ ok: false, error: 'Server error' });
+    const player = await Player.findOne({ telegramId });
+    if (!player) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+
+    // Проверяем версию (защита от конфликтов)
+    if (version < player.version) {
+      return res.status(409).json({ 
+        error: 'Conflict: server has newer version',
+        serverVersion: player.version 
+      });
+    }
+
+    // Обновляем все поля
+    const allowedFields = [
+      'level', 'xp', 'xpNeeded', 'floor', 'maxFloor', 'killCount',
+      'stats', 'hp', 'maxHp', 'upg', 'inventory', 'equipped', 'skills',
+      'gold', 'pixr', 'gram', 'potions', 'potionLv', 'potionThreshold',
+      'bp', 'prem'
+    ];
+
+    for (const field of allowedFields) {
+      if (data[field] !== undefined) {
+        player[field] = data[field];
+      }
+    }
+
+    player.version = version + 1;
+    player.updatedAt = Date.now();
+    await player.save();
+
+    res.json({ 
+      success: true, 
+      version: player.version,
+      updatedAt: player.updatedAt
+    });
+
+  } catch (error) {
+    console.error('Save error:', error);
+    res.status(500).json({ error: 'Failed to save' });
   }
 });
 
-// ── Health check ──
-app.get('/health', (req, res) => res.json({ ok: true, ts: Date.now() }));
+// ─── РЕЙТИНГ ───
+app.get('/api/ranking', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
 
-// ── 404 ──
-app.use((req, res) => res.status(404).json({ ok: false, error: 'Not found' }));
+    const players = await Player.find()
+      .select('telegramId username level floor gold stats')
+      .sort({ level: -1 })
+      .limit(limit);
 
-app.listen(PORT, () => console.log(`[Server] Port ${PORT}`));
+    // Рассчитываем CP
+    const ranking = players.map(p => {
+      const s = p.stats || { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0 };
+      const cp = Math.floor(
+        (s.atk || 0) * 4 + 
+        (s.def || 0) * 3 + 
+        (s.hp || 0) * 0.5 + 
+        (s.spd || 0) * 6 + 
+        (s.crit || 0) * 8 + 
+        (s.dodge || 0) * 8 +
+        (p.level || 1) * 20
+      );
+      return {
+        username: p.username || 'Player',
+        level: p.level || 1,
+        floor: p.floor || 1,
+        gold: p.gold || 0,
+        cp
+      };
+    });
+
+    res.json({ success: true, ranking });
+
+  } catch (error) {
+    console.error('Ranking error:', error);
+    res.status(500).json({ error: 'Failed to get ranking' });
+  }
+});
+
+// ─── ПРОВЕРКА ЗДОРОВЬЯ ───
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: Date.now() });
+});
+
+// ============================================
+// ЗАПУСК СЕРВЕРА
+// ============================================
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📡 API: http://localhost:${PORT}/api`);
+});
