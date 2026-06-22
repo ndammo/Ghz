@@ -379,29 +379,26 @@ function confirmChar() {
   applyCharacter(G_CHAR);
   document.getElementById('charSelect').classList.add('hidden');
   startGame();
-  // Сохраняем charId сразу после выбора персонажа
+  // Сохраняем charId сразу
   if (typeof triggerSave === 'function') triggerSave();
 }
 
-// Автозапуск с сохранённым персонажем (вызывается из state.js)
+// Автозапуск с сохранённым персонажем (вызывается из state.js после загрузки)
 function confirmCharById(charId) {
   if (!CHARS[charId]) return;
   Object.values(_csSpriteTimers).forEach(clearInterval);
   if (_csParticleTimer) cancelAnimationFrame(_csParticleTimer);
   _csSelected = charId;
   G_CHAR = CHARS[charId];
-  // Применяем спрайты персонажа но НЕ сбрасываем статы
   var ch = G_CHAR;
+  // Применяем спрайты персонажа
   spriteRun.src  = ch.runSrc;
   spriteAtk.src  = ch.atkSrc;
   spriteIdle.src = ch.idleSrc;
-  window.RUN_FRAMES_CUR  = ch.runFrames;
-  window.RUN_FW_CUR      = ch.runFW;
-  window.ATK_FRAMES_CUR  = ch.atkFrames;
-  window.ATK_FW_CUR      = ch.atkFW;
-  window.IDLE_FRAMES_CUR = ch.idleFrames;
-  window.IDLE_FW_CUR     = ch.idleFW;
-  // Восстанавливаем сохранённые статы (не дефолтные)
+  window.RUN_FRAMES_CUR  = ch.runFrames;  window.RUN_FW_CUR      = ch.runFW;
+  window.ATK_FRAMES_CUR  = ch.atkFrames;  window.ATK_FW_CUR      = ch.atkFW;
+  window.IDLE_FRAMES_CUR = ch.idleFrames; window.IDLE_FW_CUR     = ch.idleFW;
+  // Восстанавливаем сохранённые статы (НЕ дефолтные персонажа)
   if (G._savedBaseStats) {
     G.baseStats = Object.assign({}, G._savedBaseStats);
     Object.assign(G.stats, G._savedBaseStats);
@@ -416,12 +413,9 @@ function applyCharacter(ch) {
   spriteRun.src  = ch.runSrc;
   spriteAtk.src  = ch.atkSrc;
   spriteIdle.src = ch.idleSrc;
-  window.RUN_FRAMES_CUR  = ch.runFrames;
-  window.RUN_FW_CUR      = ch.runFW;
-  window.ATK_FRAMES_CUR  = ch.atkFrames;
-  window.ATK_FW_CUR      = ch.atkFW;
-  window.IDLE_FRAMES_CUR = ch.idleFrames;
-  window.IDLE_FW_CUR     = ch.idleFW;
+  window.RUN_FRAMES_CUR  = ch.runFrames;  window.RUN_FW_CUR      = ch.runFW;
+  window.ATK_FRAMES_CUR  = ch.atkFrames;  window.ATK_FW_CUR      = ch.atkFW;
+  window.IDLE_FRAMES_CUR = ch.idleFrames; window.IDLE_FW_CUR     = ch.idleFW;
   G.baseStats = Object.assign({}, ch.baseStats);
   Object.assign(G.stats, ch.baseStats);
   G.hp = G.stats.hp; G.maxHp = G.stats.hp;

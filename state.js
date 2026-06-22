@@ -64,33 +64,45 @@ function nextFloorCfg() { return FLOORS[Math.min(G.floor,     FLOORS.length - 1)
 //  TELEGRAM + BACKEND SYNC
 // ═══════════════════════════════
 
-const API_URL = 'https://ghz-production.up.railway.app'; // <-- вставь свой URL после деплоя
+const API_URL = 'https://ghz-production.up.railway.app';
 let _tgInitData  = '';
 let _saveDebounceTm = null;
 
 // ── Инициализация Telegram ──
 function tgInit() {
   var tg = window.Telegram && window.Telegram.WebApp;
-  if (!tg) { console.warn('Not in Telegram, offline mode'); return; }
+  if (!tg) { console.warn('[tg] not in Telegram, offline mode'); return; }
   tg.ready();
   tg.expand();
-  _tgInitData = tg.initData;
-  _authAndLoad();
+
+  // initData иногда не готов мгновенно — ждём до 1с
+  var attempts = 0;
+  var waitInit = setInterval(function() {
+    attempts++;
+    _tgInitData = tg.initData || '';
+    if (_tgInitData.length > 10 || attempts >= 10) {
+      clearInterval(waitInit);
+      console.log('[tg] initData length:', _tgInitData.length);
+      _authAndLoad();
+    }
+  }, 100);
+
   document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'hidden') _saveNow();
   });
-  setInterval(triggerSave, 30000); // FIX: был _saveSoon (не определена)
+  setInterval(triggerSave, 30000);
 }
 
 // ── Авторизация и загрузка сохранения ──
 async function _authAndLoad() {
   _showLoadingScreen(true, 'Подключение...');
-  var minWait = new Promise(function(r) { setTimeout(r, 2500); });
+  // Минимум 2с — чтобы все скрипты успели загрузиться
+  var minWait = new Promise(function(r) { setTimeout(r, 2000); });
 
   var savedCharId = null;
   try {
     var res  = await fetch(API_URL + '/auth', {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'TMA ' + _tgInitData }
     });
     var data = await res.json();
@@ -102,25 +114,24 @@ async function _authAndLoad() {
       }
     }
   } catch(e) {
-    console.error('Auth failed:', e);
+    console.error('[tg] auth failed:', e);
     _showLoadingScreen(true, 'Оффлайн режим...');
   }
 
-  // Ждём минимум 2.5с — чтобы скрипты успели загрузиться
   await minWait;
   _showLoadingScreen(false);
 
-  // Если есть сохранённый персонаж — запускаем без экрана выбора
+  // Если есть сохранённый персонаж — пропускаем экран выбора
   if (savedCharId) {
-    var attempts = 0;
+    var tries = 0;
     var tryStart = setInterval(function() {
-      attempts++;
+      tries++;
       if (typeof confirmCharById === 'function' && window.CHARS && window.CHARS[savedCharId]) {
         clearInterval(tryStart);
         confirmCharById(savedCharId);
-      } else if (attempts > 40) {
+      } else if (tries > 40) {
         clearInterval(tryStart);
-        console.warn('confirmCharById not found, showing charSelect');
+        console.warn('[tg] confirmCharById not ready');
       }
     }, 100);
   }
@@ -133,8 +144,8 @@ function _applyServerSave(save) {
                 'inventory','equipped','skills','bp','prem'];
   fields.forEach(function(f) { if (save[f] != null) G[f] = save[f]; });
   if (save.baseStats) {
-    G.baseStats      = Object.assign({}, save.baseStats);
-    G._savedBaseStats = Object.assign({}, save.baseStats); // для confirmCharById
+    G.baseStats       = Object.assign({}, save.baseStats);
+    G._savedBaseStats = Object.assign({}, save.baseStats);
     Object.assign(G.stats, save.baseStats);
   }
   if (save.charId) G._savedCharId = save.charId;
@@ -144,13 +155,13 @@ function _applyServerSave(save) {
 function _buildSavePayload() {
   return {
     charId:    (window.G_CHAR && window.G_CHAR.id) || G._savedCharId || null,
-    gold:      G.gold,      pixr:     G.pixr,     gram:     G.gram,
-    level:     G.level,     xp:       G.xp,       xpNeeded: G.xpNeeded,
-    floor:     G.floor,     maxFloor: G.maxFloor,
-    hp:        G.hp,        maxHp:    G.maxHp,     killCount: G.killCount,
-    upg:       G.upg,       potionLv: G.potionLv,  potions:  G.potions,
-    baseStats: G.baseStats, inventory: G.inventory, equipped: G.equipped,
-    skills:    G.skills,    bp:       G.bp,        prem:     G.prem,
+    gold:      G.gold,      pixr:      G.pixr,      gram:     G.gram,
+    level:     G.level,     xp:        G.xp,        xpNeeded: G.xpNeeded,
+    floor:     G.floor,     maxFloor:  G.maxFloor,
+    hp:        G.hp,        maxHp:     G.maxHp,      killCount: G.killCount,
+    upg:       G.upg,       potionLv:  G.potionLv,   potions:  G.potions,
+    baseStats: G.baseStats, inventory: G.inventory,  equipped:  G.equipped,
+    skills:    G.skills,    bp:        G.bp,         prem:      G.prem,
   };
 }
 
@@ -163,7 +174,7 @@ async function _saveNow() {
       headers: { 'Content-Type': 'application/json', 'Authorization': 'TMA ' + _tgInitData },
       body: JSON.stringify(_buildSavePayload())
     });
-  } catch(e) { console.error('Save failed:', e); }
+  } catch(e) { console.error('[tg] save failed:', e); }
 }
 
 // ── Debounce 3с ──
@@ -197,14 +208,10 @@ function _showLoadingScreen(show, statusText) {
       '<div style="width:160px;height:4px;background:#111130;border-radius:2px;overflow:hidden;border:1px solid #2a2a5a;">' +
         '<div id="tgLoadBar" style="height:100%;width:0%;background:linear-gradient(90deg,#5b1f8a,#f5c542);border-radius:2px;transition:width 0.3s;"></div>' +
       '</div>';
-    var st = document.createElement('style');
-    st.textContent = '';
-    document.head.appendChild(st);
     document.body.appendChild(el);
-    // Анимация прогресс-бара
     var pct = 0;
-    el._barTimer = setInterval(function() {
-      pct = Math.min(pct + Math.random() * 10 + 4, 88);
+    el._bar = setInterval(function() {
+      pct = Math.min(pct + Math.random() * 12 + 4, 88);
       var b = document.getElementById('tgLoadBar');
       if (b) b.style.width = pct + '%';
     }, 200);
@@ -212,12 +219,9 @@ function _showLoadingScreen(show, statusText) {
   if (!el) return;
   if (show) {
     el.style.display = 'flex';
-    if (statusText) {
-      var s = document.getElementById('tgLoadStatus');
-      if (s) s.textContent = statusText;
-    }
+    if (statusText) { var s = document.getElementById('tgLoadStatus'); if (s) s.textContent = statusText; }
   } else {
-    clearInterval(el._barTimer);
+    clearInterval(el._bar);
     var b = document.getElementById('tgLoadBar');
     if (b) b.style.width = '100%';
     setTimeout(function() { if (el) el.style.display = 'none'; }, 350);

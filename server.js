@@ -80,13 +80,16 @@ const Save = mongoose.model('Save', SaveSchema);
 // ═══════════════════════════════
 function validateTelegramData(initData) {
   try {
+    if (!initData || initData.trim() === '') {
+      console.log('[auth] empty initData');
+      return null;
+    }
     const params = new URLSearchParams(initData);
     const hash   = params.get('hash');
-    if (!hash) return null;
+    if (!hash) { console.log('[auth] no hash'); return null; }
 
     params.delete('hash');
 
-    // Сортируем ключи и строим data-check-string
     const dataCheckString = Array.from(params.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([k, v]) => `${k}=${v}`)
@@ -102,17 +105,26 @@ function validateTelegramData(initData) {
       .update(dataCheckString)
       .digest('hex');
 
-    if (expectedHash !== hash) return null;
+    if (expectedHash !== hash) {
+      console.log('[auth] hash mismatch — wrong BOT_TOKEN or tampered data');
+      return null;
+    }
 
-    // Проверяем свежесть (не старше 24ч)
+    // Даём 48ч (Telegram иногда кэширует initData)
     const authDate = parseInt(params.get('auth_date') || '0');
-    if (Date.now() / 1000 - authDate > 86400) return null;
+    if (Date.now() / 1000 - authDate > 172800) {
+      console.log('[auth] initData expired');
+      return null;
+    }
 
     const userStr = params.get('user');
-    if (!userStr) return null;
+    if (!userStr) { console.log('[auth] no user field'); return null; }
 
-    return JSON.parse(userStr);
-  } catch {
+    const user = JSON.parse(userStr);
+    console.log('[auth] ok userId:', user.id);
+    return user;
+  } catch(e) {
+    console.error('[auth] exception:', e.message);
     return null;
   }
 }
