@@ -3,17 +3,16 @@
   api.js — Клиентский модуль сохранения/загрузки
   Pixel Runner RPG
 
-  СТРАТЕГИЯ СОХРАНЕНИЙ:
+  СТРАТЕГИЯ СОХРАНЕНИЙ (УПРОЩЕННАЯ):
   1. Сервер — единственный источник истины
   2. localStorage — аварийный кэш (только при ошибках!)
   3. Автосохранение каждые 20 сек
-  4. При старте: сервер → если ошибка, то кэш
-  5. При сохранении: сервер → если ошибка, то кэш
-  6. При закрытии: Telegram WebApp API + fetch + кэш
+  4. При закрытии: 3 метода (Telegram API + fetch + localStorage)
+  5. sendBeacon — УБРАН (не работает в Telegram)
 
   API.init()          — авторизация + загрузка (сервер → кэш)
   API.save()          — полное сохранение (сервер → кэш)
-  API.saveOnClose()   — сохранение при закрытии (все методы)
+  API.saveOnClose()   — сохранение при закрытии (3 метода)
   API.partial(fields) — частичный патч (сервер → кэш)
   API.markDirty()     — пометить, что нужно сохранить
   API.savedHp         — HP из сохранения
@@ -35,6 +34,7 @@ const API = (function() {
   let _dirty = false;
   let _savedHp = null;
   let _isSaving = false;
+  let _lastSaveHash = '';
 
   function getInitData() {
     if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) {
@@ -60,17 +60,55 @@ const API = (function() {
 
   // ══════════════════════════════════════════════════════
   //  АВАРИЙНЫЙ КЭШ (localStorage)
-  //  ТОЛЬКО при ошибках сервера!
+  //  ТОЛЬКО при ошибках сервера или закрытии!
   // ══════════════════════════════════════════════════════
 
   function writeEmergencyCache(snapshot) {
     try {
       var key = _userId ? LS_KEY + '_' + _userId : LS_KEY;
-      localStorage.setItem(key, JSON.stringify({
-        data: snapshot,
-        timestamp: Date.now(),
-        userId: _userId
-      }));
+      // ✅ Сжимаем данные — только критическое
+      var compressed = {
+        charId: snapshot.charId,
+        gold: snapshot.gold,
+        pixr: snapshot.pixr,
+        gram: snapshot.gram,
+        level: snapshot.level,
+        xp: snapshot.xp,
+        xpNeeded: snapshot.xpNeeded,
+        floor: snapshot.floor,
+        maxFloor: snapshot.maxFloor,
+        killCount: snapshot.killCount,
+        hp: snapshot.hp,
+        maxHp: snapshot.maxHp,
+        baseStats: snapshot.baseStats,
+        stats: snapshot.stats,
+        upg: snapshot.upg,
+        potionLv: snapshot.potionLv,
+        potions: snapshot.potions,
+        potionThreshold: snapshot.potionThreshold,
+        bp: snapshot.bp,
+        prem: snapshot.prem,
+        // ✅ Инвентарь сжимаем (убираем лишние поля)
+        inventory: snapshot.inventory.map(function(item) {
+          return {
+            id: item.id,
+            slot: item.slot,
+            name: item.name,
+            rarity: item.rarity,
+            level: item.level,
+            stats: item.stats,
+            refine: item.refine || 0,
+            isSkillBook: item.isSkillBook || false,
+            bookSkillId: item.bookSkillId || null,
+            forClass: item.forClass || null,
+          };
+        }),
+        equipped: snapshot.equipped,
+        skills: snapshot.skills,
+        timestamp: Date.now()
+      };
+      
+      localStorage.setItem(key, JSON.stringify(compressed));
       console.log('[API] Emergency cache saved');
       return true;
     } catch(e) {
@@ -94,7 +132,7 @@ const API = (function() {
       }
       
       console.log('[API] Emergency cache found from', new Date(parsed.timestamp));
-      return parsed.data;
+      return parsed;
     } catch(e) {
       console.warn('[API] Emergency cache read failed:', e.message);
       return null;
@@ -254,16 +292,32 @@ const API = (function() {
     }
   }
 
-  // ⚠️ ГАРАНТИРОВАННОЕ сохранение при закрытии!
+  // ⚠️ ГАРАНТИРОВАННОЕ сохранение при закрытии (3 метода)
   function saveOnClose() {
     if (!_initData) return;
     
     var snapshot = buildSnapshot();
     
-    // ✅ 1. Всегда пишем в localStorage (гарантированно!)
+    // ✅ Проверяем, изменились ли данные
+    var hash = JSON.stringify({
+      hp: snapshot.hp,
+      gold: snapshot.gold,
+      xp: snapshot.xp,
+      level: snapshot.level,
+      floor: snapshot.floor,
+      killCount: snapshot.killCount,
+    });
+    
+    if (hash === _lastSaveHash) {
+      console.log('[API] No changes, skipping save on close');
+      return;
+    }
+    _lastSaveHash = hash;
+    
+    // ✅ 1. Всегда пишем в localStorage (ГАРАНТИРОВАННО!)
     writeEmergencyCache(snapshot);
     
-    // ✅ 2. Пробуем отправить через Telegram WebApp (надежнее всего)
+    // ✅ 2. Пробуем отправить через Telegram WebApp (НАДЕЖНО)
     try {
       if (window.Telegram && window.Telegram.WebApp) {
         window.Telegram.WebApp.sendData(JSON.stringify({
@@ -276,7 +330,7 @@ const API = (function() {
       console.warn('[API] Telegram.sendData failed:', e.message);
     }
     
-    // ✅ 3. Пробуем через fetch + keepalive
+    // ✅ 3. Пробуем через fetch + keepalite (БЫСТРО)
     try {
       var payload = Object.assign({}, snapshot, { _initData: _initData });
       fetch(BASE_URL + '/save/close', {
@@ -290,17 +344,7 @@ const API = (function() {
       console.warn('[API] Fetch close failed:', e.message);
     }
     
-    // ✅ 4. sendBeacon как последняя надежда (для старых браузеров)
-    try {
-      var blob = new Blob(
-        [JSON.stringify({ _initData: _initData, data: snapshot })],
-        { type: 'application/json' }
-      );
-      navigator.sendBeacon(BASE_URL + '/save/beacon', blob);
-      console.log('[API] Beacon sent on close');
-    } catch (e) {
-      console.warn('[API] Beacon failed:', e.message);
-    }
+    // ❌ sendBeacon УБРАН — не работает в Telegram
   }
 
   // Частичный патч
