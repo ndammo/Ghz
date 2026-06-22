@@ -2,6 +2,7 @@
   ══════════════════════════════════════════════════════
   server.js — Backend для PIXEL RPG
   Express + MongoDB (Mongoose) + Telegram WebApp auth
+  + Админ-панель
   ══════════════════════════════════════════════════════
 */
 
@@ -9,6 +10,7 @@ require('dotenv').config();
 const express  = require('express');
 const mongoose = require('mongoose');
 const crypto   = require('crypto');
+const path     = require('path');
 
 const app = express();
 const BOT_USERNAME = process.env.BOT_USERNAME || 'YourBotUsername';
@@ -180,7 +182,7 @@ function setLeaderboardCache(data) {
 }
 
 // ═══════════════════════════════
-//  Роуты
+//  ОСНОВНЫЕ РОУТЫ
 // ═══════════════════════════════
 app.get('/', (req, res) => {
   res.json({ ok: true, service: 'pixel-rpg', db: mongoose.connection.readyState === 1 });
@@ -447,6 +449,325 @@ app.post('/api/ref/claim', async (req, res) => {
     _claiming.delete(tg.id);
   }
 });
+
+
+// ═══════════════════════════════
+//  АДМИН-ПАНЕЛЬ
+// ═══════════════════════════════
+
+// ── Конфиг админов ──
+const ADMIN_CREDENTIALS = {
+  admin: {
+    password: 'pixel2024',
+    role: 'superadmin'
+  }
+};
+
+// ── Сессии ──
+const adminSessions = new Map();
+
+function generateSessionId() {
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
+
+function createSession(login, role) {
+  const sessionId = generateSessionId();
+  adminSessions.set(sessionId, {
+    login,
+    role,
+    expires: Date.now() + 24 * 60 * 60 * 1000
+  });
+  return sessionId;
+}
+
+function getSession(sessionId) {
+  const session = adminSessions.get(sessionId);
+  if (!session) return null;
+  if (session.expires < Date.now()) {
+    adminSessions.delete(sessionId);
+    return null;
+  }
+  return session;
+}
+
+function requireAdmin(req, res, next) {
+  const sessionId = req.headers['x-admin-session'] || req.query.session;
+  const session = getSession(sessionId);
+  
+  if (!session) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+  
+  req.admin = session;
+  next();
+}
+
+// ── Модель для логов ──
+const AdminLogSchema = new mongoose.Schema({
+  admin: String,
+  action: String,
+  target: String,
+  details: mongoose.Schema.Types.Mixed,
+  timestamp: { type: Number, default: Date.now }
+});
+const AdminLog = mongoose.model('AdminLog', AdminLogSchema);
+
+async function logAdminAction(admin, action, target, details) {
+  try {
+    await AdminLog.create({ admin, action, target, details });
+  } catch (e) {
+    console.error('❌ [admin] log error:', e.message);
+  }
+}
+
+// ── Роуты админки ──
+app.post('/admin/login', express.json(), (req, res) => {
+  const { login, password } = req.body;
+  
+  if (!login || !password) {
+    return res.status(400).json({ ok: false, error: 'missing_credentials' });
+  }
+  
+  const admin = ADMIN_CREDENTIALS[login];
+  if (!admin || admin.password !== password) {
+    return res.status(401).json({ ok: false, error: 'invalid_credentials' });
+  }
+  
+  const sessionId = createSession(login, admin.role);
+  
+  res.json({
+    ok: true,
+    session: sessionId,
+    role: admin.role,
+    login: login
+  });
+});
+
+app.get('/admin/check', (req, res) => {
+  const sessionId = req.headers['x-admin-session'] || req.query.session;
+  const session = getSession(sessionId);
+  
+  if (!session) {
+    return res.json({ ok: false, error: 'unauthorized' });
+  }
+  
+  res.json({ ok: true, role: session.role, login: session.login });
+});
+
+app.post('/admin/logout', (req, res) => {
+  const sessionId = req.headers['x-admin-session'] || req.body.session;
+  if (sessionId) {
+    adminSessions.delete(sessionId);
+  }
+  res.json({ ok: true });
+});
+
+// ── API админки ──
+app.get('/admin/api/users', requireAdmin, async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const search = req.query.search || '';
+    const skip = (page - 1) * limit;
+    
+    let filter = {};
+    if (search) {
+      filter = {
+        $or: [
+          { tgId: { $regex: search, $options: 'i' } },
+          { username: { $regex: search, $options: 'i' } },
+          { firstName: { $regex: search, $options: 'i' } }
+        ]
+      };
+    }
+    
+    const total = await Save.countDocuments(filter);
+    const users = await Save.find(filter)
+      .sort({ updatedAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+    
+    res.json({
+      ok: true,
+      users: users.map(u => ({
+        tgId: u.tgId,
+        username: u.username,
+        firstName: u.firstName,
+        charId: u.charId,
+        level: u.level,
+        cp: u.cp,
+        floor: u.floor,
+        updatedAt: u.updatedAt,
+        data: u.data || {}
+      })),
+      total,
+      page,
+      limit,
+      pages: Math.ceil(total / limit)
+    });
+  } catch (e) {
+    console.error('❌ [admin] users error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/admin/api/user/:tgId', requireAdmin, async (req, res) => {
+  try {
+    const user = await Save.findOne({ tgId: req.params.tgId }).lean();
+    if (!user) {
+      return res.status(404).json({ ok: false, error: 'user_not_found' });
+    }
+    
+    res.json({
+      ok: true,
+      user: {
+        tgId: user.tgId,
+        username: user.username,
+        firstName: user.firstName,
+        charId: user.charId,
+        level: user.level,
+        cp: user.cp,
+        floor: user.floor,
+        updatedAt: user.updatedAt,
+        refBy: user.refBy,
+        refMilestones: user.refMilestones,
+        data: user.data || {}
+      }
+    });
+  } catch (e) {
+    console.error('❌ [admin] user error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
+  try {
+    const { tgId } = req.params;
+    const updates = req.body;
+    
+    const updateData = {};
+    
+    if (updates.gold !== undefined) updateData['data.gold'] = updates.gold;
+    if (updates.pixr !== undefined) updateData['data.pixr'] = updates.pixr;
+    if (updates.gram !== undefined) updateData['data.gram'] = updates.gram;
+    if (updates.hp !== undefined) updateData['data.hp'] = updates.hp;
+    if (updates.level !== undefined) updateData.level = updates.level;
+    if (updates.floor !== undefined) updateData.floor = updates.floor;
+    if (updates.charId !== undefined) updateData.charId = updates.charId;
+    
+    updateData.updatedAt = Date.now();
+    
+    await Save.updateOne(
+      { tgId: tgId },
+      { $set: updateData }
+    );
+    
+    await logAdminAction(req.admin.login, 'update_user', tgId, updates);
+    
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ [admin] update error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/admin/api/stats', requireAdmin, async (req, res) => {
+  try {
+    const totalUsers = await Save.countDocuments();
+    const usersWithChar = await Save.countDocuments({ charId: { $ne: null } });
+    
+    const floors = await Save.aggregate([
+      { $group: { _id: '$floor', count: { $sum: 1 } } },
+      { $sort: { _id: 1 } }
+    ]);
+    
+    const now = Date.now();
+    const active24h = await Save.countDocuments({
+      updatedAt: { $gt: now - 24 * 60 * 60 * 1000 }
+    });
+    
+    const topCP = await Save.find({ charId: { $ne: null } })
+      .sort({ cp: -1 })
+      .limit(10)
+      .select('username firstName level cp charId')
+      .lean();
+    
+    res.json({
+      ok: true,
+      stats: {
+        totalUsers,
+        usersWithChar,
+        active24h,
+        floors,
+        topCP,
+        online: adminSessions.size
+      }
+    });
+  } catch (e) {
+    console.error('❌ [admin] stats error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/admin/api/logs', requireAdmin, async (req, res) => {
+  try {
+    const logs = await AdminLog.find()
+      .sort({ timestamp: -1 })
+      .limit(100)
+      .lean();
+    
+    res.json({ ok: true, logs });
+  } catch (e) {
+    console.error('❌ [admin] logs error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/admin/api/broadcast', requireAdmin, async (req, res) => {
+  try {
+    const { message, target } = req.body;
+    
+    if (!message || message.length < 1) {
+      return res.status(400).json({ ok: false, error: 'empty_message' });
+    }
+    
+    await logAdminAction(req.admin.login, 'broadcast', 'all', { 
+      message: message.substring(0, 100),
+      target: target || 'all'
+    });
+    
+    let sent = 0;
+    if (bot) {
+      const users = await Save.find({ charId: { $ne: null } }).select('tgId').lean();
+      for (const user of users) {
+        try {
+          await bot.sendMessage(user.tgId, message);
+          sent++;
+        } catch (e) {
+          // Игнорируем
+        }
+      }
+    }
+    
+    res.json({ ok: true, sent });
+  } catch (e) {
+    console.error('❌ [admin] broadcast error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Отдача админ-панели ──
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'));
+});
+app.get('/admin.js', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.js'));
+});
+app.get('/admin.css', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.css'));
+});
+
 
 // ═══════════════════════════════
 //  Бот
