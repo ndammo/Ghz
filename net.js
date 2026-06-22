@@ -258,8 +258,8 @@
   function flush() {
     if (!SYNC.started) return;
     var snap = serializeState();
-    writeLocal(snap);           // всегда в localStorage синхронно
-    if (!SYNC.online) return;
+    writeLocal(snap);           // localStorage — всегда синхронно
+    if (!SYNC.online || !SYNC.serverConfirmed) return; // не пишем на сервер без подтверждения
     try {
       fetch(API + '/api/save', {
         method: 'POST',
@@ -412,7 +412,7 @@
         } else if (sTs > lTs + 3000) {
           hotApply(server.data);
         }
-      } else if (!server) {
+      } else if (!server || !server.data) {
         // ── СЕРВЕР — ИСТОЧНИК ИСТИНЫ ──
         // Сервер вернул ok:true, save:null → пользователь удалён или новый.
         // Если у нас был локальный старт — сбрасываем, сервер главнее.
