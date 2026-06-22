@@ -28,8 +28,22 @@ const crypto   = require('crypto');
 
 const app = express();
 const BOT_USERNAME = process.env.BOT_USERNAME || 'YourBotUsername';
+if (!process.env.BOT_USERNAME) console.warn('⚠️  BOT_USERNAME не задан — реферальные ссылки сломаны!');
 const REF_GOLD_PER_MILESTONE = 500;
 const REF_MILESTONE_STEP     = 5;   // каждые 5 уровней друга
+
+// ── Простой in-memory rate limiter (без npm пакета) ──
+// maxReqs запросов за windowMs миллисекунд на одного пользователя
+const _rl = new Map();
+function rateLimit(tgId, maxReqs, windowMs) {
+  const now = Date.now();
+  let e = _rl.get(tgId);
+  if (!e || now > e.reset) { _rl.set(tgId, { n: 1, reset: now + windowMs }); return false; }
+  if (++e.n > maxReqs) return true; // лимит превышен
+  return false;
+}
+// Чистим старые записи раз в 5 минут
+setInterval(() => { const now = Date.now(); _rl.forEach((v, k) => { if (now > v.reset) _rl.delete(k); }); }, 300000);
 
 // ── CORS ──
 app.use((req, res, next) => {
@@ -61,7 +75,8 @@ const SaveSchema = new mongoose.Schema({
   level:     { type: Number, default: 1 },
   cp:        { type: Number, default: 0 },
   floor:     { type: Number, default: 1 },
-  updatedAt: { type: Number, default: 0 },
+  updatedAt:    { type: Number, default: 0 },
+  refClaimVer:  { type: Number, default: 0 }, // версия для optimistic lock в /api/ref/claim
   // Реферальная система
   refBy:        { type: String, default: null },  // tgId пригласившего
   // Для каждого друга — максимальный уже вознаграждённый уровень
@@ -94,6 +109,10 @@ function verifyTelegram(initData) {
     const calc = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
     if (calc !== hash) return null;
   }
+
+  // Проверка auth_date: не принимаем initData старше 24 часов
+  const authDate = parseInt(params.get('auth_date') || '0', 10);
+  if (authDate && (Math.floor(Date.now() / 1000) - authDate) > 86400) return null;
 
   let user = null;
   try { user = JSON.parse(params.get('user') || 'null'); } catch (e) {}
@@ -181,6 +200,8 @@ app.post('/api/load', async (req, res) => {
 // ── Сохранение полного снапшота ──
 app.post('/api/save', async (req, res) => {
   const tg = authUser(req, res); if (!tg) return;
+  // 8 запросов за 15 сек на пользователя (норма: 1/15с + до 7 структурных действий)
+  if (rateLimit(tg.id, 8, 15000)) return res.status(429).json({ ok: false, error: 'rate_limit' });
   const data = req.body && req.body.data;
   if (!data || typeof data !== 'object') {
     return res.status(400).json({ ok: false, error: 'bad_data' });
@@ -223,6 +244,10 @@ app.post('/api/character', async (req, res) => {
 
 // ── Лидерборд ──
 app.get('/api/leaderboard', async (req, res) => {
+  // Простая защита: проверяем наличие tgId query-параметра как минимальный барьер от спама
+  // Полная HMAC-проверка не нужна — данные публичные, но отсекаем случайных ботов
+  if (!req.query.tgId) return res.status(401).json({ ok: false, error: 'missing_id' });
+  if (rateLimit('lb_' + req.query.tgId, 5, 60000)) return res.status(429).json({ ok: false, error: 'rate_limit' });
   try {
     const top = await Save.find({ charId: { $ne: null } })
       .sort({ cp: -1, level: -1 }).limit(50)
@@ -273,8 +298,13 @@ app.post('/api/ref/friends', async (req, res) => {
 });
 
 // ── Забрать награды за друзей ──
+// Защита от race condition: in-memory lock на время транзакции
+const _claiming = new Set();
 app.post('/api/ref/claim', async (req, res) => {
   const tg = authUser(req, res); if (!tg) return;
+  // Блокируем параллельные claim от одного пользователя
+  if (_claiming.has(tg.id)) return res.status(429).json({ ok: false, error: 'in_progress' });
+  _claiming.add(tg.id);
   try {
     const doc = await Save.findOne({ tgId: tg.id });
     if (!doc) return res.json({ ok: true, goldEarned: 0 });
@@ -285,19 +315,27 @@ app.post('/api/ref/claim', async (req, res) => {
     const { gold, newMilestones } = calcPendingGold(doc.refMilestones || {}, friends);
     if (gold === 0) return res.json({ ok: true, goldEarned: 0 });
 
-    // Обновляем milestones и добавляем золото в снапшот
-    const update = { $set: { refMilestones: newMilestones } };
-    // Если есть снапшот — прибавляем золото прямо в data.gold (атомарно)
+    // Атомарное обновление: используем $set с проверкой что milestones не изменились
+    // (optimistic lock через refClaimVer)
+    const updateFields = { refMilestones: newMilestones, $inc: { refClaimVer: 1 } };
     if (doc.data && typeof doc.data.gold === 'number') {
       doc.data.gold += gold;
-      update.$set.data = doc.data;
+      updateFields.data = doc.data;
     }
-    await Save.updateOne({ tgId: tg.id }, update);
+    const result = await Save.findOneAndUpdate(
+      { tgId: tg.id, refClaimVer: doc.refClaimVer || 0 },
+      { $set: { refMilestones: newMilestones, data: doc.data }, $inc: { refClaimVer: 1 } },
+      { new: false }
+    );
+    // Если result null — параллельный процесс уже обновил запись
+    if (!result) return res.json({ ok: true, goldEarned: 0, error: 'concurrent' });
 
     res.json({ ok: true, goldEarned: gold });
   } catch (e) {
     console.error('ref/claim error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
+  } finally {
+    _claiming.delete(tg.id);
   }
 });
 

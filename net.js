@@ -216,11 +216,16 @@
 
   function serverLoad() {
     if (!SYNC.online) return Promise.resolve(null);
+    // AbortController — если сервер не ответил за 5 сек, прерываем fetch
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 5000) : null;
     return fetch(API + '/api/load', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ initData: TG_INIT, startParam: START_PARAM }),
-    }).then(function (r) { return r.json(); });
+      signal: ctrl ? ctrl.signal : undefined,
+    }).then(function (r) { clearTimeout(timer); return r.json(); })
+      .catch(function (e) { clearTimeout(timer); throw e; });
   }
 
   function serverSave(snap) {
@@ -306,7 +311,7 @@
   //  ЦИКЛЫ СИНХРОНИЗАЦИИ
   // ───────────────────────────────
   function startSyncLoops() {
-    setInterval(saveLocal, 1000);            // localStorage каждую 1 сек (дёшево, не теряем HP/золото)
+    setInterval(saveLocal, 2000);            // localStorage каждые 2 сек (баланс: свежесть vs CPU)
     setInterval(pushServer, 15000);          // сервер каждые 15 сек
 
     // visibilitychange — срабатывает при сворачивании в Telegram
@@ -335,6 +340,7 @@
   function resetToCharSelect() {
     // Стоп игры
     if (typeof gameActive !== 'undefined') window.gameActive = false;
+    if (typeof G_CHAR !== 'undefined') window.G_CHAR = null; // сброс персонажа
     try { if (typeof G !== 'undefined') {
       G.charId = null;
       G.gold = 0; G.pixr = 0; G.gram = 0;
@@ -417,7 +423,6 @@
         // Сервер вернул ok:true, save:null → пользователь удалён или новый.
         // Если у нас был локальный старт — сбрасываем, сервер главнее.
         if (SYNC.started) {
-          writeLocal(null);
           localStorage.removeItem(LS_KEY);
           SYNC.started = false;
           SYNC.serverConfirmed = false;

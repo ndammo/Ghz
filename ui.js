@@ -398,6 +398,14 @@ function renderFriends() {
   _friendsLoading = true;
   body.innerHTML = '<div style="text-align:center;padding:40px 0;color:#445;font-size:12px;">Загрузка...</div>';
 
+  // Страховочный timeout: сбрасываем флаг если ответа нет 10 сек
+  var _flTimeout = setTimeout(function () {
+    if (_friendsLoading) {
+      _friendsLoading = false;
+      body.innerHTML = '<div style="color:#f44;text-align:center;padding:30px 0;font-size:12px;">Нет соединения</div>';
+    }
+  }, 10000);
+
   fetch(window.GameSync._API + '/api/ref/friends', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -405,11 +413,13 @@ function renderFriends() {
   })
   .then(function(r) { return r.json(); })
   .then(function(r) {
+    clearTimeout(_flTimeout);
     _friendsLoading = false;
     if (!r.ok) { body.innerHTML = '<div style="color:#f44;text-align:center;padding:30px 0;font-size:12px;">Ошибка загрузки</div>'; return; }
     renderFriendsData(r, body);
   })
   .catch(function() {
+    clearTimeout(_flTimeout);
     _friendsLoading = false;
     body.innerHTML = '<div style="color:#f44;text-align:center;padding:30px 0;font-size:12px;">Нет соединения</div>';
   });
@@ -544,7 +554,10 @@ function friendsClaim(btn) {
       btn.textContent = 'Забрать';
     }
   })
-  .catch(function() { btn.disabled = false; });
+  .catch(function() {
+    btn.disabled = false;
+    btn.textContent = 'Забрать';
+  });
 }
 function showFriendsToast(msg) {
   var el = document.getElementById('floorUnlock');
@@ -673,9 +686,6 @@ window.addEventListener('load', function() {
   initCsParticles();
 });
 
-// ── resize и Telegram SDK ──
+// ── resize ──
+// Telegram.WebApp.ready() и expand() вызываются в net.js → initTelegram(), не дублируем
 window.addEventListener('resize', resize);
-if (window.Telegram && window.Telegram.WebApp) {
-  Telegram.WebApp.ready();
-  Telegram.WebApp.expand();
-}
