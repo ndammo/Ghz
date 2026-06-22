@@ -27,6 +27,7 @@ function buyUpgrade(u) {
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
+  markChange('high');
 }
 
 function renderUpgrades() {
@@ -252,6 +253,7 @@ function goToFloor(n) {
   monsters = [];
   nextMonsterSpawn = player.worldX + 400;
   updateHUD(); switchTab('game');
+  markChange('high');
 }
 
 // ═══════════════════════════════
@@ -398,12 +400,20 @@ function confirmChar() {
   Object.values(_csSpriteTimers).forEach(clearInterval);
   if (_csParticleTimer) cancelAnimationFrame(_csParticleTimer);
   G_CHAR = CHARS[_csSelected];
-  applyCharacter(G_CHAR);
+  var isNewAccount = !hasSavedProgress();
+  G.character = _csSelected;
+  G.characterChosen = true;
+  if (isNewAccount) {
+    applyCharacterStats(G_CHAR);
+  }
+  applyCharacterVisuals(G_CHAR);
+  recalcStats();
+  markChange('critical');
   document.getElementById('charSelect').classList.add('hidden');
   startGame();
 }
 
-function applyCharacter(ch) {
+function applyCharacterVisuals(ch) {
   spriteRun.src  = ch.runSrc;
   spriteAtk.src  = ch.atkSrc;
   spriteIdle.src = ch.idleSrc;
@@ -413,10 +423,32 @@ function applyCharacter(ch) {
   window.ATK_FW_CUR      = ch.atkFW;
   window.IDLE_FRAMES_CUR = ch.idleFrames;
   window.IDLE_FW_CUR     = ch.idleFW;
+}
+
+function applyCharacterStats(ch) {
   G.baseStats = Object.assign({}, ch.baseStats);
   Object.assign(G.stats, ch.baseStats);
-  G.hp = G.stats.hp; G.maxHp = G.stats.hp;
-  // аватар теперь SVG, не трогаем
+  G.hp = G.stats.hp;
+  G.maxHp = G.stats.hp;
+}
+
+function applyCharacter(ch) {
+  applyCharacterVisuals(ch);
+  applyCharacterStats(ch);
+}
+
+function restoreSavedCharacter() {
+  var charId = G.character;
+  if (!charId || !CHARS[charId]) {
+    if (hasSavedProgress()) charId = G.character || 'fire';
+    else return false;
+  }
+  if (!CHARS[charId]) return false;
+  G.character = charId;
+  G_CHAR = CHARS[charId];
+  applyCharacterVisuals(G_CHAR);
+  recalcStats();
+  return true;
 }
 
 function startGame() {

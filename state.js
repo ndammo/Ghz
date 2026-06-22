@@ -14,9 +14,14 @@ function getTelegramInitData() {
   if (tg && tg.initData) {
     return tg.initData;
   }
-  // Для локальной разработки
+  // Для локальной разработки — стабильный test user id
+  let testId = localStorage.getItem('pixel_runner_test_user_id');
+  if (!testId) {
+    testId = String(Math.floor(Math.random() * 1000000000));
+    localStorage.setItem('pixel_runner_test_user_id', testId);
+  }
   return 'user=' + encodeURIComponent(JSON.stringify({
-    id: Math.floor(Math.random() * 1000000000),
+    id: parseInt(testId, 10),
     first_name: 'TestUser',
     username: 'test_user'
   }));
@@ -57,7 +62,8 @@ const G = {
   bp: { active: false, claimed: [] },
   prem: { tier: null, expiresAt: 0 },
   
-  character: 'fire',
+  character: null,
+  characterChosen: false,
   
   // Флаг загрузки
   _loaded: false,
@@ -129,8 +135,43 @@ function getFullGameState() {
     skills: G.skills,
     bp: G.bp,
     prem: G.prem,
-    character: G.character
+    character: G.character,
+    characterChosen: G.characterChosen
   };
+}
+
+// Есть ли сохранённый прогресс (не новый аккаунт)
+function hasSavedProgress() {
+  return !!(
+    G.characterChosen ||
+    G.killCount > 0 ||
+    G.level > 1 ||
+    G.gold > 0 ||
+    G.xp > 0 ||
+    G.inventory.length > 0 ||
+    G.maxFloor > 1 ||
+    Object.values(G.upg || {}).some(function(v) { return v > 0; })
+  );
+}
+
+// Синхронизация после загрузки с сервера
+function postLoadSync() {
+  if (typeof window !== 'undefined' && window._invIdCounter !== undefined) {
+    window._invIdCounter = G.invIdCounter || 0;
+  }
+  G.inventory.forEach(function(item) {
+    item._equipped = false;
+  });
+  Object.keys(G.equipped).forEach(function(slot) {
+    var eq = G.equipped[slot];
+    if (!eq) return;
+    var invItem = G.inventory.find(function(i) { return i.id === eq.id; });
+    if (invItem) {
+      G.equipped[slot] = invItem;
+      invItem._equipped = true;
+    }
+  });
+  if (typeof recalcStats === 'function') recalcStats();
 }
 
 // Локальное сохранение (в localStorage)
@@ -262,7 +303,8 @@ function applyServerData(data) {
   // Простые поля
   const fields = ['gold', 'pixr', 'gram', 'level', 'xp', 'xpNeeded', 'floor', 
                   'maxFloor', 'killCount', 'hp', 'maxHp', 'potionLv', 'potions',
-                  'potionThreshold', 'invFilter', 'invIdCounter', 'character'];
+                  'potionThreshold', 'invFilter', 'invIdCounter', 'character',
+                  'characterChosen'];
   fields.forEach(key => {
     if (data[key] !== undefined && data[key] !== null) {
       G[key] = data[key];
@@ -282,6 +324,8 @@ function applyServerData(data) {
   if (data.inventory && Array.isArray(data.inventory)) {
     G.inventory = data.inventory;
   }
+
+  postLoadSync();
 }
 
 // Загрузка с сервера
@@ -362,7 +406,7 @@ async function loadGameWithRecovery() {
 function setupAutoSave() {
   // Основной таймер — каждые 30 секунд
   setInterval(() => {
-    if (G._pendingChanges) {
+    if (G._loaded && G.characterChosen) {
       saveGameToServer();
     }
   }, 30000);
@@ -407,6 +451,7 @@ function setupAutoSave() {
 // Основная инициализация
 async function initGame() {
   // Расширяем Telegram WebApp
+  tg = window.Telegram?.WebApp || tg;
   if (tg) {
     tg.ready();
     tg.expand();

@@ -23,15 +23,21 @@
   ══════════════════════════════════════════════════════
 -->
 <link rel="stylesheet" href="style.css">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
-<div id="app">
+<div id="app" class="booting">
+
+  <!-- Загрузка — пока идёт initGame(), без мигания экранов -->
+  <div id="bootLoader">
+    <div class="boot-text">ЗАГРУЗКА...</div>
+  </div>
 
   <!-- ══════════════════════════════════
        ЭКРАН ВЫБОРА ПЕРСОНАЖА
        Показывается до старта игры
        ══════════════════════════════════ -->
-  <div id="charSelect">
+  <div id="charSelect" class="hidden">
     <div class="cs-bg"></div>
     <canvas class="cs-particles" id="csParticles"></canvas>
 
@@ -496,27 +502,32 @@
 <script>
   // ── ИНИЦИАЛИЗАЦИЯ ИГРЫ ──
   (async function() {
+    var app = document.getElementById('app');
+    var bootLoader = document.getElementById('bootLoader');
+    var charSelect = document.getElementById('charSelect');
+
     console.log('🚀 Initializing Pixel Runner...');
-    
-    // 1. Инициализируем Telegram и загружаем данные
-    await initGame();
-    
-    // 2. Инициализируем UI
-    initCharSelectSprites();
-    initCsParticles();
-    
-    // 3. Проверяем, есть ли сохранённый персонаж
-    if (G.character && G_CHAR) {
-      // Персонаж уже выбран — загружаем игру
-      applyCharacter(G_CHAR);
-      document.getElementById('charSelect').classList.add('hidden');
-      startGame();
-    } else {
-      // Показываем экран выбора персонажа
-      document.getElementById('charSelect').classList.remove('hidden');
+
+    try {
+      await initGame();
+      initCharSelectSprites();
+      initCsParticles();
+
+      if ((G.characterChosen || hasSavedProgress()) && restoreSavedCharacter()) {
+        charSelect.classList.add('hidden');
+        startGame();
+      } else {
+        charSelect.classList.remove('hidden');
+      }
+
+      console.log('✅ Game ready!');
+    } catch (err) {
+      console.error('Init failed:', err);
+      charSelect.classList.remove('hidden');
+    } finally {
+      app.classList.remove('booting');
+      bootLoader.classList.add('hidden');
     }
-    
-    console.log('✅ Game ready!');
   })();
   
   // ── ОБРАБОТЧИКИ СОХРАНЕНИЯ ──

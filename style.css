@@ -32,6 +32,32 @@ html, body {
   position: relative;
 }
 
+/* ── Загрузка при старте (пока initGame) ── */
+#bootLoader {
+  position: fixed; inset: 0; z-index: 300;
+  background: #020008;
+  display: flex; align-items: center; justify-content: center;
+}
+#bootLoader.hidden { display: none; }
+.boot-text {
+  font-size: 11px; letter-spacing: 4px; color: #5a4a8a;
+  text-transform: uppercase;
+  animation: bootPulse 1.2s ease-in-out infinite;
+}
+@keyframes bootPulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+#app.booting #hud,
+#app.booting #nav,
+#app.booting #skillsHud,
+#app.booting .bp-hud-btn,
+#app.booting .prem-hud-btn,
+#app.booting #gameCanvas {
+  visibility: hidden;
+}
+
 /* ── TOP HUD ── */
 #hud {
   position: absolute; top: 0; left: 0; right: 0;

@@ -7,7 +7,13 @@
   ══════════════════════════════════════════════════════
 */
 
-var _invIdCounter  = 0;
+var _invIdCounter  = G.invIdCounter || 0;
+
+function nextInvId() {
+  _invIdCounter = Math.max(_invIdCounter, G.invIdCounter || 0) + 1;
+  G.invIdCounter = _invIdCounter;
+  return _invIdCounter;
+}
 var _modalItemId   = null;
 var _invSelectMode = false;
 var _invSelected   = {};  // { itemId: true }
@@ -65,7 +71,7 @@ function generateItem(floor) {
   }
 
   return {
-    id: ++_invIdCounter, slot: type.slot, name: type.name,
+    id: nextInvId(), slot: type.slot, name: type.name,
     icon: itemIcon(type.slot, rarity.id, type.forClass || null),
     rarity: rarity.id, level: itemLv, stats: stats,
     forClass: type.forClass || null,
@@ -95,7 +101,7 @@ function tryDropSkillBook(floor) {
   var classLabels = { fire: 'Пирокан', light: 'Люмос', water: 'Аквас' };
   var classColors = { fire: '#ff7030', light: '#ffd040', water: '#40d0ff' };
   var book = {
-    id: ++_invIdCounter, slot: 'book',
+    id: nextInvId(), slot: 'book',
     name: 'Книга: ' + sk.name, icon: '📖', rarity: 'epic', level: 1, stats: {},
     isSkillBook: true, bookSkillId: sk.id,
     bookSkillIcon: sk.icon, bookSkillName: sk.name,
@@ -175,6 +181,7 @@ function equipItem(itemId) {
   item._equipped = true;
   recalcStats(); updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  markChange('high');
 }
 
 // ── Снять предмет ──
@@ -185,6 +192,7 @@ function unequipItem(itemId) {
   item._equipped = false;
   recalcStats(); updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  markChange('medium');
 }
 
 // ── Уничтожить предмет ──
@@ -196,6 +204,7 @@ function destroyItem(itemId) {
   G.inventory.splice(idx, 1);
   updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  markChange('medium');
 }
 
 // ═══════════════════════════════
@@ -239,6 +248,7 @@ function refineItem(itemId) {
     showRefineResult(false, item, false, cost);
   }
   updateHUD();
+  markChange('high');
 }
 
 // ── Оверлей результата заточки ──
@@ -312,6 +322,7 @@ function useSkillBook(skillId) {
   updateSkillsHud();
   renderUpgrades();
   if (activeTab === 'inv') renderInventory();
+  markChange('high');
 }
 
 // ═══════════════════════════════

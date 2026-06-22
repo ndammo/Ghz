@@ -340,6 +340,7 @@ function update(dt) {
       }
       updateHUD();
       checkFloorUnlock();
+      markChange('medium');
       return false;
     }
     return true;
@@ -364,6 +365,7 @@ function gainXP(amount) {
     G.hp = G.maxHp;
     showDmgPop('LV UP!', W * 0.4, GROUND * 0.5, '#fa0');
     updateHUD();
+    markChange('high');
   }
 }
 
@@ -386,6 +388,7 @@ function checkFloorUnlock() {
 function gameOverSequence() {
   var penalty = Math.floor(G.gold * 0.05);
   G.gold = Math.max(0, G.gold - penalty);
+  markChange('high');
   var modal = document.getElementById('deathModal');
   var txt   = document.getElementById('deathPenaltyText');
   if (txt) {
@@ -491,6 +494,7 @@ function upgPotion() {
   G.potionLv = lv + 1;
   updateHUD();
   openPotionModal();
+  markChange('high');
 }
 function closePotionModal() {
   document.getElementById('potionModal').classList.add('hidden');
@@ -504,10 +508,14 @@ function buyPotions(n) {
   updatePotionHud();
   document.getElementById('pmCount').textContent = G.potions;
   document.getElementById('pmGold').textContent = G.gold;
+  markChange('medium');
 }
 function savePotionThreshold(val) {
   var v = parseInt(val);
-  if (v >= 1 && v <= 99) G.potionThreshold = v;
+  if (v >= 1 && v <= 99) {
+    G.potionThreshold = v;
+    markChange('low');
+  }
 }
 
 // ═══════════════════════════════
@@ -526,7 +534,7 @@ const BP_REWARDS = [
         var val = Math.floor(base * mult * (s === st.primary ? 1.0 : 0.45) * 1.0);
         if (val > 0) stats[s] = val;
       });
-      var item = { id: ++_invIdCounter, slot: 'weapon', name: st.name,
+      var item = { id: nextInvId(), slot: 'weapon', name: st.name,
         icon: itemIcon('weapon', 'epic', st.forClass),
         rarity: 'epic', level: 10, stats: stats,
         forClass: st.forClass, classLabel: st.classLabel, classColor: st.classColor };
@@ -537,7 +545,7 @@ const BP_REWARDS = [
     apply: function() {
       var base = 10 * 2.5, mult = 1 + 3 * 0.55;
       var stats = { def: Math.floor(base * mult * 1.0), dodge: Math.floor(base * mult * 0.45) };
-      var item = { id: ++_invIdCounter, slot: 'ring', name: 'Кольцо битвы',
+      var item = { id: nextInvId(), slot: 'ring', name: 'Кольцо битвы',
         icon: itemIcon('ring', 'epic', null), rarity: 'epic', level: 10, stats: stats };
       G.inventory.push(item);
       if (typeof renderInventory === 'function') renderInventory();
@@ -558,7 +566,7 @@ const BP_REWARDS = [
       });
       var bonus = ['atk','def','hp','crit','dodge','spd'].filter(function(s) { return !stats[s]; });
       if (bonus.length) stats[bonus[0]] = Math.floor(base * 0.5);
-      var item = { id: ++_invIdCounter, slot: 'weapon', name: st.name,
+      var item = { id: nextInvId(), slot: 'weapon', name: st.name,
         icon: itemIcon('weapon', 'legend', st.forClass),
         rarity: 'legend', level: 20, stats: stats,
         forClass: st.forClass, classLabel: st.classLabel, classColor: st.classColor };
@@ -593,6 +601,7 @@ function buyBattlePass() {
   G.gram = parseFloat(((G.gram || 0) - 10).toFixed(3));
   G.bp.active = true;
   renderBattlePass();
+  markChange('critical');
 }
 function claimBpReward(idx) {
   if (!G.bp || !G.bp.active) return;
@@ -603,6 +612,7 @@ function claimBpReward(idx) {
   r.apply();
   G.bp.claimed.push(idx);
   renderBattlePass();
+  markChange('critical');
 }
 function renderBattlePass() {
   if (!G.bp) G.bp = { active: false, claimed: [] };
@@ -703,4 +713,5 @@ function buyPrem(tier) {
   updatePremStatus();
   closePremModal();
   showDmgPop('👑 ' + t.name + ' активен!', PLAYER_SCREEN_X, player.y - 30, '#c080ff');
+  markChange('critical');
 }
