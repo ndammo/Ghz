@@ -413,7 +413,9 @@ function confirmChar() {
   startGame();
 }
 
-function applyCharacterVisuals(ch) {
+// Установка спрайтов/анимаций персонажа (без сброса статов).
+// Вынесено отдельно, чтобы загрузка с сервера не затирала прокачку.
+function applyCharacterSprites(ch) {
   spriteRun.src  = ch.runSrc;
   spriteAtk.src  = ch.atkSrc;
   spriteIdle.src = ch.idleSrc;
@@ -425,30 +427,13 @@ function applyCharacterVisuals(ch) {
   window.IDLE_FW_CUR     = ch.idleFW;
 }
 
-function applyCharacterStats(ch) {
+function applyCharacter(ch) {
+  applyCharacterSprites(ch);
   G.baseStats = Object.assign({}, ch.baseStats);
   Object.assign(G.stats, ch.baseStats);
-  G.hp = G.stats.hp;
-  G.maxHp = G.stats.hp;
-}
-
-function applyCharacter(ch) {
-  applyCharacterVisuals(ch);
-  applyCharacterStats(ch);
-}
-
-function restoreSavedCharacter() {
-  var charId = G.character;
-  if (!charId || !CHARS[charId]) {
-    if (hasSavedProgress()) charId = G.character || 'fire';
-    else return false;
-  }
-  if (!CHARS[charId]) return false;
-  G.character = charId;
-  G_CHAR = CHARS[charId];
-  applyCharacterVisuals(G_CHAR);
-  recalcStats();
-  return true;
+  G.hp = G.stats.hp; G.maxHp = G.stats.hp;
+  G.charId = ch.id;
+  // аватар теперь SVG, не трогаем
 }
 
 function startGame() {
