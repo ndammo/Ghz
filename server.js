@@ -2,236 +2,54 @@
   ══════════════════════════════════════════════════════
   server.js — Backend для Pixel Runner RPG
   Express + MongoDB (Mongoose) + Telegram WebApp auth
-  
-  Версия: 2.0.0
+
+  Роуты:
+    GET  /                    — health-check
+    POST /api/load            — { initData, startParam }  -> { ok, save, user }
+    POST /api/save            — { initData, data }        -> { ok, updatedAt }
+    POST /api/character       — { initData, charId }      -> { ok }
+    GET  /api/leaderboard     — топ игроков по CP
+    POST /api/ref/friends     — { initData }              -> { ok, refLink, friends, pendingGold }
+    POST /api/ref/claim       — { initData }              -> { ok, goldEarned }
+
+  ENV (Railway -> Variables):
+    MONGODB_URI    — строка подключения MongoDB Atlas
+    BOT_TOKEN      — токен бота из @BotFather
+    BOT_USERNAME   — username бота (без @), напр. PixelRunnerBot
+    PORT           — задаётся Railway автоматически
+    ALLOW_INSECURE — '1' чтобы пропускать проверку подписи (только для теста)
   ══════════════════════════════════════════════════════
 */
 
 require('dotenv').config();
-const express = require('express');
+const express  = require('express');
 const mongoose = require('mongoose');
-const crypto = require('crypto');
-const compression = require('compression');
-const rateLimit = require('express-rate-limit');
-const helmet = require('helmet');
+const crypto   = require('crypto');
 
 const app = express();
+const BOT_USERNAME = process.env.BOT_USERNAME || 'YourBotUsername';
+const REF_GOLD_PER_MILESTONE = 500;
+const REF_MILESTONE_STEP     = 5;   // каждые 5 уровней друга
 
-// ═══════════════════════════════
-//  КОНСТАНТЫ
-// ═══════════════════════════════
-const API_VERSION = 'v1';
-const MAX_REQUEST_SIZE = 5 * 1024 * 1024; // 5MB
-const SAVE_RATE_LIMIT = 30;
-const GENERAL_RATE_LIMIT = 100;
-const LEADERBOARD_LIMIT = 50;
-const INACTIVE_DAYS = 30;
-
-const GAME_LIMITS = {
-  maxLevel: 9999,
-  maxGold: 999999999,
-  maxPixr: 999999999,
-  maxGram: 999999999,
-  maxFloor: 9999,
-  maxHp: 999999,
-  maxInventory: 500,
-  minHp: 0,
-  minLevel: 1
-};
-
-// ═══════════════════════════════
-//  1. БЕЗОПАСНОСТЬ
-// ═══════════════════════════════
-app.use(helmet({
-  contentSecurityPolicy: false,
-  crossOriginEmbedderPolicy: false
-}));
-
-// ═══════════════════════════════
-//  2. CORS
-// ═══════════════════════════════
+// ── CORS ──
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  
-  if (process.env.NODE_ENV === 'development') {
-    res.header('Access-Control-Allow-Origin', origin || '*');
-  } else {
-    if (origin && (
-      origin.startsWith('https://web.telegram.org') ||
-      origin === 'https://your-game.railway.app'
-    )) {
-      res.header('Access-Control-Allow-Origin', origin);
-    } else {
-      res.header('Access-Control-Allow-Origin', 'https://web.telegram.org');
-    }
-  }
-  
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.header('Access-Control-Max-Age', '86400');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
   res.header('Vary', 'Origin');
-  
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
+app.use(express.json({ limit: '1mb', type: ['application/json', 'text/plain'] }));
 
 // ═══════════════════════════════
-//  3. СЖАТИЕ
-// ═══════════════════════════════
-app.use(compression({
-  threshold: 1024,
-  level: 6
-}));
-
-// ═══════════════════════════════
-//  4. RATE LIMITING
-// ═══════════════════════════════
-const generalLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: GENERAL_RATE_LIMIT,
-  message: { ok: false, error: 'rate_limit', message: 'Too many requests' },
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => {
-    try {
-      const body = req.body;
-      if (body && body.initData) {
-        const params = new URLSearchParams(body.initData);
-        const user = JSON.parse(params.get('user') || '{}');
-        return user.id || req.ip;
-      }
-    } catch (e) {}
-    return req.ip;
-  }
-});
-
-const saveLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: SAVE_RATE_LIMIT,
-  message: { ok: false, error: 'too_many_saves', message: 'Too many save requests' },
-  keyGenerator: (req) => {
-    try {
-      const body = req.body;
-      if (body && body.initData) {
-        const params = new URLSearchParams(body.initData);
-        const user = JSON.parse(params.get('user') || '{}');
-        return user.id || req.ip;
-      }
-    } catch (e) {}
-    return req.ip;
-  }
-});
-
-app.use(generalLimiter);
-
-// ═══════════════════════════════
-//  5. ЛОГИРОВАНИЕ
-// ═══════════════════════════════
-app.use((req, res, next) => {
-  const start = Date.now();
-  
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    if (res.statusCode >= 400 || duration > 1000) {
-      console.warn(`⚠️ ${req.method} ${req.path} ${res.statusCode} - ${duration}ms`);
-    }
-  });
-  
-  next();
-});
-
-// ═══════════════════════════════
-//  6. ЗАЩИТА ОТ БОЛЬШИХ ЗАПРОСОВ
-// ═══════════════════════════════
-app.use((req, res, next) => {
-  if (req.method === 'GET') return next();
-  
-  let size = 0;
-  
-  req.on('data', chunk => {
-    size += chunk.length;
-    if (size > MAX_REQUEST_SIZE) {
-      console.warn(`⚠️ Request too large from ${req.ip}: ${size} bytes`);
-      res.status(413).json({ 
-        ok: false, 
-        error: 'payload_too_large',
-        message: 'Request body too large'
-      });
-      req.destroy();
-    }
-  });
-  
-  next();
-});
-
-// ═══════════════════════════════
-//  7. ПАРСИНГ JSON
-// ═══════════════════════════════
-app.use((req, res, next) => {
-  if (req.method === 'GET') return next();
-
-  let body = '';
-  
-  req.on('data', chunk => {
-    body += chunk;
-  });
-  
-  req.on('end', () => {
-    try {
-      req.body = body ? JSON.parse(body) : {};
-      next();
-    } catch (err) {
-      console.warn('⚠️ Invalid JSON from', req.ip);
-      res.status(400).json({ 
-        ok: false, 
-        error: 'invalid_json',
-        message: 'Invalid JSON format'
-      });
-    }
-  });
-  
-  req.on('error', (err) => {
-    if (err.code === 'ECONNRESET' || err.message?.includes('aborted')) {
-      return;
-    }
-    next(err);
-  });
-});
-
-// ═══════════════════════════════
-//  8. MongoDB
+//  MongoDB
 // ═══════════════════════════════
 const MONGODB_URI = process.env.MONGODB_URI;
-if (!MONGODB_URI) {
-  console.error('❌ MONGODB_URI не задан');
-  process.exit(1);
-}
-
-mongoose.connect(MONGODB_URI, {
-  serverSelectionTimeoutMS: 15000,
-  maxPoolSize: 10,
-  minPoolSize: 2,
-  socketTimeoutMS: 45000,
-})
-.then(() => console.log('✅ MongoDB подключена'))
-.catch(err => {
-  console.error('❌ MongoDB ошибка подключения:', err.message);
-  process.exit(1);
-});
-
-mongoose.connection.on('disconnected', () => {
-  console.warn('⚠️ MongoDB отключена');
-});
-
-mongoose.connection.on('reconnected', () => {
-  console.log('✅ MongoDB переподключена');
-});
-
-mongoose.connection.on('error', (err) => {
-  console.error('❌ MongoDB ошибка:', err.message);
-});
+if (!MONGODB_URI) console.error('❌ MONGODB_URI не задан');
+mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 15000 })
+  .then(() => console.log('✅ MongoDB подключена'))
+  .catch(err => console.error('❌ MongoDB error:', err.message));
 
 const SaveSchema = new mongoose.Schema({
   tgId:      { type: String, required: true, unique: true, index: true },
@@ -239,571 +57,249 @@ const SaveSchema = new mongoose.Schema({
   firstName: { type: String, default: '' },
   charId:    { type: String, default: null },
   data:      { type: mongoose.Schema.Types.Mixed, default: null },
+  // Денормализовано для лидерборда
   level:     { type: Number, default: 1 },
   cp:        { type: Number, default: 0 },
   floor:     { type: Number, default: 1 },
   updatedAt: { type: Number, default: 0 },
-}, { 
-  minimize: false,
-  timestamps: true 
-});
-
-SaveSchema.index({ cp: -1, level: -1 });
-SaveSchema.index({ updatedAt: 1 });
-SaveSchema.index({ charId: 1 });
+  // Реферальная система
+  refBy:        { type: String, default: null },  // tgId пригласившего
+  // Для каждого друга — максимальный уже вознаграждённый уровень
+  // { "friendTgId": 10, "anotherFriend": 5 }
+  refMilestones: { type: mongoose.Schema.Types.Mixed, default: {} },
+}, { minimize: false });
 
 const Save = mongoose.model('Save', SaveSchema);
 
 // ═══════════════════════════════
-//  9. ВАЛИДАЦИЯ ИГРОВЫХ ДАННЫХ
-// ═══════════════════════════════
-function validateGameData(data) {
-  if (!data || typeof data !== 'object') {
-    return { valid: false, reason: 'invalid_type' };
-  }
-  
-  if (!data.charId || typeof data.charId !== 'string') {
-    return { valid: false, reason: 'missing_charId' };
-  }
-  
-  if (data.gold < 0 || data.pixr < 0 || data.gram < 0) {
-    return { valid: false, reason: 'negative_currency' };
-  }
-  
-  if (data.level < GAME_LIMITS.minLevel || data.level > GAME_LIMITS.maxLevel) {
-    return { valid: false, reason: 'invalid_level' };
-  }
-  
-  if (data.gold > GAME_LIMITS.maxGold) {
-    return { valid: false, reason: 'gold_overflow' };
-  }
-  
-  if (data.pixr > GAME_LIMITS.maxPixr) {
-    return { valid: false, reason: 'pixr_overflow' };
-  }
-  
-  if (data.gram > GAME_LIMITS.maxGram) {
-    return { valid: false, reason: 'gram_overflow' };
-  }
-  
-  if (data.floor < 0 || data.floor > GAME_LIMITS.maxFloor) {
-    return { valid: false, reason: 'invalid_floor' };
-  }
-  
-  if (data.hp < GAME_LIMITS.minHp || data.hp > GAME_LIMITS.maxHp) {
-    return { valid: false, reason: 'invalid_hp' };
-  }
-  
-  if (data.inventory && Array.isArray(data.inventory)) {
-    if (data.inventory.length > GAME_LIMITS.maxInventory) {
-      return { valid: false, reason: 'inventory_overflow' };
-    }
-  }
-  
-  if (data.equipped && typeof data.equipped === 'object') {
-    const validSlots = ['weapon', 'armor', 'ring', 'boots', 'helmet'];
-    for (const slot of Object.keys(data.equipped)) {
-      if (!validSlots.includes(slot)) {
-        return { valid: false, reason: 'invalid_equip_slot' };
-      }
-    }
-  }
-  
-  if (data.baseStats && typeof data.baseStats === 'object') {
-    const validStats = ['atk', 'def', 'hp', 'spd', 'crit', 'dodge'];
-    for (const stat of Object.keys(data.baseStats)) {
-      if (!validStats.includes(stat)) {
-        return { valid: false, reason: 'invalid_stat' };
-      }
-      if (data.baseStats[stat] < 0 || data.baseStats[stat] > 999999) {
-        return { valid: false, reason: 'stat_overflow' };
-      }
-    }
-  }
-  
-  return { valid: true };
-}
-
-// ═══════════════════════════════
-//  10. ПРОВЕРКА TELEGRAM
+//  Проверка подписи Telegram initData
 // ═══════════════════════════════
 function verifyTelegram(initData) {
   if (!initData || typeof initData !== 'string') return null;
+  const params = new URLSearchParams(initData);
+  const hash = params.get('hash');
+  if (!hash) return null;
+  params.delete('hash');
 
-  try {
-    const params = new URLSearchParams(initData);
-    const hash = params.get('hash');
-    if (!hash) return null;
-    params.delete('hash');
+  const dataCheckString = [...params.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('\n');
 
-    const dataCheckString = [...params.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([k, v]) => `${k}=${v}`)
-      .join('\n');
-
+  const insecure = process.env.ALLOW_INSECURE === '1';
+  if (!insecure) {
     const botToken = process.env.BOT_TOKEN || '';
-    const insecure = process.env.ALLOW_INSECURE === '1';
-
-    if (!insecure) {
-      if (!botToken) {
-        console.error('❌ BOT_TOKEN не задан');
-        return null;
-      }
-      const secretKey = crypto.createHmac('sha256', 'WebAppData')
-        .update(botToken)
-        .digest();
-      const calc = crypto.createHmac('sha256', secretKey)
-        .update(dataCheckString)
-        .digest('hex');
-      if (calc !== hash) {
-        console.warn('⚠️ Invalid Telegram hash');
-        return null;
-      }
-    }
-
-    let user = null;
-    try {
-      user = JSON.parse(params.get('user') || 'null');
-    } catch (e) {
-      return null;
-    }
-    
-    if (!user || !user.id) return null;
-
-    return {
-      id:        String(user.id),
-      username:  user.username || '',
-      firstName: user.first_name || '',
-    };
-  } catch (err) {
-    console.error('❌ Telegram verification error:', err.message);
-    return null;
+    if (!botToken) return null;
+    const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
+    const calc = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+    if (calc !== hash) return null;
   }
+
+  let user = null;
+  try { user = JSON.parse(params.get('user') || 'null'); } catch (e) {}
+  if (!user || !user.id) return null;
+
+  return {
+    id:        String(user.id),
+    username:  user.username   || '',
+    firstName: user.first_name || '',
+    startParam: params.get('start_param') || '',
+  };
 }
 
 function authUser(req, res) {
-  const tg = verifyTelegram(req.body?.initData);
-  if (!tg) {
-    res.status(401).json({ ok: false, error: 'auth_failed', message: 'Telegram authentication failed' });
-    return null;
-  }
+  const tg = verifyTelegram(req.body && req.body.initData);
+  if (!tg) { res.status(401).json({ ok: false, error: 'auth_failed' }); return null; }
   return tg;
 }
 
 // ═══════════════════════════════
-//  11. РОУТЫ
+//  Утилита: посчитать pending gold реферера
+//  refMilestones — объект { friendId: highestPaidLevel }
+//  friends — массив { tgId, level }
 // ═══════════════════════════════
-
-// Health check
-app.get('/health', (req, res) => {
-  const dbState = mongoose.connection.readyState;
-  const states = {
-    0: 'disconnected',
-    1: 'connected',
-    2: 'connecting',
-    3: 'disconnecting'
-  };
-  
-  res.json({
-    ok: true,
-    service: 'pixel-runner-rpg',
-    version: '2.0.0',
-    apiVersion: API_VERSION,
-    environment: process.env.NODE_ENV || 'development',
-    db: states[dbState] || 'unknown',
-    uptime: Math.floor(process.uptime()),
-    memory: {
-      used: Math.floor(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
-      total: Math.floor(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB'
-    },
-    timestamp: Date.now()
+function calcPendingGold(refMilestones, friends) {
+  let gold = 0;
+  const newMilestones = Object.assign({}, refMilestones);
+  friends.forEach(f => {
+    const paid = newMilestones[f.tgId] || 0;
+    // сколько ещё не оплаченных "пятёрок"
+    const maxMilestone = Math.floor(f.level / REF_MILESTONE_STEP) * REF_MILESTONE_STEP;
+    if (maxMilestone > paid) {
+      const count = (maxMilestone - paid) / REF_MILESTONE_STEP;
+      gold += count * REF_GOLD_PER_MILESTONE;
+      newMilestones[f.tgId] = maxMilestone;
+    }
   });
-});
+  return { gold, newMilestones };
+}
 
+// ═══════════════════════════════
+//  Роуты
+// ═══════════════════════════════
 app.get('/', (req, res) => {
-  res.json({
-    ok: true,
-    service: 'pixel-runner-rpg',
-    version: '2.0.0',
-    db: mongoose.connection.readyState === 1,
-    timestamp: Date.now()
-  });
+  res.json({ ok: true, service: 'pixel-runner-rpg', db: mongoose.connection.readyState === 1 });
 });
 
-// Загрузка прогресса
+// ── Загрузка прогресса ──
 app.post('/api/load', async (req, res) => {
-  const tg = authUser(req, res);
-  if (!tg) return;
-
+  const tg = authUser(req, res); if (!tg) return;
+  // startParam может прийти из initData (Telegram парсит start_param автоматически)
+  // или явно из тела запроса как fallback
+  const startParam = tg.startParam || (req.body && req.body.startParam) || '';
   try {
-    const doc = await Save.findOne({ tgId: tg.id })
-      .select('charId data updatedAt -_id')
-      .lean();
-    
-    console.log(`📥 Load request for user ${tg.id}: ${doc ? 'found' : 'empty'}`);
-    
-    res.json({
-      ok: true,
-      save: doc ? {
-        charId: doc.charId,
-        data: doc.data,
-        updatedAt: doc.updatedAt || 0,
-      } : null,
-      user: {
-        id: tg.id,
-        username: tg.username,
-        firstName: tg.firstName
-      },
-      serverTime: Date.now()
-    });
-  } catch (err) {
-    console.error('❌ /api/load error:', err.message);
-    res.status(500).json({ ok: false, error: 'server_error', message: 'Failed to load data' });
-  }
-});
+    let doc = await Save.findOne({ tgId: tg.id });
 
-// Сохранение прогресса
-app.post('/api/save', saveLimiter, async (req, res) => {
-  const tg = authUser(req, res);
-  if (!tg) return;
-
-  const data = req.body?.data;
-  if (!data || typeof data !== 'object') {
-    return res.status(400).json({ ok: false, error: 'bad_data', message: 'Missing or invalid data' });
-  }
-
-  const validation = validateGameData(data);
-  if (!validation.valid) {
-    console.warn(`⚠️ Invalid game data from user ${tg.id}:`, validation.reason);
-    return res.status(400).json({ 
-      ok: false, 
-      error: 'invalid_data',
-      message: 'Invalid game data',
-      reason: validation.reason
-    });
-  }
-
-  const now = Date.now();
-  const clientTs = Number(data.updatedAt) || now;
-
-  try {
-    const existing = await Save.findOne({ tgId: tg.id }).lean();
-    
-    if (existing && existing.updatedAt > clientTs) {
-      console.log(`⚠️ Conflict for user ${tg.id}: server=${existing.updatedAt}, client=${clientTs}`);
-      return res.json({ 
-        ok: true,
-        updatedAt: existing.updatedAt,
-        conflict: true,
-        message: 'Server has newer data'
+    // Новый пользователь пришёл по реферальной ссылке
+    if (!doc) {
+      const refBy = (startParam && startParam !== tg.id) ? startParam : null;
+      doc = await Save.create({
+        tgId: tg.id, username: tg.username, firstName: tg.firstName,
+        refBy, refMilestones: {},
       });
+    } else if (!doc.refBy && startParam && startParam !== tg.id) {
+      // Уже есть аккаунт но реферер не был задан (открыл ссылку повторно)
+      await Save.updateOne({ tgId: tg.id }, { $set: { refBy: startParam } });
+      doc.refBy = startParam;
     }
 
-    await Save.updateOne(
-      { tgId: tg.id },
-      {
-        $set: {
-          tgId: tg.id,
-          username: tg.username,
-          firstName: tg.firstName,
-          charId: data.charId || null,
-          data: data,
-          level: Number(data.level) || 1,
-          cp: Number(data.cp) || 0,
-          floor: Number(data.floor) || 1,
-          updatedAt: clientTs,
-        }
-      },
-      { upsert: true }
-    );
-    
-    console.log(`💾 Save for user ${tg.id}: level=${data.level}, gold=${data.gold}`);
-    
-    res.json({ 
-      ok: true, 
-      updatedAt: clientTs,
-      serverTime: now
-    });
-    
-  } catch (err) {
-    console.error('❌ /api/save error:', err.message);
-    res.status(500).json({ ok: false, error: 'server_error', message: 'Failed to save data' });
-  }
-});
-
-// Выбор персонажа
-app.post('/api/character', async (req, res) => {
-  const tg = authUser(req, res);
-  if (!tg) return;
-
-  const charId = req.body?.charId;
-  if (!charId || typeof charId !== 'string') {
-    return res.status(400).json({ ok: false, error: 'bad_char', message: 'Invalid character ID' });
-  }
-
-  // Список валидных персонажей (замените на свои)
-  const validChars = ['warrior', 'mage', 'rogue', 'archer', 'paladin'];
-  if (!validChars.includes(charId)) {
-    return res.status(400).json({ ok: false, error: 'invalid_char', message: 'Character not found' });
-  }
-
-  try {
-    await Save.updateOne(
-      { tgId: tg.id },
-      {
-        $set: {
-          tgId: tg.id,
-          username: tg.username,
-          firstName: tg.firstName,
-          charId: charId,
-          updatedAt: Date.now()
-        }
-      },
-      { upsert: true }
-    );
-    
-    console.log(`🎮 User ${tg.id} selected character: ${charId}`);
-    
-    res.json({ ok: true, message: 'Character selected' });
-  } catch (err) {
-    console.error('❌ /api/character error:', err.message);
-    res.status(500).json({ ok: false, error: 'server_error', message: 'Failed to select character' });
-  }
-});
-
-// Логирование ошибок с клиента
-app.post('/api/log', async (req, res) => {
-  const tg = verifyTelegram(req.body?.initData);
-  
-  const logData = req.body;
-  
-  console.error('📱 Client error:', {
-    userId: tg?.id || 'unknown',
-    username: tg?.username || 'unknown',
-    type: logData?.type,
-    message: logData?.data?.message,
-    stack: logData?.data?.stack?.slice(0, 500),
-    timestamp: logData?.timestamp,
-    userAgent: logData?.userAgent,
-    url: logData?.url
-  });
-  
-  res.json({ ok: true });
-});
-
-// Лидерборд
-app.get('/api/leaderboard', async (req, res) => {
-  try {
-    const limit = Math.min(Number(req.query.limit) || LEADERBOARD_LIMIT, 100);
-    
-    const top = await Save.find({ 
-      charId: { $ne: null },
-      level: { $gt: 1 }
-    })
-      .sort({ cp: -1, level: -1 })
-      .limit(limit)
-      .select('username firstName level cp floor charId -_id')
-      .lean();
-    
-    res.json({ 
-      ok: true, 
-      top: top.map((p, i) => ({
-        ...p,
-        rank: i + 1
-      })),
-      timestamp: Date.now()
-    });
-  } catch (err) {
-    console.error('❌ /api/leaderboard error:', err.message);
-    res.status(500).json({ ok: false, error: 'server_error', message: 'Failed to load leaderboard' });
-  }
-});
-
-// Статистика сервера
-app.get('/api/stats', async (req, res) => {
-  try {
-    const [
-      totalPlayers,
-      activePlayers,
-      avgStats,
-      topChar
-    ] = await Promise.all([
-      Save.countDocuments(),
-      Save.countDocuments({ 
-        updatedAt: { $gt: Date.now() - 7 * 24 * 60 * 60 * 1000 }
-      }),
-      Save.aggregate([
-        { $match: { level: { $gt: 1 } } },
-        { $group: { 
-          _id: null, 
-          avgLevel: { $avg: '$level' }, 
-          avgCP: { $avg: '$cp' },
-          maxCP: { $max: '$cp' },
-          maxFloor: { $max: '$floor' }
-        }}
-      ]),
-      Save.aggregate([
-        { $match: { charId: { $ne: null } } },
-        { $group: { _id: '$charId', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-        { $limit: 1 }
-      ])
-    ]);
-    
-    const stats = avgStats[0] || {};
-    
     res.json({
       ok: true,
-      totalPlayers,
-      activePlayers: activePlayers + ' (7 days)',
-      avgLevel: Math.round(stats.avgLevel || 0),
-      avgCP: Math.round(stats.avgCP || 0),
-      maxCP: stats.maxCP || 0,
-      maxFloor: stats.maxFloor || 0,
-      mostPopularChar: topChar[0]?._id || 'none',
-      timestamp: Date.now()
+      save: {
+        charId:    doc.charId,
+        data:      doc.data,
+        updatedAt: doc.updatedAt || 0,
+      },
+      user: { id: tg.id, username: tg.username, firstName: tg.firstName },
     });
-  } catch (err) {
-    console.error('❌ /api/stats error:', err.message);
+  } catch (e) {
+    console.error('load error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ 
-    ok: false, 
-    error: 'not_found',
-    message: `Route ${req.method} ${req.path} not found`
-  });
-});
-
-// ═══════════════════════════════
-//  12. ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ОШИБОК
-// ═══════════════════════════════
-app.use((err, req, res, next) => {
-  if (err.code === 'ECONNRESET' ||
-      err.code === 'EPIPE' ||
-      err.message?.includes('aborted') ||
-      err.message?.includes('request aborted') ||
-      err.code === 'ERR_STREAM_PREMATURE_CLOSE') {
-    return;
+// ── Сохранение полного снапшота ──
+app.post('/api/save', async (req, res) => {
+  const tg = authUser(req, res); if (!tg) return;
+  const data = req.body && req.body.data;
+  if (!data || typeof data !== 'object') {
+    return res.status(400).json({ ok: false, error: 'bad_data' });
   }
-
-  console.error('❌ Unhandled error:', {
-    url: req.url,
-    method: req.method,
-    error: err.message,
-    stack: err.stack?.slice(0, 500),
-    body: req.body ? JSON.stringify(req.body).slice(0, 200) : null
-  });
-
-  if (!res.headersSent) {
-    res.status(500).json({ 
-      ok: false, 
-      error: 'internal_error',
-      message: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
-    });
-  }
-});
-
-// ═══════════════════════════════
-//  13. ОЧИСТКА СТАРЫХ ДАННЫХ
-// ═══════════════════════════════
-async function cleanupInactivePlayers() {
+  const clientTs = Number(data.updatedAt) || Date.now();
   try {
-    const cutoff = Date.now() - (INACTIVE_DAYS * 24 * 60 * 60 * 1000);
-    
-    const result = await Save.deleteMany({
-      updatedAt: { $lt: cutoff },
-      level: { $lt: 5 },
-      cp: { $lt: 100 }
+    await Save.updateOne(
+      { tgId: tg.id },
+      { $set: {
+        tgId: tg.id, username: tg.username, firstName: tg.firstName,
+        charId: data.charId || null, data,
+        level: Number(data.level) || 1,
+        cp:    Number(data.cp)    || 0,
+        floor: Number(data.floor) || 1,
+        updatedAt: clientTs,
+      }},
+      { upsert: true }
+    );
+    res.json({ ok: true, updatedAt: clientTs });
+  } catch (e) {
+    console.error('save error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ── Выбор персонажа ──
+app.post('/api/character', async (req, res) => {
+  const tg = authUser(req, res); if (!tg) return;
+  const charId = req.body && req.body.charId;
+  if (!charId) return res.status(400).json({ ok: false, error: 'bad_char' });
+  try {
+    await Save.updateOne(
+      { tgId: tg.id },
+      { $set: { tgId: tg.id, username: tg.username, firstName: tg.firstName, charId } },
+      { upsert: true }
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: 'server_error' }); }
+});
+
+// ── Лидерборд ──
+app.get('/api/leaderboard', async (req, res) => {
+  try {
+    const top = await Save.find({ charId: { $ne: null } })
+      .sort({ cp: -1, level: -1 }).limit(50)
+      .select('username firstName level cp floor charId -_id').lean();
+    res.json({ ok: true, top });
+  } catch (e) { res.status(500).json({ ok: false, error: 'server_error' }); }
+});
+
+// ═══════════════════════════════
+//  РЕФЕРАЛЬНАЯ СИСТЕМА
+// ═══════════════════════════════
+
+// ── Список друзей + реферальная ссылка + сколько gold можно забрать ──
+app.post('/api/ref/friends', async (req, res) => {
+  const tg = authUser(req, res); if (!tg) return;
+  try {
+    const doc = await Save.findOne({ tgId: tg.id })
+      .select('refMilestones -_id').lean();
+    const milestones = (doc && doc.refMilestones) || {};
+
+    // Все игроки, которых пригласил этот пользователь
+    const friends = await Save.find({ refBy: tg.id })
+      .select('tgId firstName username level charId -_id').lean();
+
+    // Считаем сколько золота можно забрать (без записи в БД)
+    const { gold: pendingGold } = calcPendingGold(milestones, friends);
+
+    const refLink = `https://t.me/${BOT_USERNAME}?startapp=${tg.id}`;
+
+    res.json({
+      ok: true,
+      refLink,
+      refCode: tg.id,
+      friends: friends.map(f => ({
+        name:    f.firstName || f.username || ('Игрок ' + f.tgId.slice(-4)),
+        level:   f.level || 1,
+        charId:  f.charId,
+        // следующая ступень вознаграждения для этого друга
+        nextMilestone: (Math.floor(((milestones[f.tgId] || 0) / REF_MILESTONE_STEP) + 1)) * REF_MILESTONE_STEP,
+        paid: milestones[f.tgId] || 0,
+      })),
+      pendingGold,
     });
-    
-    if (result.deletedCount > 0) {
-      console.log(`🧹 Cleaned up ${result.deletedCount} inactive low-level players`);
+  } catch (e) {
+    console.error('ref/friends error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ── Забрать награды за друзей ──
+app.post('/api/ref/claim', async (req, res) => {
+  const tg = authUser(req, res); if (!tg) return;
+  try {
+    const doc = await Save.findOne({ tgId: tg.id });
+    if (!doc) return res.json({ ok: true, goldEarned: 0 });
+
+    const friends = await Save.find({ refBy: tg.id })
+      .select('tgId level -_id').lean();
+
+    const { gold, newMilestones } = calcPendingGold(doc.refMilestones || {}, friends);
+    if (gold === 0) return res.json({ ok: true, goldEarned: 0 });
+
+    // Обновляем milestones и добавляем золото в снапшот
+    const update = { $set: { refMilestones: newMilestones } };
+    // Если есть снапшот — прибавляем золото прямо в data.gold (атомарно)
+    if (doc.data && typeof doc.data.gold === 'number') {
+      doc.data.gold += gold;
+      update.$set.data = doc.data;
     }
-  } catch (err) {
-    console.error('❌ Cleanup error:', err.message);
+    await Save.updateOne({ tgId: tg.id }, update);
+
+    res.json({ ok: true, goldEarned: gold });
+  } catch (e) {
+    console.error('ref/claim error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
   }
-}
-
-setInterval(cleanupInactivePlayers, 24 * 60 * 60 * 1000);
-
-// ═══════════════════════════════
-//  14. GRACEFUL SHUTDOWN
-// ═══════════════════════════════
-async function gracefulShutdown(signal) {
-  console.log(`📴 ${signal} received. Starting graceful shutdown...`);
-  
-  await new Promise((resolve) => {
-    server.close(() => {
-      console.log('🔌 HTTP server closed');
-      resolve();
-    });
-  });
-  
-  try {
-    await mongoose.connection.close();
-    console.log('🗄️ MongoDB connection closed');
-  } catch (err) {
-    console.error('❌ Error closing MongoDB:', err.message);
-  }
-  
-  console.log('✅ Shutdown complete');
-  process.exit(0);
-}
-
-function forceShutdown() {
-  console.error('❌ Forced shutdown after timeout');
-  process.exit(1);
-}
-
-process.on('SIGTERM', () => {
-  gracefulShutdown('SIGTERM');
-  setTimeout(forceShutdown, 10000);
 });
 
-process.on('SIGINT', () => {
-  gracefulShutdown('SIGINT');
-  setTimeout(forceShutdown, 10000);
-});
-
-process.on('uncaughtException', (err) => {
-  console.error('❌ Uncaught exception:', err.message);
-  console.error(err.stack);
-  gracefulShutdown('uncaughtException');
-  setTimeout(forceShutdown, 10000);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled rejection at:', promise);
-  console.error('Reason:', reason);
-});
-
-// ═══════════════════════════════
-//  15. ЗАПУСК СЕРВЕРА
-// ═══════════════════════════════
 const PORT = process.env.PORT || 3000;
-const server = app.listen(PORT, () => {
-  console.log('═══════════════════════════════════');
-  console.log(`🚀 Pixel Runner RPG Server`);
-  console.log(`📡 Port: ${PORT}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔐 Auth: ${process.env.ALLOW_INSECURE === '1' ? 'Development (insecure)' : 'Production (secure)'}`);
-  console.log('═══════════════════════════════════');
-});
-
-server.timeout = 120000;
-server.keepAliveTimeout = 65000;
-server.headersTimeout = 66000;
-
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(`❌ Port ${PORT} is already in use`);
-    process.exit(1);
-  }
-  console.error('❌ Server error:', err.message);
-});
-
-module.exports = app;
+app.listen(PORT, () => console.log('🚀 Server on :' + PORT));
