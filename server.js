@@ -177,19 +177,26 @@ function verifyTelegramAuth(initData) {
 }
 
 /**
- * Middleware: проверяет заголовок Authorization: tma <initData>
- * и кладёт req.userId в запрос.
+ * Middleware: проверяет Authorization: tma <initData>
+ * или query param ?tma=<initData> (для sendBeacon который не поддерживает headers)
  */
 async function authMiddleware(req, res, next) {
   try {
-    const header = req.headers['authorization'] || '';
-    if (!header.startsWith('tma ')) {
-      return res.status(401).json({ error: 'Missing Authorization header' });
+    const header   = req.headers['authorization'] || '';
+    const qparam   = req.query.tma || '';
+    let initData   = '';
+
+    if (header.startsWith('tma ')) {
+      initData = header.slice(4);
+    } else if (qparam) {
+      initData = qparam;
+    } else {
+      return res.status(401).json({ error: 'Missing Authorization' });
     }
-    const initData = header.slice(4);
-    const user     = verifyTelegramAuth(initData);
-    req.tgUser  = user;
-    req.userId  = String(user.id);
+
+    const user    = verifyTelegramAuth(initData);
+    req.tgUser    = user;
+    req.userId    = String(user.id);
     next();
   } catch (e) {
     console.error('[AUTH]', e.message);

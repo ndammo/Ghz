@@ -3,12 +3,12 @@
   api.js — Клиентский модуль сохранения/загрузки
   Pixel Runner RPG
 
-  Подключается ПЕРВЫМ после data.js/state.js.
-  Экспортирует глобальные функции:
-    API.init()          — авторизация при старте
-    API.save()          — полное сохранение G
-    API.partial(fields) — частичный патч
-    API.loaded          — флаг: данные загружены
+  API.init()          — авторизация при старте
+  API.save()          — полное сохранение G (async)
+  API.saveBeacon()    — принудительное сохранение при закрытии (sync, sendBeacon)
+  API.partial(fields) — частичный патч
+  API.loaded          — флаг: данные загружены
+  API.savedHp         — HP из сохранения (до applyCharacter)
   ══════════════════════════════════════════════════════
 */
 
@@ -17,83 +17,69 @@ const API = (function() {
 
   const BASE_URL = 'https://ghz-production.up.railway.app';
 
-  let _initData = '';   // Telegram initData строка
-  let _userId   = '';   // userId после авторизации
+  let _initData  = '';
+  let _userId    = '';
   let _saveTimer = null;
   let _dirty     = false;
+  let _savedHp   = null;   // сохранённое HP — читается в ui.js после applyCharacter
 
-  // Получаем initData из Telegram SDK или из URL (для тестов)
   function getInitData() {
     if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) {
       return window.Telegram.WebApp.initData;
     }
-    // Тестовый режим: ?initData=... в URL
-    const urlParams = new URLSearchParams(window.location.search);
+    var urlParams = new URLSearchParams(window.location.search);
     return urlParams.get('initData') || '';
   }
 
-  // ── Универсальный fetch с авторизацией ──
+  // ── fetch с авторизацией ──
   async function apiFetch(path, opts) {
     opts = opts || {};
     opts.headers = opts.headers || {};
-    if (_initData) {
-      opts.headers['Authorization'] = 'tma ' + _initData;
-    }
+    if (_initData) opts.headers['Authorization'] = 'tma ' + _initData;
     opts.headers['Content-Type'] = 'application/json';
-    const res = await fetch(BASE_URL + path, opts);
+    var res = await fetch(BASE_URL + path, opts);
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
+      var body = await res.json().catch(function() { return {}; });
       throw new Error(body.error || 'HTTP ' + res.status);
     }
     return res.json();
   }
 
   // ══════════════════════════════════════════════════════
-  //  Применение сохранения к объекту G
+  //  Применение сохранения к G
+  //  HP и maxHp сохраняем в _savedHp — восстановим ПОСЛЕ
+  //  applyCharacter(), которая перезаписывает G.hp
   // ══════════════════════════════════════════════════════
   function applySave(save) {
-    if (!save) return;
+    if (!save) return null;
 
-    // Скалярные поля
     var scalars = [
       'gold','pixr','gram','level','xp','xpNeeded',
-      'floor','maxFloor','killCount','hp','maxHp',
+      'floor','maxFloor','killCount',
       'potionLv','potions','potionThreshold',
     ];
     scalars.forEach(function(k) {
       if (save[k] !== undefined && save[k] !== null) G[k] = save[k];
     });
 
-    // Вложенные объекты
+    // HP запоминаем отдельно — восстановим после applyCharacter
+    if (save.hp    !== undefined && save.hp    !== null) _savedHp = { hp: save.hp, maxHp: save.maxHp };
+
     if (save.baseStats) Object.assign(G.baseStats, save.baseStats);
     if (save.stats)     Object.assign(G.stats,     save.stats);
     if (save.upg)       Object.assign(G.upg,       save.upg);
     if (save.equipped)  Object.assign(G.equipped,  save.equipped);
 
-    // BP
-    if (save.bp) {
-      G.bp = { active: !!save.bp.active, claimed: save.bp.claimed || [] };
-    }
-    // Premium
-    if (save.prem) {
-      G.prem = { tier: save.prem.tier || null, expiresAt: save.prem.expiresAt || 0 };
-    }
-    // Инвентарь
-    if (Array.isArray(save.inventory)) {
-      G.inventory = save.inventory;
-    }
-    // Навыки
-    if (save.skills && typeof save.skills === 'object') {
-      G.skills = save.skills;
-    }
+    if (save.bp)   G.bp   = { active: !!save.bp.active, claimed: save.bp.claimed || [] };
+    if (save.prem) G.prem = { tier: save.prem.tier || null, expiresAt: save.prem.expiresAt || 0 };
 
-    // charId — вернём его, чтобы ui.js мог применить персонажа
+    if (Array.isArray(save.inventory))               G.inventory = save.inventory;
+    if (save.skills && typeof save.skills === 'object') G.skills  = save.skills;
+
     return save.charId || null;
   }
 
-  // ══════════════════════════════════════════════════════
-  //  Сборка снапшота G для отправки
-  // ══════════════════════════════════════════════════════
+  // ── Снапшот G ──
   function buildSnapshot() {
     return {
       charId:    window.G_CHAR ? window.G_CHAR.id : null,
@@ -111,8 +97,8 @@ const API = (function() {
       baseStats: Object.assign({}, G.baseStats),
       stats:     Object.assign({}, G.stats),
       upg:       Object.assign({}, G.upg),
-      potionLv:  G.potionLv || 0,
-      potions:   G.potions  || 0,
+      potionLv:  G.potionLv  || 0,
+      potions:   G.potions   || 0,
       potionThreshold: G.potionThreshold || 30,
       bp:        { active: G.bp.active, claimed: G.bp.claimed.slice() },
       prem:      { tier: G.prem.tier, expiresAt: G.prem.expiresAt },
@@ -126,10 +112,6 @@ const API = (function() {
   //  Публичное API
   // ══════════════════════════════════════════════════════
 
-  /**
-   * Инициализация: авторизация + загрузка сохранения.
-   * Возвращает charId (или null для нового игрока).
-   */
   async function init() {
     _initData = getInitData();
     if (!_initData) {
@@ -137,19 +119,19 @@ const API = (function() {
       return null;
     }
     try {
-      const res = await apiFetch('/auth', {
+      var res = await apiFetch('/auth', {
         method: 'POST',
         body: JSON.stringify({ initData: _initData }),
       });
       _userId = res.userId;
-      console.log('[API] Auth OK, userId=' + _userId + ', isNew=' + res.isNew);
+      console.log('[API] Auth OK userId=' + _userId + ' isNew=' + res.isNew);
 
-      const charId = applySave(res.save);
+      var charId = applySave(res.save);
 
-      // Запускаем автосохранение каждые 30 сек
+      // Автосохранение каждые 20 сек
       _saveTimer = setInterval(function() {
         if (_dirty) { save(); _dirty = false; }
-      }, 30000);
+      }, 20000);
 
       return charId;
     } catch (e) {
@@ -158,9 +140,7 @@ const API = (function() {
     }
   }
 
-  /**
-   * Полное сохранение — при выходе из игры, смерти, смене этажа.
-   */
+  // Обычное async сохранение
   async function save() {
     if (!_initData) return;
     try {
@@ -174,10 +154,22 @@ const API = (function() {
     }
   }
 
-  /**
-   * Частичное сохранение — для быстрых изменений (золото, XP).
-   * @param {Object} fields — только изменившиеся поля
-   */
+  // Принудительное синхронное сохранение через sendBeacon
+  // Браузер гарантирует отправку даже при закрытии вкладки
+  function saveBeacon() {
+    if (!_initData) return;
+    var snapshot = buildSnapshot();
+    var blob = new Blob(
+      [JSON.stringify(snapshot)],
+      { type: 'application/json' }
+    );
+    // sendBeacon не поддерживает Authorization header —
+    // передаём initData в query string
+    var url = BASE_URL + '/save?tma=' + encodeURIComponent(_initData);
+    navigator.sendBeacon(url, blob);
+    console.log('[API] Beacon sent');
+  }
+
   async function partial(fields) {
     if (!_initData) return;
     _dirty = false;
@@ -187,23 +179,22 @@ const API = (function() {
         body: JSON.stringify({ fields: fields }),
       });
     } catch (e) {
-      console.error('[API] Partial save failed:', e.message);
+      console.error('[API] Partial failed:', e.message);
     }
   }
 
-  /**
-   * Помечает состояние как изменённое (для автосохранения).
-   */
   function markDirty() {
     _dirty = true;
   }
 
   return {
-    init:       init,
-    save:       save,
-    partial:    partial,
-    markDirty:  markDirty,
-    get loaded() { return !!_userId; },
-    get userId() { return _userId; },
+    init:        init,
+    save:        save,
+    saveBeacon:  saveBeacon,
+    partial:     partial,
+    markDirty:   markDirty,
+    get loaded()  { return !!_userId; },
+    get userId()  { return _userId; },
+    get savedHp() { return _savedHp; },
   };
 })();

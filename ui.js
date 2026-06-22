@@ -420,8 +420,9 @@ function applyCharacter(ch) {
   window.IDLE_FW_CUR     = ch.idleFW;
   G.baseStats = Object.assign({}, ch.baseStats);
   Object.assign(G.stats, ch.baseStats);
+  // HP устанавливаем только при первом выборе персонажа (не при загрузке сохранения)
+  // При загрузке hp восстанавливается из API.savedHp после этого вызова
   G.hp = G.stats.hp; G.maxHp = G.stats.hp;
-  // аватар теперь SVG, не трогаем
 }
 
 function startGame() {
@@ -491,7 +492,7 @@ window.addEventListener('load', async function() {
     Telegram.WebApp.expand();
   }
 
-  // Инициализируем символы сразу (чтобы анимации шли пока грузимся)
+  // Запускаем анимации пока грузимся
   initCharSelectSprites();
   initCsParticles();
 
@@ -502,39 +503,54 @@ window.addEventListener('load', async function() {
   var charId = null;
   try {
     charId = await API.init();
+    if (loadStatus) loadStatus.textContent = 'Загрузка данных...';
   } catch(e) {
     console.warn('[UI] API.init error:', e);
+    if (loadStatus) loadStatus.textContent = 'Офлайн режим';
   }
 
-  // Скрываем загрузочный экран
+  // Данные загружены — скрываем экран загрузки
   var loadScreen = document.getElementById('loadingScreen');
   if (loadScreen) loadScreen.style.display = 'none';
 
-  // Если у игрока уже был выбран персонаж — восстанавливаем его
+  // Если у игрока уже был выбран персонаж — восстанавливаем
   if (charId && CHARS[charId]) {
     G_CHAR = CHARS[charId];
+
+    // applyCharacter перезапишет G.hp базовыми статами персонажа
     applyCharacter(G_CHAR);
-    // Восстанавливаем HP из сохранения (applyCharacter перезаписывает — восстановим)
-    if (G.hp && G.maxHp) {
-      // hp уже в G от applySave — просто пересчитаем статы из улучшений
-      recalcStats();
+
+    // Восстанавливаем реальные улучшения поверх базовых статов
+    recalcStats();
+
+    // Восстанавливаем сохранённое HP (было до applyCharacter в API.savedHp)
+    var saved = API.savedHp;
+    if (saved && saved.hp > 0 && saved.maxHp > 0) {
+      G.maxHp = saved.maxHp;
+      G.hp    = Math.min(saved.hp, saved.maxHp);
     }
-    // Скрываем экран выбора и стартуем игру
+
     document.getElementById('charSelect').classList.add('hidden');
     startGame();
   }
-  // Иначе — показываем экран выбора персонажа (уже виден по умолчанию)
+  // Иначе — показываем экран выбора
 });
 
 // ── resize ──
 window.addEventListener('resize', resize);
 
-// ── Сохранение при уходе/сворачивании ──
-document.addEventListener('visibilitychange', function() {
-  if (document.visibilityState === 'hidden' && G_CHAR) {
-    API.save();
-  }
+// ── Принудительное сохранение при закрытии/сворачивании ──
+// sendBeacon — гарантированная отправка даже при закрытии вкладки
+window.addEventListener('beforeunload', function() {
+  if (G_CHAR) API.saveBeacon();
 });
 window.addEventListener('pagehide', function() {
-  if (G_CHAR) API.save();
+  if (G_CHAR) API.saveBeacon();
+});
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'hidden' && G_CHAR) {
+    // Сначала beacon (синхронно), потом async save для надёжности
+    API.saveBeacon();
+    API.save();
+  }
 });
