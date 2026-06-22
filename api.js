@@ -80,20 +80,6 @@ const API = (function() {
     }
   }
 
-  // Выбрать новейшее из двух сохранений по timestamp
-  function mergeSaves(serverSave, localSave) {
-    if (!localSave) return serverSave;
-    if (!serverSave) return localSave;
-    var localTs  = localSave._ts  || 0;
-    var serverTs = serverSave._ts || 0;
-    if (localTs > serverTs) {
-      console.log('[API] Using local save (newer by ' + Math.round((localTs - serverTs) / 1000) + 's)');
-      return localSave;
-    }
-    console.log('[API] Using server save (newer or equal)');
-    return serverSave;
-  }
-
   // ══════════════════════════════════════════════════════
   //  Применение сохранения к G
   //  HP запоминаем в _savedHp — восстановим ПОСЛЕ applyCharacter
@@ -179,17 +165,13 @@ const API = (function() {
       _firstName = res.firstName || '';
       console.log('[API] Auth OK userId=' + _userId + ' isNew=' + res.isNew);
 
-      // Merge: сервер vs localStorage — берём новейшее
-      var serverSave = res.save;
-      var localSave  = readLocal();
-      var best       = mergeSaves(serverSave, localSave);
+      // Всегда берём данные с сервера
+      // localStorage используется только как буфер от краша (запись),
+      // но при входе не читается
+      var charId = applySave(res.save);
 
-      var charId = applySave(best);
-
-      // Если взяли локальное — сразу синхронизируем с сервером
-      if (best === localSave && localSave) {
-        save();
-      }
+      // Обновляем localStorage актуальными серверными данными
+      writeLocal(buildSnapshot());
 
       // Автосохранение каждые 20 сек
       _saveTimer = setInterval(function() {
