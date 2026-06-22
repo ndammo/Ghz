@@ -27,6 +27,7 @@ function buyUpgrade(u) {
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
+  if (window.API) API.onEvent();
 }
 
 function renderUpgrades() {
@@ -252,6 +253,7 @@ function goToFloor(n) {
   monsters = [];
   nextMonsterSpawn = player.worldX + 400;
   updateHUD(); switchTab('game');
+  if (window.API) API.onEvent();
 }
 
 // ═══════════════════════════════
@@ -430,20 +432,10 @@ function confirmChar() {
   if (_csParticleTimer) cancelAnimationFrame(_csParticleTimer);
   G_CHAR = CHARS[_csSelected];
   applyCharacter(G_CHAR);
+  // Запомнить выбор персонажа
+  if (window.API) API.saveChar(_csSelected);
   document.getElementById('charSelect').classList.add('hidden');
-
-  // Загружаем прогресс с сервера перед стартом
-  if (window.API && window.API.userId) {
-    window.API.loadProgress().then(function(r) {
-      if (r.ok && r.data && r.data.charId && CHARS[r.data.charId]) {
-        G_CHAR = CHARS[r.data.charId];
-        applyCharacter(G_CHAR);
-      }
-      startGame();
-    });
-  } else {
-    startGame();
-  }
+  startGame();
 }
 
 function applyCharacter(ch) {
@@ -523,25 +515,62 @@ function initCsParticles() {
 
 // ── Инициализация экрана выбора при загрузке страницы ──
 window.addEventListener('load', function() {
-  initCharSelectSprites();
-  initCsParticles();
-
   // Инициализация Telegram WebApp
   if (window.Telegram && window.Telegram.WebApp) {
     Telegram.WebApp.ready();
     Telegram.WebApp.expand();
   }
 
-  // Авторизация через API
+  // Авторизация + загрузка прогресса
   if (window.API) {
-    window.API.auth().then(function(r) {
+    // Показываем заглушку "Загрузка..."
+    var csTitle = document.querySelector('.cs-title');
+    var csCards = document.querySelector('.cs-cards');
+    var csConfirm = document.getElementById('csConfirm');
+    if (csCards) csCards.style.opacity = '0.3';
+    if (csConfirm) { csConfirm.textContent = 'ЗАГРУЗКА...'; csConfirm.classList.remove('ready'); }
+
+    API.auth().then(function(r) {
       if (r.ok) {
-        // Показываем имя пользователя на экране выбора
         var nameEl = document.getElementById('tgUserName');
-        if (nameEl) nameEl.textContent = window.API.userName || '';
-        console.log('[TG] Authorized:', window.API.userName);
+        if (nameEl) nameEl.textContent = API.userName || '';
+
+        // Загружаем прогресс с сервера
+        return API.loadProgress();
       }
+      return Promise.resolve({ ok: false });
+    }).then(function(r) {
+      // Проверяем: есть ли сохранённый персонаж
+      var savedChar = API.getSavedChar ? API.getSavedChar() : null;
+      // Также смотрим charId из серверных данных
+      if (!savedChar && r && r.charId && CHARS[r.charId]) savedChar = r.charId;
+
+      if (savedChar && CHARS[savedChar]) {
+        // Персонаж уже выбран — пропускаем экран выбора
+        Object.values(_csSpriteTimers).forEach(clearInterval);
+        if (_csParticleTimer) cancelAnimationFrame(_csParticleTimer);
+        G_CHAR = CHARS[savedChar];
+        applyCharacter(G_CHAR);
+        document.getElementById('charSelect').classList.add('hidden');
+        startGame();
+      } else {
+        // Первый вход — показываем экран выбора
+        if (csCards) csCards.style.opacity = '';
+        if (csConfirm) csConfirm.textContent = 'ВЫБЕРИТЕ ПЕРСОНАЖА';
+        initCharSelectSprites();
+        initCsParticles();
+      }
+    }).catch(function() {
+      // Нет сети — показываем экран выбора
+      if (csCards) csCards.style.opacity = '';
+      if (csConfirm) csConfirm.textContent = 'ВЫБЕРИТЕ ПЕРСОНАЖА';
+      initCharSelectSprites();
+      initCsParticles();
     });
+  } else {
+    // API недоступен — классический старт
+    initCharSelectSprites();
+    initCsParticles();
   }
 });
 

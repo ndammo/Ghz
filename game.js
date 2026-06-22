@@ -273,7 +273,7 @@ function update(dt) {
                 showDmgPop('↩' + refDmg, m.worldX - worldX, m.y - 5, '#aaffff');
               }
               updateHUD();
-              if (G.hp <= 0) { player.state = 'dead'; gameOverSequence(); }
+              if (G.hp <= 0) { player.state = 'dead'; gameOverSequence(); if (window.API) API.onEvent(); }
             } else {
               showDmgPop('DODGE', PLAYER_SCREEN_X, player.y - 10, '#2ef');
             }
@@ -364,6 +364,7 @@ function gainXP(amount) {
     G.hp = G.maxHp;
     showDmgPop('LV UP!', W * 0.4, GROUND * 0.5, '#fa0');
     updateHUD();
+    if (window.API) API.onEvent();
   }
 }
 
@@ -419,6 +420,7 @@ function updateHUD() {
   document.getElementById('hudPixr').textContent = (G.pixr || 0);
   document.getElementById('hudFloor').textContent = G.floor;
   document.getElementById('hudCp').textContent = calcCP();
+  if (window.API) API.onHpGoldChange();
 }
 
 // ═══════════════════════════════
