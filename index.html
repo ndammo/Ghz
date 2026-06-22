@@ -26,6 +26,43 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<!-- ══════════════════════════════════
+     ЭКРАН ЗАГРУЗКИ
+     Скрывается после получения данных с сервера
+     ══════════════════════════════════ -->
+<div id="loadingScreen">
+  <!-- Звёзды (генерируются JS) -->
+  <div class="ls-stars" id="lsStars"></div>
+
+  <!-- Пиксельный посох -->
+  <div class="ls-logo-wrap">
+    <svg class="ls-pixel-icon" width="64" height="64" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated">
+      <rect x="7" y="1" width="2" height="11" fill="#8B6914"/>
+      <rect x="5" y="0" width="6" height="3" fill="#f5c542"/>
+      <rect x="4" y="1" width="8" height="1" fill="#ffd700"/>
+      <rect x="6" y="0" width="4" height="1" fill="#fff8a0"/>
+      <rect x="6" y="1" width="4" height="2" fill="#a78bfa"/>
+      <rect x="7" y="1" width="2" height="2" fill="#c4b5fd"/>
+      <rect x="3" y="0" width="2" height="1" fill="#f5c542" opacity="0.5"/>
+      <rect x="11" y="0" width="2" height="1" fill="#f5c542" opacity="0.5"/>
+      <rect x="6" y="12" width="4" height="1" fill="#c8a000"/>
+      <rect x="7" y="13" width="2" height="2" fill="#a07800"/>
+      <rect x="2" y="2" width="1" height="1" fill="#ffd700" opacity="0.8"/>
+      <rect x="13" y="3" width="1" height="1" fill="#ffd700" opacity="0.6"/>
+      <rect x="4" y="5" width="1" height="1" fill="#a78bfa" opacity="0.5"/>
+      <rect x="11" y="6" width="1" height="1" fill="#a78bfa" opacity="0.5"/>
+    </svg>
+    <div class="ls-title">PIXEL RUNNER</div>
+    <div class="ls-subtitle">RPG</div>
+  </div>
+
+  <div class="ls-bar-wrap">
+    <div class="ls-bar-fill" id="lsBar"></div>
+  </div>
+  <div class="ls-status" id="lsStatus"><span class="ls-dots">Подключение</span></div>
+  <div class="ls-version">v1.0 · PIXEL RUNNER RPG</div>
+</div>
+
 <div id="app">
 
   <!-- ══════════════════════════════════

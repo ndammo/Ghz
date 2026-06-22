@@ -36,6 +36,49 @@
     lastServerTs: 0,
   };
 
+  // ───────────────────────────────
+  //  ЭКРАН ЗАГРУЗКИ
+  // ───────────────────────────────
+  var LS_MIN_MS = 800; // минимальное время показа (чтоб не мелькало)
+  var _lsShownAt = Date.now();
+
+  function lsSetStatus(text, pct) {
+    var el = document.getElementById('lsStatus');
+    if (el) el.innerHTML = '<span class="ls-dots">' + text + '</span>';
+    var bar = document.getElementById('lsBar');
+    if (bar && pct != null) bar.style.width = pct + '%';
+  }
+
+  function lsHide() {
+    var el = document.getElementById('loadingScreen');
+    if (!el || el.classList.contains('fade-out')) return;
+    var elapsed = Date.now() - _lsShownAt;
+    var delay = Math.max(0, LS_MIN_MS - elapsed);
+    setTimeout(function () {
+      lsSetStatus('Готово', 100);
+      setTimeout(function () {
+        el.classList.add('fade-out');
+        setTimeout(function () { el.style.display = 'none'; }, 520);
+      }, 300);
+    }, delay);
+  }
+
+  // Генерация звёзд фона
+  function lsInitStars() {
+    var wrap = document.getElementById('lsStars');
+    if (!wrap) return;
+    var html = '';
+    for (var i = 0; i < 60; i++) {
+      var x = (Math.random() * 100).toFixed(1);
+      var y = (Math.random() * 100).toFixed(1);
+      var dur = (1.5 + Math.random() * 2.5).toFixed(1);
+      var del = (Math.random() * 3).toFixed(1);
+      var op = (0.1 + Math.random() * 0.4).toFixed(2);
+      html += '<div class="ls-star" style="left:' + x + '%;top:' + y + '%;opacity:' + op + ';--dur:' + dur + 's;--delay:-' + del + 's;"></div>';
+    }
+    wrap.innerHTML = html;
+  }
+
   function num(v, d) { v = Number(v); return isFinite(v) ? v : d; }
   function clone(o)  { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return Object.assign({}, o); } }
 
@@ -294,34 +337,46 @@
   }
 
   function boot() {
+    lsInitStars();
+    lsSetStatus('Подключение', 10);
     initTelegram();
 
     var local = readLocal();
 
-    // 1) Мгновенный старт из локального кеша
+    // 1) Мгновенный старт из локального кеша (пока идёт запрос на сервер)
     if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
+      lsSetStatus('Загрузка данных', 40);
       bootFromSnapshot(local);
     }
 
+    // Таймаут: если сервер не ответил за 6 сек — скрываем экран всё равно
+    var lsTimeout = setTimeout(function () { lsHide(); }, 6000);
+
+    lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
+
     // 2) Сверка с сервером
     serverLoad().then(function (r) {
+      clearTimeout(lsTimeout);
       var server = r && r.save;
       if (server && server.data && server.data.charId &&
           typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
+        lsSetStatus('Применение данных', 85);
         var sTs = server.updatedAt || 0;
         var lTs = (local && local.updatedAt) || 0;
         if (!SYNC.started) {
-          bootFromSnapshot(server.data);          // локального не было
+          bootFromSnapshot(server.data);
         } else if (sTs > lTs + 3000) {
-          hotApply(server.data);                  // сервер заметно новее
+          hotApply(server.data);
         }
       }
-    }).catch(function () {})
-      .then(function () {
-        SYNC.booted = true;
-        startSyncLoops();
-        if (SYNC.online && SYNC.started) pushServer(); // зафиксировать сейв
-      });
+    }).catch(function () {
+      clearTimeout(lsTimeout);
+    }).then(function () {
+      SYNC.booted = true;
+      startSyncLoops();
+      if (SYNC.online && SYNC.started) pushServer();
+      lsHide();
+    });
   }
 
   // ───────────────────────────────
