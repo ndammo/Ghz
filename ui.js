@@ -381,7 +381,7 @@ let _csSelected      = null;
 let _csParticleTimer = null;
 let _csSpriteTimers  = {};
 let _csIdleImgs      = {};
-let G_CHAR           = null;  // задаётся после выбора
+var G_CHAR           = null;  // задаётся после выбора (window.G_CHAR для api.js)
 
 function selectChar(id) {
   _csSelected = id;
