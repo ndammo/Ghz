@@ -403,7 +403,9 @@ function confirmChar() {
   startGame();
 }
 
-function applyCharacter(ch) {
+// Установка спрайтов/анимаций персонажа (без сброса статов).
+// Вынесено отдельно, чтобы загрузка с сервера не затирала прокачку.
+function applyCharacterSprites(ch) {
   spriteRun.src  = ch.runSrc;
   spriteAtk.src  = ch.atkSrc;
   spriteIdle.src = ch.idleSrc;
@@ -413,9 +415,14 @@ function applyCharacter(ch) {
   window.ATK_FW_CUR      = ch.atkFW;
   window.IDLE_FRAMES_CUR = ch.idleFrames;
   window.IDLE_FW_CUR     = ch.idleFW;
+}
+
+function applyCharacter(ch) {
+  applyCharacterSprites(ch);
   G.baseStats = Object.assign({}, ch.baseStats);
   Object.assign(G.stats, ch.baseStats);
   G.hp = G.stats.hp; G.maxHp = G.stats.hp;
+  G.charId = ch.id;
   // аватар теперь SVG, не трогаем
 }
 
