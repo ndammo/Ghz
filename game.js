@@ -19,6 +19,10 @@ const player = {
 
 // ── Игровые переменные ──
 let monsters       = [];
+// ── Зелья ──
+if (!G.potions)          G.potions = 0;
+if (!G.potionThreshold)  G.potionThreshold = 30;
+let potionCooldown = 0;
 let nextMonsterSpawn = 600;
 let particles      = [];
 let activeTab      = 'game';
@@ -47,30 +51,34 @@ function getAtkCooldown()      { return Math.max(0.5, BASE_ATK_COOLDOWN / effect
 // ═══════════════════════════════
 function monsterTemplate() {
   const f = G.floor;
-  const templates = [
-    [
-      { name: 'Гоблин',  emoji: '👺', hp: 30  + f*15, atk: 5  + f*2, xp: 15,  gold: 8,   color: '#3a3' },
-      { name: 'Скелет',  emoji: '💀', hp: 45  + f*20, atk: 8  + f*3, xp: 25,  gold: 12,  color: '#aab' },
-      { name: 'Слизень', emoji: '🐌', hp: 25  + f*10, atk: 3  + f*1, xp: 10,  gold: 5,   color: '#3a3' },
-    ],
-    [
-      { name: 'Ледяной', emoji: '🧊', hp: 80  + f*25, atk: 14 + f*4, xp: 40,  gold: 20,  color: '#4af' },
-      { name: 'Волк',    emoji: '🐺', hp: 60  + f*20, atk: 18 + f*5, xp: 35,  gold: 18,  color: '#99b' },
-    ],
-    [
-      { name: 'Демон',   emoji: '😈', hp: 150 + f*30, atk: 25 + f*6, xp: 70,  gold: 40,  color: '#f44' },
-      { name: 'Феникс',  emoji: '🦅', hp: 120 + f*25, atk: 20 + f*5, xp: 60,  gold: 35,  color: '#fa4' },
-    ],
-    [
-      { name: 'Ангел',   emoji: '👼', hp: 250 + f*40, atk: 35 + f*8, xp: 110, gold: 60,  color: '#fff' },
-    ],
-    [
-      { name: 'Тень',    emoji: '👻', hp: 400 + f*50, atk: 50 + f*10, xp: 180, gold: 100, color: '#a4f' },
-    ],
+  const floor1 = [
+    { name: 'Гоблин',       emoji: '👺', hp: 30  + f*15, atk: 5  + f*2, xp: 15,  gold: 8,   color: '#3a3', sk: 'goblin'    },
+    { name: 'Гриб',         emoji: '🍄', hp: 25  + f*10, atk: 3  + f*1, xp: 10,  gold: 5,   color: '#a63', sk: 'mushroom'  },
+    { name: 'Скелет',       emoji: '💀', hp: 45  + f*20, atk: 8  + f*3, xp: 25,  gold: 12,  color: '#aab', sk: 'skeleton'  },
   ];
-  const pool = templates[Math.min(f - 1, templates.length - 1)];
-  const t = pool[Math.floor(Math.random() * pool.length)];
-  return { ...t };
+  const floor2 = [
+    { name: 'Ледяной голем', emoji: '🧊', hp: 130 + f*30, atk: 20 + f*5, xp: 40,  gold: 20,  color: '#4af', sk: 'icegolem'   },
+    { name: 'Голем земли',   emoji: '🪨', hp: 150 + f*35, atk: 22 + f*5, xp: 45,  gold: 22,  color: '#963', sk: 'earthgolem' },
+  ];
+  const floor3 = [
+    { name: 'Демон',   emoji: '😈', hp: 220 + f*40, atk: 36 + f*8, xp: 70,  gold: 40,  color: '#f44', sk: null },
+    { name: 'Феникс',  emoji: '🦅', hp: 180 + f*35, atk: 30 + f*7, xp: 60,  gold: 35,  color: '#fa4', sk: null },
+  ];
+  const floor4 = [
+    { name: 'Зомби воин',  emoji: '🧟', hp: 380 + f*55, atk: 50 + f*11, xp: 110, gold: 60,  color: '#5a3', sk: 'zwarrior' },
+    { name: 'Зомби палач', emoji: '🧟', hp: 420 + f*60, atk: 55 + f*12, xp: 120, gold: 65,  color: '#383', sk: 'zexec'    },
+    { name: 'Зомби',       emoji: '🧟', hp: 350 + f*50, atk: 45 + f*10, xp: 100, gold: 55,  color: '#4a2', sk: 'zombie'   },
+  ];
+  const floor5 = [
+    { name: 'Тень', emoji: '👻', hp: 600 + f*70, atk: 72 + f*14, xp: 180, gold: 100, color: '#a4f', sk: null },
+  ];
+  if (f >= 5) {
+    const all = [floor1, floor2, floor3, floor4].flat().concat(floor5);
+    return { ...all[Math.floor(Math.random() * all.length)] };
+  }
+  const pools = [floor1, floor2, floor3, floor4, floor5];
+  const pool = pools[f - 1];
+  return { ...pool[Math.floor(Math.random() * pool.length)] };
 }
 
 // ── Спавн монстра ──
@@ -81,6 +89,7 @@ function spawnMonster(wx) {
     hp: t.hp, maxHp: t.hp, atk: t.atk,
     xp: t.xp, gold: t.gold,
     name: t.name, emoji: t.emoji, color: t.color,
+    sk: t.sk || null,
     frame: 0, state: 'idle',
     attackTimer: 0, hitFlash: 0,
     isAttacking: false, attackAnimTimer: 0,
@@ -117,7 +126,35 @@ function showDmgPop(text, screenX, screenY, color) {
 //  UPDATE — главный игровой тик
 // ═══════════════════════════════
 function update(dt) {
-  if (!gameActive || activeTab !== 'game') return;
+  if (!gameActive) return;
+
+  // ── Авто-зелье ──
+  if (potionCooldown > 0) potionCooldown -= dt;
+  if (G.potions > 0 && potionCooldown <= 0 && G.hp > 0 &&
+      (G.hp / G.maxHp * 100) <= G.potionThreshold) {
+    G.potions--;
+    var _heal = Math.ceil(G.maxHp * potionHealPct() / 100);
+    G.hp = Math.min(G.maxHp, G.hp + _heal);
+    potionCooldown = 3;
+    updatePotionHud();
+    updateHUD();
+    showDmgPop('+' + _heal + ' HP', PLAYER_SCREEN_X, player.y - 10, '#2ecc71');
+  }
+  // Визуал кулдауна зелья
+  (function() {
+    var fill = document.getElementById('potionFill');
+    var cdNum = document.getElementById('potionCd');
+    if (!fill || !cdNum) return;
+    if (potionCooldown > 0) {
+      fill.style.display = 'block';
+      fill.style.height = (potionCooldown / 3 * 100) + '%';
+      fill.style.top = 'auto'; fill.style.bottom = '0';
+      cdNum.textContent = Math.ceil(potionCooldown);
+    } else {
+      fill.style.display = 'none';
+      cdNum.textContent = '';
+    }
+  })();
 
   updateSkills(dt);
 
@@ -148,10 +185,30 @@ function update(dt) {
       if (atkAnimTimer >= 0 && !atkFired &&
           atkAnimTimer >= ATK_ANIM_DUR * (ATK_FRAMES - 1) / ATK_FRAMES) {
         atkFired = true;
-        fireballs.push({
-          worldX: player.worldX + 70, y: player.y + 50,
-          targetM: atkTarget, speed: 500, dmg: atkDmg, crit: atkCrit, angle: 0
-        });
+        const _ptype = G_CHAR ? G_CHAR.id : 'fire';
+        if (_ptype === 'light') {
+          // Молния — мгновенный урон, объект только для анимации вспышки
+          var _m = atkTarget;
+          var _dmg = atkDmg;
+          if (_m && _m.hp > 0) {
+            if (_m._cursed && _m._defDebuff) _dmg = Math.floor(_dmg * (1 + _m._defDebuff));
+            _m.hp -= _dmg;
+            _m.hitFlash = 0.15;
+            spawnParticles(_m.worldX, _m.y + 10, '#ffe066', 10);
+            showDmgPop(atkCrit ? _dmg + '!' : _dmg, _m.worldX - worldX, _m.y - 5, atkCrit ? '#fff566' : '#ffe066');
+          }
+          fireballs.push({
+            worldX: player.worldX + 40, y: player.y + 120,
+            targetM: atkTarget, speed: 9999, dmg: 0, crit: atkCrit, angle: 0,
+            ptype: 'light', life: 0.15, maxLife: 0.15
+          });
+        } else {
+          fireballs.push({
+            worldX: player.worldX + 40, y: player.y + 60,
+            targetM: atkTarget, speed: 600, dmg: atkDmg, crit: atkCrit, angle: 0,
+            ptype: _ptype
+          });
+        }
       }
       if (atkCooldownTimer <= 0 && atkAnimTimer < 0) {
         atkCooldownTimer = getAtkCooldown();
@@ -180,7 +237,7 @@ function update(dt) {
       if (m.attackAnimTimer >= 0.4) { m.isAttacking = false; m.attackAnimTimer = 0; }
     }
 
-    if (distToPlayer > 70 && player.state !== 'dead' && !m.isAttacking && !m._frozen) {
+    if (distToPlayer > 105 && player.state !== 'dead' && !m.isAttacking && !m._frozen) {
       m.state = 'run';
       const speed = (30 + G.floor * 5) * 1.5;
       m.worldX -= speed * dt;
@@ -194,7 +251,7 @@ function update(dt) {
     if (m._frozen) m.hitFlash = 0.08;
 
     const dist = m.worldX - player.worldX;
-    if (dist > 0 && dist < 70 && player.state !== 'dead' && !m.isAttacking && !m._frozen) {
+    if (dist > 0 && dist < 105 && player.state !== 'dead' && !m.isAttacking && !m._frozen) {
       m.attackTimer -= dt;
       if (m.attackTimer <= 0) {
         m.isAttacking = true; m.attackAnimTimer = 0;
@@ -229,7 +286,12 @@ function update(dt) {
 
   // ── Движение снарядов ──
   fireballs = fireballs.filter(function(fb) {
-    var tx = fb.targetM.worldX + 20, ty = fb.targetM.y + 20;
+    // Молния — только анимация, урон уже нанесён
+    if (fb.ptype === 'light') {
+      fb.life -= dt;
+      return fb.life > 0;
+    }
+    var tx = fb.targetM.worldX, ty = fb.targetM.y + fb.targetM.h * 0.4;
     var dx = tx - fb.worldX, dy = ty - fb.y;
     var dist = Math.sqrt(dx * dx + dy * dy);
     fb.angle += dt * 8;
@@ -267,12 +329,18 @@ function update(dt) {
     if (m.hp <= 0) {
       if (m._attackTimeout) clearTimeout(m._attackTimeout);
       spawnParticles(m.worldX, m.y, m.color, 12);
-      gainXP(m.xp);
-      G.gold += m.gold;
+      gainXP(Math.floor(m.xp * premMult('xp')));
+      G.gold += Math.floor(m.gold * premMult('gold'));
       G.killCount++;
       tryDropItem(G.floor);
+      var pixrChance = 0.3 * Math.pow(1.5, G.floor - 1) * premMult('pixr');
+      if (Math.random() * 100 < pixrChance) {
+        G.pixr = (G.pixr || 0) + 1;
+        showDmgPop('+1 PIXR', m.worldX - player.worldX + W * 0.5, GROUND * 0.4, '#ff44cc');
+      }
       updateHUD();
       checkFloorUnlock();
+      if (typeof triggerSave === 'function') triggerSave();
       return false;
     }
     return true;
@@ -294,7 +362,7 @@ function gainXP(amount) {
     G.baseStats.hp  += 10;
     G.baseStats.atkSpd = parseFloat(((G.baseStats.atkSpd || 1.0) + 0.02).toFixed(4));
     recalcStats();
-    G.hp = Math.min(G.hp + 20, G.maxHp);
+    G.hp = G.maxHp;
     showDmgPop('LV UP!', W * 0.4, GROUND * 0.5, '#fa0');
     updateHUD();
   }
@@ -317,12 +385,26 @@ function checkFloorUnlock() {
 
 // ── Game Over (воскрешение с 30% HP через 2 сек) ──
 function gameOverSequence() {
-  setTimeout(() => {
-    G.hp = Math.floor(G.maxHp * 0.3);
-    player.state = 'run';
-    player.invincible = 2.0;
-    updateHUD();
-  }, 2000);
+  var penalty = Math.floor(G.gold * 0.05);
+  G.gold = Math.max(0, G.gold - penalty);
+  var modal = document.getElementById('deathModal');
+  var txt   = document.getElementById('deathPenaltyText');
+  if (txt) {
+    txt.textContent = penalty > 0
+      ? 'Вы потеряли ' + penalty + ' золота (5%)'
+      : 'Вы погибли в бою';
+  }
+  if (modal) modal.classList.remove('hidden');
+}
+
+function revivePlayer() {
+  var modal = document.getElementById('deathModal');
+  if (modal) modal.classList.add('hidden');
+  G.hp = Math.floor(G.maxHp * 0.3);
+  player.state = 'run';
+  player.invincible = 2.0;
+  updateHUD();
+  if (typeof triggerSave === 'function') triggerSave();
 }
 
 // ═══════════════════════════════
@@ -336,6 +418,7 @@ function updateHUD() {
   document.getElementById('valHp').textContent = G.hp + '/' + G.maxHp;
   document.getElementById('valXp').textContent = 'Lv.' + G.level;
   document.getElementById('hudGold').textContent = G.gold;
+  document.getElementById('hudPixr').textContent = (G.pixr || 0);
   document.getElementById('hudFloor').textContent = G.floor;
   document.getElementById('hudCp').textContent = calcCP();
 }
@@ -375,4 +458,251 @@ function loop(ts) {
   update(dt);
   render();
   requestAnimationFrame(loop);
+}
+
+// ═══════════════════════════════
+//  ЗЕЛЬЯ
+// ═══════════════════════════════
+function updatePotionHud() {
+  var el = document.getElementById('potionCount');
+  if (el) el.textContent = G.potions;
+}
+function potionUpgCost() {
+  return Math.floor(1000 * Math.pow(2, G.potionLv));
+}
+function potionHealPct() {
+  return (1 + (G.potionLv || 0));
+}
+function openPotionModal() {
+  document.getElementById('pmCount').textContent = G.potions;
+  document.getElementById('pmGold').textContent = G.gold;
+  document.getElementById('pmThreshold').value = G.potionThreshold;
+  var lv = G.potionLv || 0;
+  document.getElementById('pmPotionLv').textContent = potionHealPct() + '%';
+  document.getElementById('pmPotionLvNum').textContent = lv + '/10';
+  var costEl = document.getElementById('pmUpgCost');
+  if (costEl) costEl.textContent = lv >= 10 ? 'МАКС' : potionUpgCost();
+  document.getElementById('potionModal').classList.remove('hidden');
+}
+function upgPotion() {
+  var lv = G.potionLv || 0;
+  if (lv >= 10) return;
+  var cost = potionUpgCost();
+  if (G.gold < cost) { showDmgPop('Мало монет', PLAYER_SCREEN_X, player.y - 20, '#f44'); return; }
+  G.gold -= cost;
+  G.potionLv = lv + 1;
+  updateHUD();
+  openPotionModal();
+}
+function closePotionModal() {
+  document.getElementById('potionModal').classList.add('hidden');
+}
+function buyPotions(n) {
+  var cost = n * 5;
+  if (G.gold < cost) { return; }
+  G.gold -= cost;
+  G.potions += n;
+  updateHUD();
+  updatePotionHud();
+  document.getElementById('pmCount').textContent = G.potions;
+  document.getElementById('pmGold').textContent = G.gold;
+}
+function savePotionThreshold(val) {
+  var v = parseInt(val);
+  if (v >= 1 && v <= 99) G.potionThreshold = v;
+}
+
+// ═══════════════════════════════
+//  BATTLE PASS
+// ═══════════════════════════════
+const BP_REWARDS = [
+  { lv: 5,  icon: '💰', desc: '5 000 золота',
+    apply: function() { G.gold += 5000; updateHUD(); } },
+  { lv: 10, iconFn: function() { var cls = G_CHAR ? G_CHAR.id : 'fire'; var p={fire:'wf',light:'wl',water:'ww'}[cls]||'wf'; return '<img src="images/'+p+'e.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: 'Оружие Lv.10 Epic (свой класс)',
+    apply: function() {
+      if (!G_CHAR) return;
+      var st = STAFF_TYPES.find(function(s) { return s.forClass === G_CHAR.id; }) || STAFF_TYPES[0];
+      var base = 10 * 2.5, mult = 1 + 3 * 0.55;
+      var stats = {};
+      st.stats.forEach(function(s) {
+        var val = Math.floor(base * mult * (s === st.primary ? 1.0 : 0.45) * 1.0);
+        if (val > 0) stats[s] = val;
+      });
+      var item = { id: ++_invIdCounter, slot: 'weapon', name: st.name,
+        icon: itemIcon('weapon', 'epic', st.forClass),
+        rarity: 'epic', level: 10, stats: stats,
+        forClass: st.forClass, classLabel: st.classLabel, classColor: st.classColor };
+      G.inventory.push(item);
+      if (typeof renderInventory === 'function') renderInventory();
+    }},
+  { lv: 15, iconFn: function() { return '<img src="images/ringe.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: 'Кольцо Lv.10 Epic',
+    apply: function() {
+      var base = 10 * 2.5, mult = 1 + 3 * 0.55;
+      var stats = { def: Math.floor(base * mult * 1.0), dodge: Math.floor(base * mult * 0.45) };
+      var item = { id: ++_invIdCounter, slot: 'ring', name: 'Кольцо битвы',
+        icon: itemIcon('ring', 'epic', null), rarity: 'epic', level: 10, stats: stats };
+      G.inventory.push(item);
+      if (typeof renderInventory === 'function') renderInventory();
+    }},
+  { lv: 20, icon: '💰', desc: '20 000 золота',
+    apply: function() { G.gold += 20000; updateHUD(); } },
+  { lv: 25, iconFn: function() { return '<img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: '100 PIXR',
+    apply: function() { G.pixr = (G.pixr||0) + 100; updateHUD(); } },
+  { lv: 30, iconFn: function() { var cls = G_CHAR ? G_CHAR.id : 'fire'; var p={fire:'wf',light:'wl',water:'ww'}[cls]||'wf'; return '<img src="images/'+p+'l.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: 'Оружие Lv.20 Legendary (свой класс)',
+    apply: function() {
+      if (!G_CHAR) return;
+      var st = STAFF_TYPES.find(function(s) { return s.forClass === G_CHAR.id; }) || STAFF_TYPES[0];
+      var base = 20 * 2.5, mult = 1 + 4 * 0.55;
+      var stats = {};
+      st.stats.forEach(function(s) {
+        var val = Math.floor(base * mult * (s === st.primary ? 1.0 : 0.45));
+        if (val > 0) stats[s] = val;
+      });
+      var bonus = ['atk','def','hp','crit','dodge','spd'].filter(function(s) { return !stats[s]; });
+      if (bonus.length) stats[bonus[0]] = Math.floor(base * 0.5);
+      var item = { id: ++_invIdCounter, slot: 'weapon', name: st.name,
+        icon: itemIcon('weapon', 'legend', st.forClass),
+        rarity: 'legend', level: 20, stats: stats,
+        forClass: st.forClass, classLabel: st.classLabel, classColor: st.classColor };
+      G.inventory.push(item);
+      if (typeof renderInventory === 'function') renderInventory();
+    }},
+  { lv: 35, icon: '💰', desc: '100 000 золота',
+    apply: function() { G.gold += 100000; updateHUD(); } },
+  { lv: 40, iconFn: function() { return '<img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: '200 PIXR',
+    apply: function() { G.pixr = (G.pixr||0) + 200; updateHUD(); } },
+  { lv: 50, icon: '💰', desc: '500 000 золота',
+    apply: function() { G.gold += 500000; updateHUD(); } },
+  { lv: 60, iconFn: function() { return '<img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: '1000 PIXR',
+    apply: function() { G.pixr = (G.pixr||0) + 1000; updateHUD(); } },
+];
+
+function openBattlePass() {
+  if (!G.bp) G.bp = { active: false, claimed: [] };
+  renderBattlePass();
+  document.getElementById('bpModal').classList.remove('hidden');
+}
+function closeBattlePass() {
+  document.getElementById('bpModal').classList.add('hidden');
+}
+function buyBattlePass() {
+  if (!G.bp) G.bp = { active: false, claimed: [] };
+  if (G.bp.active) return;
+  if ((G.gram || 0) < 10) {
+    showDmgPop('Мало GRAM', PLAYER_SCREEN_X, player.y - 20, '#f44');
+    return;
+  }
+  G.gram = parseFloat(((G.gram || 0) - 10).toFixed(3));
+  G.bp.active = true;
+  renderBattlePass();
+}
+function claimBpReward(idx) {
+  if (!G.bp || !G.bp.active) return;
+  if (!G.bp.claimed) G.bp.claimed = [];
+  if (G.bp.claimed.indexOf(idx) !== -1) return;
+  var r = BP_REWARDS[idx];
+  if (G.level < r.lv) return;
+  r.apply();
+  G.bp.claimed.push(idx);
+  renderBattlePass();
+}
+function renderBattlePass() {
+  if (!G.bp) G.bp = { active: false, claimed: [] };
+  var active = G.bp.active;
+  var claimed = G.bp.claimed || [];
+
+  // Статус
+  var statusEl = document.getElementById('bpStatus');
+  if (active) {
+    statusEl.innerHTML = '✅ Battle Pass активен · Уровень <b>' + G.level + '</b>';
+    statusEl.style.color = '#ffd700';
+  } else {
+    statusEl.innerHTML = '🔒 Battle Pass не активен · Ваш GRAM: <b>' + (G.gram||0).toFixed(3) + '</b>';
+    statusEl.style.color = '#aaa';
+  }
+
+  // Кнопка покупки
+  var buyRow = document.getElementById('bpBuyRow');
+  buyRow.classList.toggle('hidden', active);
+
+  // Список наград
+  var list = document.getElementById('bpRewardsList');
+  list.innerHTML = '';
+  BP_REWARDS.forEach(function(r, idx) {
+    var isClaimed  = claimed.indexOf(idx) !== -1;
+    var isAvail    = active && !isClaimed && G.level >= r.lv;
+    var isLocked   = !active || G.level < r.lv;
+    var row = document.createElement('div');
+    row.className = 'bp-reward-row' + (isClaimed ? ' bp-claimed' : isAvail ? ' bp-available' : '');
+    var lvClass  = isLocked && !isClaimed ? 'bp-reward-lv-locked' : '';
+    var descClass = isLocked && !isClaimed ? 'bp-reward-desc-locked' : '';
+    var actionHtml = '';
+    if (isClaimed) {
+      actionHtml = '<span class="bp-claimed-label">✓ Получено</span>';
+    } else if (isAvail) {
+      actionHtml = '<button class="bp-claim-btn" onclick="claimBpReward(' + idx + ')">Забрать</button>';
+    } else {
+      actionHtml = '<span class="bp-lock-label">' + (active ? 'Lv ' + r.lv : '🔒') + '</span>';
+    }
+    row.innerHTML =
+      '<div class="bp-reward-lv ' + lvClass + '">Lv ' + r.lv + '</div>' +
+      '<div class="bp-reward-icon">' + (typeof r.iconFn === 'function' ? r.iconFn() : r.icon) + '</div>' +
+      '<div class="bp-reward-desc ' + descClass + '">' + r.desc + '</div>' +
+      actionHtml;
+    list.appendChild(row);
+  });
+}
+
+// ═══════════════════════════════
+//  PREMIUM
+// ═══════════════════════════════
+const PREM_TIERS = {
+  gold:  { name: 'GOLD',     days: 7,  cost: 10,  xp: 1.5, gold: 1.5, drop: 1.5, pixr: 1,  refine: 0 },
+  plat:  { name: 'PLATINUM', days: 7,  cost: 50,  xp: 2,   gold: 2,   drop: 2,   pixr: 2,  refine: 0 },
+  ultra: { name: 'ULTRA',    days: 30, cost: 300, xp: 3,   gold: 3,   drop: 3,   pixr: 4,  refine: 20 },
+};
+
+function premMult(type) {
+  if (!G.prem || !G.prem.tier || Date.now() > G.prem.expiresAt) return 1;
+  return PREM_TIERS[G.prem.tier][type] || 1;
+}
+function premRefineBonus() {
+  if (!G.prem || !G.prem.tier || Date.now() > G.prem.expiresAt) return 0;
+  return PREM_TIERS[G.prem.tier].refine || 0;
+}
+
+function openPremModal() {
+  updatePremStatus();
+  document.getElementById('premModal').classList.remove('hidden');
+}
+function closePremModal() {
+  document.getElementById('premModal').classList.add('hidden');
+}
+function updatePremStatus() {
+  var el = document.getElementById('premStatus');
+  if (!el) return;
+  if (!G.prem || !G.prem.tier || Date.now() > G.prem.expiresAt) {
+    el.textContent = 'Нет активного Premium';
+    el.style.color = '#aaa';
+  } else {
+    var t = PREM_TIERS[G.prem.tier];
+    var left = Math.ceil((G.prem.expiresAt - Date.now()) / 86400000);
+    el.innerHTML = '✅ <b>' + t.name + '</b> · Осталось: <b>' + left + ' дн.</b>';
+    el.style.color = '#c080ff';
+  }
+}
+function buyPrem(tier) {
+  var t = PREM_TIERS[tier];
+  if (!t) return;
+  if ((G.gram || 0) < t.cost) {
+    showDmgPop('Мало GRAM', PLAYER_SCREEN_X, player.y - 20, '#f44');
+    return;
+  }
+  G.gram = parseFloat(((G.gram || 0) - t.cost).toFixed(3));
+  // Если уже активен — продлеваем
+  var base = (G.prem && G.prem.expiresAt > Date.now()) ? G.prem.expiresAt : Date.now();
+  G.prem = { tier: tier, expiresAt: base + t.days * 86400000 };
+  updatePremStatus();
+  closePremModal();
+  showDmgPop('👑 ' + t.name + ' активен!', PLAYER_SCREEN_X, player.y - 30, '#c080ff');
 }

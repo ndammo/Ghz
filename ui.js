@@ -27,6 +27,7 @@ function buyUpgrade(u) {
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
+  triggerSave();
 }
 
 function renderUpgrades() {
@@ -115,7 +116,7 @@ function renderUpgrades() {
     else if (sk.id === 'water_freeze')  bonusDesc = '+0.4с заморозка / ур.';
     return '<div style="margin-bottom:12px;border-radius:10px;border:1.5px solid ' + (st.unlocked ? col + '55' : '#2a2a3a') + ';overflow:hidden;background:rgba(255,255,255,0.02);">' +
       '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.04);">' +
-      '<span style="font-size:28px;line-height:1">' + sk.icon + '</span>' +
+      '<img src="' + sk.icon + '" style="width:44px;height:44px;object-fit:contain;image-rendering:pixelated;flex-shrink:0;" onerror="this.style.opacity=0.3">' +
       '<div style="flex:1;"><div style="font-size:13px;font-weight:bold;color:' + (st.unlocked ? '#ddd' : '#556') + '">' + sk.name + '</div>' +
       '<div style="font-size:10px;color:#667;margin-top:2px;">' + sk.desc + ' · КД: ' + sk.cd + 'с</div>' +
       '<div style="font-size:9px;color:#445;margin-top:2px;">' + bonusDesc + '</div></div>' +
@@ -149,12 +150,18 @@ function openFloorLoot(floorN) {
     f.loot.forEach(function(item) {
       var col = rarityColors[item.rarity] || '#888';
       var rname = rarityNames[item.rarity] || item.rarity;
-      html += '<div class="loot-row"><img src="' + itemIcon(item.slot, item.rarity, item.forClass || null) + '" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;margin-right:8px;vertical-align:middle;" onerror="this.remove()">';
+      var iconSrc = itemIcon(item.slot, item.rarity, item.forClass || null);
+      html += '<div class="loot-row"><img src="' + iconSrc + '" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;margin-right:8px;vertical-align:middle;" onerror="this.style.opacity=0">';
       html += '<span style="flex:1;color:#ddd;">' + item.name;
       if (item.forClass) html += ' <span style="font-size:9px;color:' + (classColors[item.forClass]||'#aaa') + ';border:1px solid ' + (classColors[item.forClass]||'#aaa') + ';padding:1px 5px;border-radius:3px;">' + (classLabels[item.forClass]||item.forClass) + '</span>';
       html += '</span><span class="loot-rarity-badge" style="color:' + col + ';border-color:' + col + ';margin-right:8px;">' + rname + '</span>';
       html += '<span style="color:#f5c542;font-weight:bold;min-width:34px;text-align:right;">' + item.chance + '%</span></div>';
     });
+    var pixrChance = (0.3 * Math.pow(1.5, f.n - 1)).toFixed(2);
+    html += '<div class="loot-row"><img src="images/pixr.png" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;margin-right:8px;vertical-align:middle;" onerror="this.style.opacity=0">';
+    html += '<span style="flex:1;color:#ff44cc;">PIXR</span>';
+    html += '<span class="loot-rarity-badge" style="color:#ff44cc;border-color:#ff44cc;margin-right:8px;">Монетка</span>';
+    html += '<span style="color:#f5c542;font-weight:bold;min-width:34px;text-align:right;">' + pixrChance + '%</span></div>';
   } else {
     html += '<div style="color:#445;font-size:11px;text-align:center;padding:20px 0;">Нет данных о дропе</div>';
   }
@@ -200,10 +207,6 @@ function renderFloors() {
     if (locked) html += '<div style="font-size:10px;color:#e74c3c;text-align:right;min-width:55px;">&#128274;<br><span style="color:#f88">ещё +' + cpLeft + ' CP</span></div>';
     html += '</div>';
     html += '<div style="padding:8px 12px 10px;background:rgba(0,0,0,0.18);">';
-    html += '<div style="font-size:9px;color:#556;letter-spacing:1px;margin-bottom:5px;">ВРАГИ</div>';
-    html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px;">';
-    f.monsters.forEach(function(mn) { html += '<span style="font-size:10px;background:rgba(255,255,255,0.06);border:1px solid #2a2a5a;border-radius:4px;padding:2px 7px;color:#bbb;">' + mn + '</span>'; });
-    html += '</div>';
     html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">';
     html += '<div style="background:rgba(255,255,255,0.04);border:1px solid #1a1a35;border-radius:6px;padding:6px 4px;text-align:center;"><div style="font-size:9px;color:#556;">Нужно CP</div><div style="font-size:14px;font-weight:bold;color:' + (unlocked ? '#2ecc71' : '#e74c3c') + ';">' + (f.cpReq === 0 ? 'Старт' : f.cpReq) + '</div></div>';
     html += '<div style="background:rgba(155,89,182,0.08);border:1px solid #3a1a5a;border-radius:6px;padding:6px 4px;text-align:center;"><div style="font-size:9px;color:#778;">XP/враг</div><div style="font-size:13px;font-weight:bold;color:#b88cf8;">' + avgXp + '&ndash;' + maxXp + '</div></div>';
@@ -239,6 +242,7 @@ function goToFloor(n) {
   monsters = [];
   nextMonsterSpawn = player.worldX + 400;
   updateHUD(); switchTab('game');
+  triggerSave();
 }
 
 // ═══════════════════════════════
@@ -265,15 +269,32 @@ function renderRating() {
 // ═══════════════════════════════
 function renderWallet() {
   const cp = calcCP();
+  const pixr = G.pixr || 0;
+  const gram = (G.gram || 0).toFixed(3);
+  const canExchange = pixr >= 1000;
   document.getElementById('walletBody').innerHTML = `
     <div class="wallet-card">
-      <div class="wallet-label">Золото</div>
-      <div class="wallet-val">💰 ${G.gold}</div>
-      <div class="wallet-sub">Заработано убийствами монстров</div>
-      <div class="wallet-actions">
-        <div class="wallet-btn dep" onclick="depositAction()">⬇ Пополнить</div>
-        <div class="wallet-btn wit" onclick="withdrawAction()">⬆ Вывести</div>
+      <div class="wallet-label">PIXR</div>
+      <div class="wallet-val" style="display:flex;align-items:center;gap:6px;">
+        <img src="images/pixr.png" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;">
+        <span style="color:#ff44cc;font-size:22px;font-weight:bold;">${pixr}</span>
       </div>
+      <div class="wallet-sub">Падает с монстров. Шанс ×1.5 каждый этаж</div>
+    </div>
+    <div class="wallet-card">
+      <div class="wallet-label">GRAM</div>
+      <div class="wallet-val" style="display:flex;align-items:center;gap:6px;">
+        <img src="images/gram.png" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;">
+        <span style="color:#40d0ff;font-size:22px;font-weight:bold;">${gram}</span>
+      </div>
+      <div class="wallet-sub">Получается обменом PIXR → GRAM (1000:1)</div>
+      <div class="wallet-actions" style="margin-top:10px;">
+        <div class="wallet-btn dep" style="opacity:${canExchange?1:0.4};pointer-events:${canExchange?'auto':'none'};"
+          onclick="exchangePixr()">
+          🔄 Обменять 1000 PIXR → 1 GRAM
+        </div>
+      </div>
+      ${!canExchange ? `<div style="font-size:10px;color:#556;margin-top:6px;text-align:center;">Нужно минимум 1000 PIXR (у тебя ${pixr})</div>` : ''}
     </div>
     <div class="wallet-card">
       <div class="wallet-label">Статистика</div>
@@ -290,14 +311,17 @@ function renderWallet() {
         <div class="stat-cell"><div class="stat-icon">❤️</div><div class="stat-label">Макс. HP</div><div class="stat-val">${G.maxHp}</div></div>
         <div class="stat-cell"><div class="stat-icon">🗡️</div><div class="stat-label">Ск. атаки</div><div class="stat-val">${(G.stats.atkSpd||1).toFixed(2)}x</div></div>
       </div>
-    </div>
-    <div style="font-size:10px;color:#445;text-align:center;padding:8px;">
-      Интеграция с TON кошельком скоро...
     </div>`;
 }
 
-function depositAction()  { alert('💰 Пополнение: скоро будет доступно через TON!'); }
-function withdrawAction() { alert('⬆ Вывод: скоро будет доступно через TON!'); }
+function exchangePixr() {
+  if ((G.pixr || 0) < 1000) return;
+  G.pixr -= 1000;
+  G.gram = parseFloat(((G.gram || 0) + 1).toFixed(3));
+  updateHUD();
+  renderWallet();
+  triggerSave();
+}
 
 // ═══════════════════════════════
 //  ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК
@@ -315,6 +339,11 @@ function switchTab(tab) {
   document.getElementById('panelWallet').classList.toggle('visible',   tab === 'wallet');
   var hudEl = document.getElementById('skillsHud');
   if (hudEl) hudEl.classList.toggle('visible', tab === 'game' && !!G_CHAR);
+  var isGame = tab === 'game' && !!G_CHAR;
+  var bpBtn = document.getElementById('bpHudBtn');
+  var premBtn = document.querySelector('.prem-hud-btn');
+  if (bpBtn)   bpBtn.style.display   = isGame ? 'flex' : 'none';
+  if (premBtn) premBtn.style.display = isGame ? 'flex' : 'none';
 
   if (tab === 'inv')      { _invSelectMode = false; _invSelected = {}; renderInventory(); }
   if (tab === 'upgrades') renderUpgrades();
@@ -369,9 +398,8 @@ function applyCharacter(ch) {
 }
 
 function startGame() {
-  resize(); updateHUD(); initSkillsHud();
+  resize(); updateHUD(); initSkillsHud(); updatePotionHud();
   spawnMonster(player.worldX + W * 0.65);
-  spawnMonster(player.worldX + W * 1.1);
   requestAnimationFrame(function(ts) { lastTime = ts; loop(ts); });
 }
 
@@ -383,16 +411,16 @@ function initCharSelectSprites() {
     _csIdleImgs[id] = img;
     img.src = ch.idleSrc;
     var cv = document.getElementById('cs-canvas-' + id);
-    cv.width = 80; cv.height = 80;
+    cv.width = 90; cv.height = 100;
     var frame = 0;
     _csSpriteTimers[id] = setInterval(function() {
       var ctx2 = cv.getContext('2d');
-      ctx2.clearRect(0, 0, 80, 80);
+      ctx2.clearRect(0, 0, 90, 100);
       ctx2.imageSmoothingEnabled = false;
       var fw = ch.idleFW, fh = ch.idleFH;
-      var scale = Math.min(80/fw, 80/fh) * 1.4;
+      var scale = Math.min(90/fw, 100/fh);
       var dw = fw*scale, dh = fh*scale;
-      var dx = (80-dw)/2, dy = (80-dh)/2;
+      var dx = (90-dw)/2, dy = (100-dh);
       if (img.complete && img.naturalWidth > 0) ctx2.drawImage(img, frame*fw, 0, fw, fh, dx, dy, dw, dh);
       frame = (frame + 1) % ch.idleFrames;
     }, 130);

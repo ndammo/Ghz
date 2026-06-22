@@ -23,6 +23,7 @@
   ══════════════════════════════════════════════════════
 -->
 <link rel="stylesheet" href="style.css">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
 <div id="app">
@@ -110,23 +111,170 @@
        TOP HUD — HP, XP, золото, этаж, CP
        ══════════════════════════════════ -->
   <div id="hud">
-    <div class="hud-avatar">🧙</div>
+    <div class="hud-avatar">
+      <svg width="28" height="28" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated">
+        <rect x="5" y="1" width="6" height="6" fill="#9b59b6"/>
+        <rect x="4" y="2" width="1" height="4" fill="#8e44ad"/>
+        <rect x="11" y="2" width="1" height="4" fill="#8e44ad"/>
+        <rect x="6" y="3" width="1" height="1" fill="#fff"/>
+        <rect x="9" y="3" width="1" height="1" fill="#fff"/>
+        <rect x="6" y="5" width="4" height="1" fill="#ddd"/>
+        <rect x="4" y="0" width="8" height="2" fill="#6c3483"/>
+        <rect x="6" y="0" width="4" height="1" fill="#f5c542"/>
+        <rect x="4" y="7" width="8" height="6" fill="#7d3c98"/>
+        <rect x="3" y="8" width="2" height="4" fill="#6c3483"/>
+        <rect x="11" y="8" width="2" height="4" fill="#6c3483"/>
+        <rect x="13" y="5" width="1" height="7" fill="#8B6914"/>
+        <rect x="13" y="4" width="2" height="2" fill="#f5c542"/>
+        <rect x="5" y="13" width="2" height="3" fill="#5b2c6f"/>
+        <rect x="9" y="13" width="2" height="3" fill="#5b2c6f"/>
+      </svg>
+    </div>
     <div class="hud-stats">
       <div class="hud-row">
-        <span class="bar-label">HP</span>
+        <span class="bar-label">
+          <svg width="11" height="11" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;display:block">
+            <rect x="1" y="1" width="3" height="2" fill="#e74c3c"/>
+            <rect x="6" y="1" width="3" height="2" fill="#e74c3c"/>
+            <rect x="0" y="2" width="10" height="4" fill="#e74c3c"/>
+            <rect x="1" y="6" width="8" height="2" fill="#e74c3c"/>
+            <rect x="2" y="8" width="6" height="1" fill="#e74c3c"/>
+            <rect x="3" y="9" width="4" height="1" fill="#e74c3c"/>
+          </svg>
+        </span>
         <div class="bar-wrap"><div class="bar-fill bar-hp" id="barHp" style="width:100%"></div></div>
         <span class="bar-val" id="valHp">100/100</span>
       </div>
       <div class="hud-row">
-        <span class="bar-label">XP</span>
+        <span class="bar-label">
+          <svg width="11" height="11" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;display:block">
+            <rect x="4" y="0" width="2" height="3" fill="#9b59b6"/>
+            <rect x="0" y="3" width="10" height="2" fill="#9b59b6"/>
+            <rect x="1" y="2" width="2" height="2" fill="#9b59b6"/>
+            <rect x="7" y="2" width="2" height="2" fill="#9b59b6"/>
+            <rect x="2" y="5" width="2" height="4" fill="#9b59b6"/>
+            <rect x="6" y="5" width="2" height="4" fill="#9b59b6"/>
+            <rect x="4" y="6" width="2" height="2" fill="#9b59b6"/>
+          </svg>
+        </span>
         <div class="bar-wrap"><div class="bar-fill bar-xp" id="barXp" style="width:0%"></div></div>
         <span class="bar-val" id="valXp">Lv.1</span>
       </div>
     </div>
     <div class="hud-right">
-      <div class="hud-gold">💰 <span id="hudGold">0</span></div>
-      <div class="hud-floor">Этаж <span id="hudFloor">1</span></div>
-      <div class="hud-cp">⚔️ CP <span id="hudCp">0</span></div>
+      <div class="hud-info-row">
+        <svg width="12" height="12" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;flex-shrink:0">
+          <rect x="2" y="0" width="6" height="2" fill="#f5c542"/>
+          <rect x="0" y="2" width="10" height="6" fill="#f5c542"/>
+          <rect x="2" y="8" width="6" height="2" fill="#f5c542"/>
+          <rect x="3" y="2" width="4" height="6" fill="#c8a000"/>
+          <rect x="4" y="3" width="2" height="4" fill="#f5c542"/>
+        </svg>
+        <span class="hud-gold-val" id="hudGold">0</span>
+        <div class="hud-divider"></div>
+        <img src="images/pixr.png" class="hud-pixr-img">
+        <span class="hud-pixr-val" id="hudPixr">0</span>
+      </div>
+      <div class="hud-info-row">
+        <svg width="12" height="12" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;flex-shrink:0">
+          <rect x="2" y="0" width="6" height="8" fill="#7ab8ff"/>
+          <rect x="0" y="2" width="2" height="4" fill="#7ab8ff"/>
+          <rect x="8" y="2" width="2" height="4" fill="#7ab8ff"/>
+          <rect x="3" y="1" width="1" height="2" fill="#0d0d1a"/>
+          <rect x="6" y="1" width="1" height="2" fill="#0d0d1a"/>
+          <rect x="4" y="5" width="2" height="3" fill="#0d0d1a"/>
+          <rect x="0" y="8" width="10" height="2" fill="#7ab8ff"/>
+        </svg>
+        <span class="hud-floor-val">Эт.<span id="hudFloor">1</span></span>
+        <div class="hud-divider"></div>
+        <svg width="12" height="12" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;flex-shrink:0">
+          <rect x="4" y="0" width="2" height="7" fill="#ffaa00"/>
+          <rect x="2" y="3" width="6" height="2" fill="#ffaa00"/>
+          <rect x="4" y="7" width="2" height="1" fill="#c8850a"/>
+          <rect x="3" y="8" width="4" height="1" fill="#c8850a"/>
+          <rect x="4" y="9" width="2" height="1" fill="#c8850a"/>
+        </svg>
+        <span class="hud-cp-val">CP <span id="hudCp">0</span></span>
+      </div>
+    </div>
+  </div>
+  <!-- BP кнопка -->
+  <div id="bpHudBtn" class="bp-hud-btn" onclick="openBattlePass()">
+    <svg width="18" height="18" viewBox="0 0 14 14" fill="none" style="image-rendering:pixelated">
+      <rect x="0" y="3" width="14" height="8" fill="#c8a000"/>
+      <rect x="1" y="4" width="12" height="6" fill="#ffd700"/>
+      <rect x="2" y="5" width="10" height="4" fill="#c8a000"/>
+      <rect x="3" y="3" width="2" height="8" fill="#ffd700"/>
+      <rect x="9" y="3" width="2" height="8" fill="#ffd700"/>
+      <rect x="4" y="6" width="6" height="2" fill="#ffd700"/>
+    </svg>
+    <span class="bp-hud-label">BP</span>
+  </div>
+  <!-- Premium кнопка -->
+  <div class="prem-hud-btn" onclick="openPremModal()">
+    <svg width="18" height="18" viewBox="0 0 14 14" fill="none" style="image-rendering:pixelated">
+      <rect x="0" y="8" width="14" height="4" fill="#9b59b6"/>
+      <rect x="1" y="9" width="12" height="2" fill="#c080ff"/>
+      <rect x="0" y="4" width="2" height="6" fill="#9b59b6"/>
+      <rect x="12" y="4" width="2" height="6" fill="#9b59b6"/>
+      <rect x="6" y="2" width="2" height="8" fill="#9b59b6"/>
+      <rect x="2" y="5" width="4" height="5" fill="#9b59b6"/>
+      <rect x="8" y="5" width="4" height="5" fill="#9b59b6"/>
+      <rect x="1" y="3" width="2" height="2" fill="#e056fd"/>
+      <rect x="6" y="1" width="2" height="2" fill="#e056fd"/>
+      <rect x="11" y="3" width="2" height="2" fill="#e056fd"/>
+    </svg>
+    <span class="prem-hud-label">VIP</span>
+  </div>
+
+  <!-- Премиум модалка -->
+  <div id="premModal" class="prem-modal hidden">
+    <div class="prem-modal-box">
+      <div class="prem-modal-header">
+        <span class="prem-modal-title">👑 PREMIUM</span>
+        <button class="prem-close-btn" onclick="closePremModal()">✕</button>
+      </div>
+      <div class="prem-status" id="premStatus">Нет активного Premium</div>
+
+      <!-- Gold 7 дней -->
+      <div class="prem-card gold-card">
+        <div class="prem-card-title">⚡ GOLD · 7 дней</div>
+        <div class="prem-card-price">10 GRAM</div>
+        <div class="prem-card-perks">
+          ✦ Опыт ×1.5<br>
+          ✦ Золото ×1.5<br>
+          ✦ Выпадение предметов ×1.5<br>
+          ✦ Выпадение PIXR ×1
+        </div>
+        <button class="prem-card-btn" onclick="buyPrem('gold')">Купить за 10 GRAM</button>
+      </div>
+
+      <!-- Platinum 7 дней -->
+      <div class="prem-card plat-card">
+        <div class="prem-card-title">💎 PLATINUM · 7 дней</div>
+        <div class="prem-card-price">50 GRAM</div>
+        <div class="prem-card-perks">
+          ✦ Опыт ×2<br>
+          ✦ Золото ×2<br>
+          ✦ Выпадение предметов ×2<br>
+          ✦ Выпадение PIXR ×2
+        </div>
+        <button class="prem-card-btn" onclick="buyPrem('plat')">Купить за 50 GRAM</button>
+      </div>
+
+      <!-- Ultra 30 дней -->
+      <div class="prem-card ultra-card">
+        <div class="prem-card-title">🔥 ULTRA · 30 дней</div>
+        <div class="prem-card-price">300 GRAM</div>
+        <div class="prem-card-perks">
+          ✦ Опыт ×3<br>
+          ✦ Золото ×3<br>
+          ✦ Выпадение предметов ×3<br>
+          ✦ Выпадение PIXR ×4<br>
+          ✦ Шанс заточки +20%
+        </div>
+        <button class="prem-card-btn" onclick="buyPrem('ultra')">Купить за 300 GRAM</button>
+      </div>
     </div>
   </div>
 
@@ -168,23 +316,23 @@
        НИЖНЯЯ НАВИГАЦИЯ
        ══════════════════════════════════ -->
   <div id="nav">
-    <button class="nav-btn active" id="navGame"     onclick="switchTab('game')">
-      <span class="nav-icon">🎮</span>ИГРА
+    <button class="nav-btn active" id="navGame" onclick="switchTab('game')">
+      <span class="nav-icon"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="1" y="1" width="2" height="2" fill="currentColor"/><rect x="3" y="3" width="2" height="2" fill="currentColor"/><rect x="5" y="5" width="2" height="2" fill="currentColor"/><rect x="7" y="7" width="2" height="2" fill="currentColor"/><rect x="9" y="9" width="2" height="2" fill="currentColor"/><rect x="11" y="11" width="2" height="2" fill="currentColor"/><rect x="13" y="13" width="2" height="2" fill="currentColor"/><rect x="13" y="1" width="2" height="2" fill="currentColor"/><rect x="11" y="3" width="2" height="2" fill="currentColor"/><rect x="9" y="5" width="2" height="2" fill="currentColor"/><rect x="5" y="9" width="2" height="2" fill="currentColor"/><rect x="3" y="11" width="2" height="2" fill="currentColor"/><rect x="1" y="13" width="2" height="2" fill="currentColor"/><rect x="5" y="7" width="2" height="2" fill="currentColor"/><rect x="9" y="7" width="2" height="2" fill="currentColor"/><rect x="7" y="5" width="2" height="2" fill="currentColor"/><rect x="7" y="9" width="2" height="2" fill="currentColor"/></svg></span>ИГРА
     </button>
-    <button class="nav-btn" id="navInv"             onclick="switchTab('inv')">
-      <span class="nav-icon">🎒</span>ИНВЕНТ
+    <button class="nav-btn" id="navInv" onclick="switchTab('inv')">
+      <span class="nav-icon"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="1" y="2" width="14" height="4" fill="currentColor"/><rect x="2" y="1" width="12" height="2" fill="currentColor"/><rect x="1" y="6" width="14" height="8" fill="currentColor"/><rect x="2" y="7" width="12" height="6" fill="var(--dark)"/><rect x="6" y="5" width="4" height="4" fill="currentColor"/><rect x="7" y="6" width="2" height="2" fill="var(--dark)"/><rect x="2" y="2" width="2" height="2" fill="currentColor"/><rect x="12" y="2" width="2" height="2" fill="currentColor"/></svg></span>ИНВЕНТ
     </button>
-    <button class="nav-btn" id="navUpgrades"        onclick="switchTab('upgrades')">
-      <span class="nav-icon">⚒️</span>УЛУЧШ
+    <button class="nav-btn" id="navUpgrades" onclick="switchTab('upgrades')">
+      <span class="nav-icon"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="7" y="8" width="2" height="6" fill="currentColor"/><rect x="3" y="2" width="10" height="4" fill="currentColor"/><rect x="2" y="4" width="12" height="4" fill="currentColor"/><rect x="1" y="1" width="2" height="2" fill="currentColor" opacity="0.7"/><rect x="13" y="1" width="2" height="2" fill="currentColor" opacity="0.7"/><rect x="13" y="5" width="2" height="2" fill="currentColor" opacity="0.5"/><rect x="5" y="14" width="6" height="2" fill="currentColor"/></svg></span>УЛУЧШ
     </button>
-    <button class="nav-btn" id="navFloors"          onclick="switchTab('floors')">
-      <span class="nav-icon">🏰</span>ЭТАЖИ
+    <button class="nav-btn" id="navFloors" onclick="switchTab('floors')">
+      <span class="nav-icon"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="3" y="4" width="10" height="12" fill="currentColor"/><rect x="3" y="2" width="2" height="4" fill="currentColor"/><rect x="7" y="1" width="2" height="5" fill="currentColor"/><rect x="11" y="2" width="2" height="4" fill="currentColor"/><rect x="5" y="6" width="2" height="2" fill="var(--dark)"/><rect x="9" y="6" width="2" height="2" fill="var(--dark)"/><rect x="5" y="10" width="2" height="2" fill="var(--dark)"/><rect x="9" y="10" width="2" height="2" fill="var(--dark)"/><rect x="6" y="12" width="4" height="4" fill="var(--dark)"/></svg></span>ЭТАЖИ
     </button>
-    <button class="nav-btn" id="navRating"          onclick="switchTab('rating')">
-      <span class="nav-icon">🏆</span>ТОП
+    <button class="nav-btn" id="navRating" onclick="switchTab('rating')">
+      <span class="nav-icon"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="4" y="2" width="8" height="6" fill="currentColor"/><rect x="2" y="2" width="2" height="4" fill="currentColor"/><rect x="12" y="2" width="2" height="4" fill="currentColor"/><rect x="2" y="6" width="2" height="2" fill="currentColor"/><rect x="12" y="6" width="2" height="2" fill="currentColor"/><rect x="5" y="8" width="6" height="2" fill="currentColor"/><rect x="6" y="10" width="4" height="2" fill="currentColor"/><rect x="7" y="12" width="2" height="2" fill="currentColor"/><rect x="4" y="14" width="8" height="2" fill="currentColor"/></svg></span>ТОП
     </button>
-    <button class="nav-btn" id="navWallet"          onclick="switchTab('wallet')">
-      <span class="nav-icon">👛</span>КОШЕЛЁК
+    <button class="nav-btn" id="navWallet" onclick="switchTab('wallet')">
+      <span class="nav-icon"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="2" y="5" width="12" height="10" fill="currentColor"/><rect x="2" y="3" width="8" height="4" fill="currentColor"/><rect x="3" y="2" width="6" height="2" fill="currentColor"/><rect x="10" y="4" width="4" height="4" fill="currentColor"/><rect x="11" y="5" width="2" height="2" fill="var(--dark)"/><rect x="4" y="8" width="4" height="4" fill="var(--dark)"/><rect x="5" y="9" width="2" height="2" fill="currentColor" opacity="0.6"/><rect x="9" y="8" width="3" height="3" fill="var(--dark)"/></svg></span>КОШЕЛЁК
     </button>
   </div>
 
@@ -245,6 +393,54 @@
       <div class="sk-cd-num"       id="sk2cd"></div>
       <div class="sk-locked-overlay" id="sk2lock">📖</div>
     </div>
+    <div class="sk-btn potion-btn" id="potionBtn" onclick="openPotionModal()">
+      <span id="potionIcon">❤️</span>
+      <div class="potion-count" id="potionCount">0</div>
+      <div class="sk-cd-fill" id="potionFill" style="display:none"></div>
+      <div class="sk-cd-num"  id="potionCd"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════
+       МОДАЛКА ЗЕЛИЙ
+       ══════════════════════════════════ -->
+  <div id="potionModal" class="potion-modal hidden">
+    <div class="potion-modal-box">
+      <div class="potion-modal-title">❤️ Зелья здоровья</div>
+      <div class="potion-modal-info">1 зелье = 5 монет · восстанавливает 1% HP</div>
+      <div class="potion-modal-row">
+        <span class="potion-modal-label">Зелий:</span>
+        <span class="potion-modal-val" id="pmCount">0</span>
+      </div>
+      <div class="potion-modal-row">
+        <span class="potion-modal-label">Монеты:</span>
+        <span class="potion-modal-val" id="pmGold">0</span>
+      </div>
+      <div class="potion-buy-row">
+        <button class="potion-buy-btn" onclick="buyPotions(1)">+1</button>
+        <button class="potion-buy-btn" onclick="buyPotions(5)">+5</button>
+        <button class="potion-buy-btn" onclick="buyPotions(10)">+10</button>
+      </div>
+      <div class="potion-modal-row" style="margin-top:14px;">
+        <span class="potion-modal-label">Авто при HP ≤</span>
+        <input class="potion-threshold-input" id="pmThreshold" type="number" min="1" max="99" value="30" oninput="savePotionThreshold(this.value)">
+        <span class="potion-modal-label">%</span>
+      </div>
+      <div style="border-top:1px solid #2a2a4a;margin-top:4px;padding-top:10px;">
+        <div class="potion-modal-row">
+          <span class="potion-modal-label">Восстановление:</span>
+          <span class="potion-modal-val" id="pmPotionLv">1%</span>
+        </div>
+        <div class="potion-modal-row" style="margin-top:4px;">
+          <span class="potion-modal-label">Уровень:</span>
+          <span class="potion-modal-val" id="pmPotionLvNum">0/10</span>
+        </div>
+        <button class="potion-buy-btn" style="width:100%;margin-top:8px;" onclick="upgPotion()">
+          ⬆️ Улучшить (<span id="pmUpgCost">1000</span> 💰)
+        </button>
+      </div>
+      <button class="potion-close-btn" onclick="closePotionModal()">Закрыть</button>
+    </div>
   </div>
 
   <!-- ══════════════════════════════════
@@ -253,6 +449,34 @@
   <div id="floorUnlock">
     <div class="fu-title">🎉 НОВЫЙ ЭТАЖ ОТКРЫТ!</div>
     <div class="fu-sub" id="fuText"></div>
+  </div>
+
+
+  <!-- ══════════════════════════════════
+       BATTLE PASS МОДАЛКА
+       ══════════════════════════════════ -->
+  <div id="bpModal" class="bp-modal hidden">
+    <div class="bp-modal-box">
+      <div class="bp-modal-header">
+        <span class="bp-modal-title">🎫 BATTLE PASS</span>
+        <button class="bp-close-btn" onclick="closeBattlePass()">✕</button>
+      </div>
+      <div id="bpStatus" class="bp-status"></div>
+      <div id="bpBuyRow" class="bp-buy-row">
+        <span class="bp-buy-label">Купить за 10 GRAM</span>
+        <button class="bp-buy-btn" onclick="buyBattlePass()">Купить</button>
+      </div>
+      <div class="bp-rewards-list" id="bpRewardsList"></div>
+    </div>
+  </div>
+  <!-- Модалка смерти -->
+  <div id="deathModal" class="death-modal hidden">
+    <div class="death-modal-box">
+      <div class="death-modal-skull">💀</div>
+      <div class="death-modal-title">ВЫ ПОГИБЛИ</div>
+      <div class="death-modal-penalty" id="deathPenaltyText"></div>
+      <button class="death-revive-btn" onclick="revivePlayer()">⚔️ Возродиться</button>
+    </div>
   </div>
 
 </div><!-- #app -->

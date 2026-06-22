@@ -14,12 +14,12 @@ const spriteRun  = new Image(); spriteRun.src  = '2.png';
 const spriteAtk  = new Image(); spriteAtk.src  = '1.png';
 const spriteIdle = new Image(); spriteIdle.src = 'IDLE.png';
 
-// ── Спрайты монстра ──
+// ── Спрайты монстра (legacy fallback) ──
 const spriteMonster     = new Image(); spriteMonster.src     = 'mrun.png';
 const spriteMonsterAtk  = new Image(); spriteMonsterAtk.src  = 'matk.png';
 const spriteMonsterIdle = new Image(); spriteMonsterIdle.src = 'midle.png';
 
-// ── Константы анимации ──
+// ── Константы анимации игрока ──
 const RUN_FRAMES  = 8,  RUN_FW  = 128, RUN_FH  = 128;
 const ATK_FRAMES  = 8,  ATK_FW  = 128, ATK_FH  = 128;
 const IDLE_FRAMES = 7,  IDLE_FW = 128, IDLE_FH = 128;
@@ -27,6 +27,63 @@ const MONSTER_FRAMES      = 6, MONSTER_FW      = 96, MONSTER_FH      = 96;
 const MONSTER_ATK_FRAMES  = 4, MONSTER_ATK_FW  = 96, MONSTER_ATK_FH  = 96;
 const MONSTER_IDLE_FRAMES = 5, MONSTER_IDLE_FW = 96, MONSTER_IDLE_FH = 96;
 const SPRITE_FPS = 16, IDLE_FPS = 8, ATK_FPS = 20;
+
+// ── Таблица спрайтов монстров по ключу sk ──
+// Формат: { run:{src,frames,fw,fh}, atk:{src,frames,fw,fh}, idle:{src,frames,fw,fh} }
+function _mimg(src) { const i = new Image(); i.src = src; return i; }
+const MONSTER_SPRITES = {
+  // Этаж 1: кадр 150x150. oy = пустых px сверху (объект смещается вниз на oy)
+  goblin:    {
+    run:  { img: _mimg('images/monster/mrun2.png'),  frames: 8,  fw: 150, fh: 150 },
+    atk:  { img: _mimg('images/monster/matk2.png'),  frames: 8,  fw: 150, fh: 150 },
+    idle: { img: _mimg('images/monster/midle2.png'), frames: 4,  fw: 150, fh: 150 },
+    oy: 50, oh: 85,
+  },
+  mushroom:  {
+    run:  { img: _mimg('images/monster/mrun3.png'),  frames: 8,  fw: 150, fh: 150 },
+    atk:  { img: _mimg('images/monster/matk3.png'),  frames: 8,  fw: 150, fh: 150 },
+    idle: { img: _mimg('images/monster/midle3.png'), frames: 4,  fw: 150, fh: 150 },
+    oy: 50, oh: 85,
+  },
+  skeleton:  {
+    run:  { img: _mimg('images/monster/mrun4.png'),  frames: 4,  fw: 150, fh: 150 },
+    atk:  { img: _mimg('images/monster/matk4.png'),  frames: 8,  fw: 150, fh: 150 },
+    idle: { img: _mimg('images/monster/midle4.png'), frames: 4,  fw: 150, fh: 150 },
+    oy: 50, oh: 90,
+  },
+  // Этаж 2: кадр 90x64
+  icegolem:  {
+    run:  { img: _mimg('images/monster/mrun5.png'),  frames: 10, fw: 90, fh: 64 },
+    atk:  { img: _mimg('images/monster/matk5.png'),  frames: 11, fw: 90, fh: 64 },
+    idle: { img: _mimg('images/monster/midle5.png'), frames: 8,  fw: 90, fh: 64 },
+    oy: 0, oh: 60,
+  },
+  earthgolem:{
+    run:  { img: _mimg('images/monster/mrun6.png'),  frames: 10, fw: 90, fh: 64 },
+    atk:  { img: _mimg('images/monster/matk6.png'),  frames: 11, fw: 90, fh: 64 },
+    idle: { img: _mimg('images/monster/midle6.png'), frames: 8,  fw: 90, fh: 64 },
+    oy: 0, oh: 60,
+  },
+  // Этаж 4: кадр 128x128
+  zwarrior:  {
+    run:  { img: _mimg('images/monster/mrun7.png'),  frames: 10, fw: 128, fh: 128 },
+    atk:  { img: _mimg('images/monster/matk7.png'),  frames: 5,  fw: 128, fh: 128 },
+    idle: { img: _mimg('images/monster/midle7.png'), frames: 6,  fw: 128, fh: 128 },
+    oy: 0, oh: 110,
+  },
+  zexec:     {
+    run:  { img: _mimg('images/monster/mrun8.png'),  frames: 10, fw: 128, fh: 128 },
+    atk:  { img: _mimg('images/monster/matk8.png'),  frames: 5,  fw: 128, fh: 128 },
+    idle: { img: _mimg('images/monster/midle8.png'), frames: 6,  fw: 128, fh: 128 },
+    oy: 0, oh: 110,
+  },
+  zombie:    {
+    run:  { img: _mimg('images/monster/mrun9.png'),  frames: 10, fw: 128, fh: 128 },
+    atk:  { img: _mimg('images/monster/matk9.png'),  frames: 4,  fw: 128, fh: 128 },
+    idle: { img: _mimg('images/monster/midle9.png'), frames: 6,  fw: 128, fh: 128 },
+    oy: 0, oh: 100,
+  },
+};
 
 // ── Глобальные переменные рендера ──
 let spriteRunTime = 0;
@@ -852,25 +909,64 @@ function drawMonster(m) {
   if (mx > W + 100 || mx < -100) return;
   ctx.globalAlpha = m.hitFlash > 0 ? 0.5 : 1;
   ctx.imageSmoothingEnabled = false;
-  let sprite, frame, fw = MONSTER_FW, fh = MONSTER_FH;
-  if (m.isAttacking) {
-    sprite = spriteMonsterAtk;
-    frame  = Math.floor(Math.min(m.attackAnimTimer/0.4, 1) * MONSTER_ATK_FRAMES);
-    if (frame >= MONSTER_ATK_FRAMES) frame = MONSTER_ATK_FRAMES-1;
-    fw = MONSTER_ATK_FW; fh = MONSTER_ATK_FH;
-  } else if (m.state === 'run') {
-    sprite = spriteMonster; frame = Math.floor(m.frame/8) % MONSTER_FRAMES;
+
+  let sprite, frame, fw, fh, oy = 0;
+
+  if (m.sk && MONSTER_SPRITES[m.sk]) {
+    const sp = MONSTER_SPRITES[m.sk];
+    let anim;
+    if (m.isAttacking) {
+      anim = sp.atk;
+      frame = Math.floor(Math.min(m.attackAnimTimer / 0.4, 1) * anim.frames);
+      if (frame >= anim.frames) frame = anim.frames - 1;
+    } else if (m.state === 'run') {
+      anim = sp.run;
+      frame = Math.floor(m.frame / 5) % anim.frames;
+    } else {
+      anim = sp.idle;
+      frame = Math.floor(m.frame / 8) % anim.frames;
+    }
+    fw = anim.fw; fh = anim.fh; sprite = anim.img;
+    oy = sp.oy || 0;
   } else {
-    sprite = spriteMonsterIdle; frame = Math.floor(m.frame/10) % MONSTER_IDLE_FRAMES;
-    fw = MONSTER_IDLE_FW; fh = MONSTER_IDLE_FH;
+    if (m.isAttacking) {
+      sprite = spriteMonsterAtk;
+      frame  = Math.floor(Math.min(m.attackAnimTimer / 0.4, 1) * MONSTER_ATK_FRAMES);
+      if (frame >= MONSTER_ATK_FRAMES) frame = MONSTER_ATK_FRAMES - 1;
+      fw = MONSTER_ATK_FW; fh = MONSTER_ATK_FH;
+    } else if (m.state === 'run') {
+      sprite = spriteMonster; frame = Math.floor(m.frame / 8) % MONSTER_FRAMES;
+      fw = MONSTER_FW; fh = MONSTER_FH;
+    } else {
+      sprite = spriteMonsterIdle; frame = Math.floor(m.frame / 10) % MONSTER_IDLE_FRAMES;
+      fw = MONSTER_IDLE_FW; fh = MONSTER_IDLE_FH;
+    }
   }
-  ctx.save(); ctx.translate(mx+fw/2, m.y+fh/2); ctx.scale(-1,1);
-  ctx.drawImage(sprite, frame*fw, 0, fw, fh, -fw/2, -fh/2, fw, fh); ctx.restore();
-  const bx = mx + (m.w-50)/2, by = m.y-10;
-  pixelRect(bx, by, 50, 5, '#400');
-  pixelRect(bx, by, Math.floor(50*m.hp/m.maxHp), 5, '#f44');
-  ctx.font = '12px Courier New'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
-  ctx.fillText(m.name, mx+m.w/2, m.y-14);
+
+  // drawY: низ кадра на GROUND, но сдвигаем вверх на oy (пустые px сверху)
+  // Итог: визуальный объект стоит ногами на GROUND
+  const drawY = (GROUND - fh + oy) | 0;
+
+  ctx.save();
+  ctx.translate(mx | 0, 0);
+  ctx.scale(-1, 1);
+  if (sprite && sprite.complete && sprite.naturalWidth > 0) {
+    ctx.drawImage(sprite, frame * fw, 0, fw, fh, (-fw / 2) | 0, drawY, fw, fh);
+  }
+  ctx.restore();
+
+  // HP-бар над визуальным объектом
+  const barW = 50;
+  const bx = mx - barW / 2;
+  const oh = (m.sk && MONSTER_SPRITES[m.sk]) ? (MONSTER_SPRITES[m.sk].oh || fh) : fh;
+  const by = (GROUND - oh) - 5;
+  pixelRect(bx, by, barW, 5, '#400');
+  pixelRect(bx, by, Math.floor(barW * m.hp / m.maxHp), 5, '#f44');
+  // Имя только для спрайтовых монстров
+  if (m.sk && MONSTER_SPRITES[m.sk]) {
+    ctx.font = '11px Courier New'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+    ctx.fillText(m.name, mx, by - 3);
+  }
   ctx.globalAlpha = 1;
 }
 
@@ -880,12 +976,72 @@ function drawMonster(m) {
 function drawFireballs() {
   fireballs.forEach(fb => {
     const sx = fb.worldX - worldX, sy = fb.y;
-    ctx.save(); ctx.translate(sx+12, sy+12); ctx.rotate(fb.angle);
-    const c0 = fb.skillColor ? '#fff' : '#fff8b0';
-    const c1 = fb.skillColor || '#ff8800';
-    const gr = ctx.createRadialGradient(0,0,2,0,0,12);
-    gr.addColorStop(0,c0); gr.addColorStop(0.4,c1); gr.addColorStop(1,'rgba(255,40,0,0)');
-    ctx.fillStyle=gr; ctx.beginPath(); ctx.arc(0,0,12,0,Math.PI*2); ctx.fill(); ctx.restore();
+    const pt = fb.ptype || 'fire';
+
+    if (pt === 'fire') {
+      // Огненный шар — оранжево-красный
+      ctx.save(); ctx.translate(sx+12, sy+12); ctx.rotate(fb.angle);
+      const c0 = fb.skillColor ? '#fff' : '#fff8b0';
+      const c1 = fb.skillColor || '#ff8800';
+      const gr = ctx.createRadialGradient(0,0,2,0,0,12);
+      gr.addColorStop(0,c0); gr.addColorStop(0.4,c1); gr.addColorStop(1,'rgba(255,40,0,0)');
+      ctx.fillStyle=gr; ctx.beginPath(); ctx.arc(0,0,12,0,Math.PI*2); ctx.fill();
+      ctx.restore();
+
+    } else if (pt === 'light') {
+      // Молния — от игрока до монстра, мгновенная с затуханием
+      const alpha = fb.life / fb.maxLife;
+      const fromX = PLAYER_SCREEN_X + 50;
+      const fromY = player.y + 60;
+      const toX   = fb.targetM.worldX - worldX;
+      const toY   = fb.targetM.y + fb.targetM.h * 0.4;
+      const dx2 = toX - fromX, dy2 = toY - fromY;
+      const len2 = Math.sqrt(dx2*dx2 + dy2*dy2) || 1;
+      const nx2 = -dy2/len2, ny2 = dx2/len2;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.shadowColor = '#ffe066'; ctx.shadowBlur = 14;
+      // Внешняя молния
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(fromX, fromY);
+      const segs = 7;
+      for (let i = 1; i <= segs; i++) {
+        const t = i / segs;
+        const j = (i === segs) ? 0 : (Math.random() - 0.5) * 20;
+        ctx.lineTo(fromX + dx2*t + nx2*j, fromY + dy2*t + ny2*j);
+      }
+      ctx.stroke();
+      // Ядро
+      ctx.strokeStyle = '#ffe066'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(fromX, fromY);
+      for (let i = 1; i <= segs; i++) {
+        const t = i / segs;
+        const j = (i === segs) ? 0 : (Math.random() - 0.5) * 10;
+        ctx.lineTo(fromX + dx2*t + nx2*j, fromY + dy2*t + ny2*j);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      ctx.restore();
+
+    } else if (pt === 'water') {
+      // Водяной шар — синий с волной
+      ctx.save(); ctx.translate(sx+10, sy+10);
+      const gr = ctx.createRadialGradient(0,0,2,0,0,10);
+      gr.addColorStop(0,'#ffffff');
+      gr.addColorStop(0.3,'#44d4ff');
+      gr.addColorStop(0.7,'#0088cc');
+      gr.addColorStop(1,'rgba(0,100,200,0)');
+      ctx.fillStyle = gr;
+      ctx.beginPath(); ctx.arc(0,0,10,0,Math.PI*2); ctx.fill();
+      // Блик
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.beginPath(); ctx.ellipse(-3,-3,4,2.5,Math.PI/4,0,Math.PI*2); ctx.fill();
+      ctx.shadowColor = '#00aaff'; ctx.shadowBlur = 8;
+      ctx.strokeStyle = '#00ccff'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(0,0,10,0,Math.PI*2); ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
   });
 }
 

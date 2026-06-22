@@ -111,7 +111,7 @@ function tryDropSkillBook(floor) {
 // ── Попытка выдать предмет после убийства монстра ──
 function tryDropItem(floor) {
   tryDropSkillBook(floor);
-  if (Math.random() > dropChance(floor)) return;
+  if (Math.random() > dropChance(floor) * premMult('drop')) return;
   if (G.inventory.length >= 40) return;
   var item = generateItem(floor);
   G.inventory.push(item);

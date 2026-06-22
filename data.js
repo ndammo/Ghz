@@ -200,7 +200,7 @@ const SKILLS_DEF = {
 const FLOORS = [
   { n: 1, name: 'Тёмный лес', emoji: '🌲', cpReq: 0, xpMult: 1.0, goldMult: 1.0,
     desc: 'Начало пути. Слабые враги, лёгкое золото.',
-    monsters: ['Гоблин','Скелет','Слизень'], baseXp: [10,25,8], baseGold: [8,12,5],
+    monsters: [], baseXp: [10,25,8], baseGold: [8,12,5],
     bg: ['#0a1a0a','#0d2a0d','#0f3a0f'], sky: '#0a1a05',
     loot: [
       { slot:'body',   name:'Кожаный нагрудник', rarity:'common',   chance:20 },
@@ -213,9 +213,9 @@ const FLOORS = [
       { slot:'gloves', name:'Перчатки',            rarity:'common',   chance:7  },
     ]
   },
-  { n: 2, name: 'Ледяные пещеры', emoji: '❄️', cpReq: 220, xpMult: 1.2, goldMult: 1.2,
+  { n: 2, name: 'Ледяные пещеры', emoji: '❄️', cpReq: 600, xpMult: 1.2, goldMult: 1.2,
     desc: 'Холодные глубины. Ледяные существа.',
-    monsters: ['Ледяной','Волк'], baseXp: [40,35], baseGold: [20,18],
+    monsters: [], baseXp: [40,35], baseGold: [20,18],
     bg: ['#0a1525','#0d2040','#103060'], sky: '#050f1a',
     loot: [
       { slot:'body',   name:'Ледяной доспех',  rarity:'common',   chance:20 },
@@ -227,9 +227,9 @@ const FLOORS = [
       { slot:'ring',   name:'Кольцо льда',       rarity:'uncommon', chance:5  },
     ]
   },
-  { n: 3, name: 'Планета Марс', emoji: '🔴', cpReq: 600, xpMult: 1.44, goldMult: 1.44,
+  { n: 3, name: 'Планета Марс', emoji: '🔴', cpReq: 1000, xpMult: 1.44, goldMult: 1.44,
     desc: 'Ржавые пустоши красной планеты. Марсианские твари безжалостны.',
-    monsters: ['Марсианин','Пылевой краб'], baseXp: [70,60], baseGold: [40,35],
+    monsters: [], baseXp: [70,60], baseGold: [40,35],
     bg: ['#3a1004','#4a1806','#5c2a0a'], sky: '#1e0800',
     loot: [
       { slot:'gloves', name:'Перчатки песка',  rarity:'uncommon', chance:22 },
@@ -240,9 +240,9 @@ const FLOORS = [
       { slot:'weapon', name:'Посох воды',       rarity:'rare',     chance:15, forClass:'water' },
     ]
   },
-  { n: 4, name: 'Небеса', emoji: '🌤', cpReq: 1500, xpMult: 1.73, goldMult: 1.73,
+  { n: 4, name: 'Земля мёртвых', emoji: '💀', cpReq: 1500, xpMult: 1.73, goldMult: 1.73,
     desc: 'Падший ангел несёт смерть, но и щедрую награду.',
-    monsters: ['Ангел'], baseXp: [110], baseGold: [60],
+    monsters: [], baseXp: [110], baseGold: [60],
     bg: ['#101028','#18183a','#202050'], sky: '#080820',
     loot: [
       { slot:'body',   name:'Доспех небес',  rarity:'rare', chance:22 },
@@ -255,7 +255,7 @@ const FLOORS = [
   },
   { n: 5, name: 'Бездна', emoji: '🌑', cpReq: 4000, xpMult: 2.07, goldMult: 2.07,
     desc: 'Конец света. Максимальный опыт и золото.',
-    monsters: ['Тень'], baseXp: [180], baseGold: [100],
+    monsters: [], baseXp: [180], baseGold: [100],
     bg: ['#0a0010','#100018','#180025'], sky: '#050008',
     loot: [
       { slot:'body',   name:'Доспех бездны', rarity:'epic', chance:22 },
@@ -379,14 +379,34 @@ const ITEM_TYPES = [
 //  УЛУЧШЕНИЯ ХАРАКТЕРИСТИК
 // ═══════════════════════════════
 const UPG_DEFS = [
-  { id: 'atk',    name: 'Атака',           emoji: '⚔️',  stat: 'atk',    bonus: 3,    maxLv: 60, baseCost: 80  },
-  { id: 'def',    name: 'Защита',          emoji: '🛡️',  stat: 'def',    bonus: 2,    maxLv: 60, baseCost: 70  },
-  { id: 'hp',     name: 'Макс. HP',        emoji: '❤️',  stat: 'hp',     bonus: 15,   maxLv: 60, baseCost: 60  },
-  { id: 'spd',    name: 'Скорость',        emoji: '💨',  stat: 'spd',    bonus: 1,    maxLv: 60, baseCost: 100 },
-  { id: 'crit',   name: 'Крит. удар',      emoji: '⚡',  stat: 'crit',   bonus: 2,    maxLv: 60, baseCost: 120 },
-  { id: 'dodge',  name: 'Уклонение',       emoji: '🌀',  stat: 'dodge',  bonus: 2,    maxLv: 60, baseCost: 110 },
-  { id: 'atkSpd', name: 'Скорость атаки',  emoji: '🗡️',  stat: 'atkSpd', bonus: 0.15, maxLv: 60, baseCost: 150 },
+  { id: 'atk',    name: 'Атака',           svgId: 'upg-atk',    stat: 'atk',    bonus: 3,    maxLv: 60, baseCost: 80  },
+  { id: 'def',    name: 'Защита',          svgId: 'upg-def',    stat: 'def',    bonus: 2,    maxLv: 60, baseCost: 70  },
+  { id: 'hp',     name: 'Макс. HP',        svgId: 'upg-hp',     stat: 'hp',     bonus: 15,   maxLv: 60, baseCost: 60  },
+  { id: 'spd',    name: 'Скорость',        svgId: 'upg-spd',    stat: 'spd',    bonus: 1,    maxLv: 60, baseCost: 100 },
+  { id: 'crit',   name: 'Крит. удар',      svgId: 'upg-crit',   stat: 'crit',   bonus: 2,    maxLv: 60, baseCost: 120 },
+  { id: 'dodge',  name: 'Уклонение',       svgId: 'upg-dodge',  stat: 'dodge',  bonus: 2,    maxLv: 60, baseCost: 110 },
+  { id: 'atkSpd', name: 'Скорость атаки',  svgId: 'upg-atkspd', stat: 'atkSpd', bonus: 0.15, maxLv: 60, baseCost: 150 },
 ];
+
+// Pixel SVG иконки для характеристик
+function upgIcon(svgId) {
+  const icons = {
+    'upg-atk':    `<svg width="36" height="36" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="2" y="2" width="2" height="2" fill="#ff6060"/><rect x="4" y="4" width="2" height="2" fill="#ff6060"/><rect x="6" y="6" width="2" height="2" fill="#ff8080"/><rect x="8" y="8" width="2" height="2" fill="#ff8080"/><rect x="10" y="10" width="2" height="2" fill="#e74c3c"/><rect x="12" y="12" width="2" height="2" fill="#e74c3c"/><rect x="4" y="2" width="8" height="2" fill="#ff6060"/><rect x="12" y="2" width="2" height="10" fill="#ff6060"/><rect x="2" y="4" width="2" height="4" fill="#c0392b"/><rect x="2" y="8" width="4" height="2" fill="#c0392b"/></svg>`,
+    'upg-def':    `<svg width="36" height="36" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="3" y="1" width="10" height="2" fill="#3498db"/><rect x="1" y="3" width="2" height="6" fill="#3498db"/><rect x="13" y="3" width="2" height="6" fill="#3498db"/><rect x="3" y="1" width="2" height="4" fill="#5dade2"/><rect x="11" y="1" width="2" height="4" fill="#5dade2"/><rect x="3" y="9" width="4" height="2" fill="#3498db"/><rect x="9" y="9" width="4" height="2" fill="#3498db"/><rect x="5" y="11" width="2" height="2" fill="#3498db"/><rect x="9" y="11" width="2" height="2" fill="#3498db"/><rect x="7" y="13" width="2" height="2" fill="#2980b9"/><rect x="3" y="3" width="10" height="6" fill="#2471a3" opacity="0.5"/></svg>`,
+    'upg-hp':     `<svg width="36" height="36" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="2" y="4" width="4" height="4" fill="#e74c3c"/><rect x="10" y="4" width="4" height="4" fill="#e74c3c"/><rect x="0" y="6" width="16" height="6" fill="#e74c3c"/><rect x="2" y="12" width="12" height="2" fill="#e74c3c"/><rect x="4" y="14" width="8" height="2" fill="#c0392b"/><rect x="6" y="3" width="4" height="10" fill="#ff6b6b"/><rect x="4" y="5" width="8" height="6" fill="#ff6b6b"/></svg>`,
+    'upg-spd':    `<svg width="36" height="36" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="0" y="6" width="4" height="2" fill="#2ecc71"/><rect x="2" y="4" width="4" height="2" fill="#2ecc71"/><rect x="4" y="2" width="4" height="2" fill="#27ae60"/><rect x="6" y="4" width="4" height="2" fill="#2ecc71"/><rect x="8" y="2" width="4" height="2" fill="#2ecc71"/><rect x="10" y="4" width="4" height="2" fill="#27ae60"/><rect x="2" y="8" width="6" height="2" fill="#2ecc71" opacity="0.6"/><rect x="4" y="10" width="8" height="2" fill="#2ecc71" opacity="0.4"/></svg>`,
+    'upg-crit':   `<svg width="36" height="36" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="7" y="0" width="2" height="4" fill="#f5c542"/><rect x="7" y="12" width="2" height="4" fill="#f5c542"/><rect x="0" y="7" width="4" height="2" fill="#f5c542"/><rect x="12" y="7" width="4" height="2" fill="#f5c542"/><rect x="2" y="2" width="2" height="2" fill="#f5c542"/><rect x="12" y="2" width="2" height="2" fill="#f5c542"/><rect x="2" y="12" width="2" height="2" fill="#f5c542"/><rect x="12" y="12" width="2" height="2" fill="#f5c542"/><rect x="5" y="5" width="6" height="6" fill="#f5c542"/><rect x="6" y="6" width="4" height="4" fill="#fff8d0"/></svg>`,
+    'upg-dodge':  `<svg width="36" height="36" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="4" y="0" width="2" height="4" fill="#9b59b6"/><rect x="10" y="0" width="2" height="4" fill="#9b59b6"/><rect x="0" y="4" width="4" height="2" fill="#9b59b6"/><rect x="12" y="4" width="4" height="2" fill="#9b59b6"/><rect x="0" y="10" width="4" height="2" fill="#9b59b6"/><rect x="12" y="10" width="4" height="2" fill="#9b59b6"/><rect x="4" y="12" width="2" height="4" fill="#9b59b6"/><rect x="10" y="12" width="2" height="4" fill="#9b59b6"/><rect x="6" y="4" width="4" height="2" fill="#c39bd3"/><rect x="4" y="6" width="2" height="4" fill="#c39bd3"/><rect x="10" y="6" width="2" height="4" fill="#c39bd3"/><rect x="6" y="10" width="4" height="2" fill="#c39bd3"/></svg>`,
+    'upg-atkspd': `<svg width="36" height="36" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="2" y="2" width="2" height="2" fill="#ffaa00"/><rect x="4" y="4" width="2" height="2" fill="#ffaa00"/><rect x="6" y="6" width="4" height="2" fill="#ffcc44"/><rect x="8" y="4" width="2" height="2" fill="#ffaa00"/><rect x="10" y="2" width="2" height="2" fill="#ffaa00"/><rect x="4" y="8" width="2" height="2" fill="#ffcc44"/><rect x="2" y="10" width="2" height="2" fill="#ffaa00"/><rect x="10" y="8" width="2" height="2" fill="#ffcc44"/><rect x="12" y="6" width="2" height="2" fill="#ffaa00"/><rect x="12" y="10" width="2" height="2" fill="#ffaa00"/><rect x="4" y="12" width="8" height="2" fill="#ff8800"/></svg>`,
+  };
+  return icons[svgId] || '';
+}
+
+// SVG монетки (золото) для кнопок улучшений
+function goldCoinSvg(size) {
+  size = size || 14;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle;flex-shrink:0"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>`;
+}
 
 // ═══════════════════════════════
 //  РЕЙТИНГ — фиктивные игроки

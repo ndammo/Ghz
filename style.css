@@ -32,36 +32,52 @@ html, body {
   position: relative;
 }
 
-/* ── TOP HUD (полоски HP, XP, золото, этаж) ── */
+/* ── TOP HUD ── */
 #hud {
   position: absolute; top: 0; left: 0; right: 0;
   z-index: 50;
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 10px;
-  background: linear-gradient(180deg,rgba(5,5,20,0.98) 0%,rgba(5,5,20,0.7) 100%);
-  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 8px 6px;
+  background: linear-gradient(180deg, rgba(4,4,18,0.99) 0%, rgba(6,6,22,0.85) 100%);
+  border-bottom: 1px solid rgba(90,70,160,0.5);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.6);
 }
 .hud-avatar {
-  width: 34px; height: 34px;
+  width: 38px; height: 38px; flex-shrink: 0;
   border: 2px solid var(--gold);
-  border-radius: 4px;
-  image-rendering: pixelated;
-  background: #1a1a3a;
+  border-radius: 5px;
+  background: linear-gradient(135deg, #1a0a3a, #2a1a4a);
   display: flex; align-items: center; justify-content: center;
-  font-size: 18px;
+  box-shadow: 0 0 8px rgba(245,197,66,0.35), inset 0 0 8px rgba(0,0,0,0.5);
+  image-rendering: pixelated;
 }
-.hud-stats { flex: 1; display: flex; flex-direction: column; gap: 3px; }
-.hud-row { display: flex; align-items: center; gap: 6px; }
-.bar-wrap { flex: 1; height: 8px; background: #111130; border-radius: 2px; overflow: hidden; border: 1px solid #333; }
+.hud-stats { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.hud-row { display: flex; align-items: center; gap: 5px; }
+.bar-label { width: 14px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.bar-wrap {
+  flex: 1; height: 7px;
+  background: rgba(10,10,30,0.9);
+  border-radius: 2px; overflow: hidden;
+  border: 1px solid rgba(60,60,100,0.6);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
+}
 .bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
-.bar-hp  { background: linear-gradient(90deg,#c0392b,#e74c3c); }
-.bar-xp  { background: linear-gradient(90deg,#8e44ad,#9b59b6); }
-.bar-label { font-size: 9px; color: #aaa; width: 22px; text-align: right; }
-.bar-val   { font-size: 9px; color: #ddd; min-width: 38px; }
-.hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
-.hud-gold  { font-size: 12px; color: var(--gold); font-weight: bold; }
-.hud-floor { font-size: 9px; color: #8af; }
-.hud-cp    { font-size: 9px; color: #fa0; }
+.bar-hp { background: linear-gradient(90deg, #8B0000, #e74c3c, #ff6b6b); box-shadow: 0 0 6px rgba(231,76,60,0.5); }
+.bar-xp { background: linear-gradient(90deg, #5b1f8a, #9b59b6, #c180ff); box-shadow: 0 0 6px rgba(155,89,182,0.5); }
+.bar-val { font-size: 8px; color: #ccc; min-width: 34px; text-align: right; flex-shrink: 0; }
+.hud-right { display: flex; flex-direction: column; gap: 3px; flex-shrink: 0; }
+.hud-info-row {
+  display: flex; align-items: center; gap: 4px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(60,60,100,0.4);
+  border-radius: 4px; padding: 2px 5px;
+}
+.hud-divider { width: 1px; height: 10px; background: rgba(100,100,160,0.5); margin: 0 2px; }
+.hud-gold-val  { font-size: 11px; color: #f5c542; font-weight: bold; min-width: 26px; }
+.hud-pixr-img  { width: 12px; height: 12px; object-fit: contain; image-rendering: pixelated; flex-shrink: 0; }
+.hud-pixr-val  { font-size: 11px; color: #b060ff; font-weight: bold; min-width: 22px; }
+.hud-floor-val { font-size: 10px; color: #7ab8ff; min-width: 26px; }
+.hud-cp-val    { font-size: 10px; color: #ffaa00; min-width: 38px; }
 
 /* ── CANVAS (игровое поле) ── */
 #gameCanvas {
@@ -96,7 +112,9 @@ html, body {
   position: absolute; bottom: 0; left: 20%; right: 20%; height: 2px;
   background: var(--gold); border-radius: 2px 2px 0 0;
 }
-.nav-icon { font-size: 20px; line-height: 1; }
+.nav-icon { width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; line-height: 1; }
+.nav-icon svg { width: 22px; height: 22px; image-rendering: pixelated; transition: filter .2s, transform .15s; }
+.nav-btn.active .nav-icon svg { filter: drop-shadow(0 0 4px currentColor); transform: scale(1.12); }
 
 /* ── PANELS (полноэкранные вкладки: инвентарь, улучшения и т.д.) ── */
 .panel {
@@ -108,7 +126,7 @@ html, body {
 }
 .panel.visible { display: flex; }
 .panel-header {
-  padding: 48px 16px 12px;
+  padding: 76px 16px 12px;
   border-bottom: 1px solid var(--border);
   font-size: 14px; color: var(--gold); letter-spacing: 2px; font-weight: bold;
 }
@@ -446,7 +464,7 @@ html, body {
 
 .cs-title {
   position: relative; z-index: 2;
-  margin-top: 38px;
+  margin-top: 60px;
   font-size: 11px; letter-spacing: 5px; color: #5a4a8a;
   text-transform: uppercase;
 }
@@ -460,7 +478,7 @@ html, body {
 .cs-cards {
   position: relative; z-index: 2;
   display: flex; gap: 10px;
-  margin-top: 18px; padding: 0 10px;
+  margin-top: 12px; padding: 0 8px;
   width: 100%; max-width: 480px;
   justify-content: center;
 }
@@ -472,7 +490,7 @@ html, body {
   border: 1.5px solid #2a1a4a;
   background: rgba(20,10,40,0.7);
   display: flex; flex-direction: column; align-items: center;
-  padding: 12px 8px 14px;
+  padding: 10px 6px 10px;
   cursor: pointer;
   transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
   position: relative; overflow: hidden;
@@ -493,10 +511,11 @@ html, body {
 .cs-card.water.selected  { border-color: #20c0ff; box-shadow: 0 0 22px rgba(0,180,255,0.35); }
 
 .cs-sprite-wrap {
-  width: 80px; height: 80px;
+  width: 90px; height: 100px;
   position: relative;
   display: flex; align-items: center; justify-content: center;
   margin-bottom: 6px;
+  overflow: hidden;
 }
 .cs-sprite-canvas { image-rendering: pixelated; position: absolute; }
 .cs-sprite-glow   { position: absolute; inset: -8px; border-radius: 50%; opacity: 0.5; }
@@ -555,13 +574,249 @@ html, body {
   box-shadow: 0 0 20px rgba(120,60,220,0.3);
 }
 
-/* ── Иконки предметов — пиксельарт без сглаживания ── */
-.inv-icon img, .inv-slot img, .loot-row img {
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
+/* ══════════════════════════════════
+   ЗЕЛЬЯ
+   ══════════════════════════════════ */
+.potion-btn { border-color: rgba(255,80,80,0.4) !important; }
+.potion-btn:active { border-color: #f44 !important; }
+.potion-count {
+  position: absolute; bottom: 1px; right: 3px;
+  font-size: 9px; font-weight: bold; color: #f88;
+  font-family: 'Courier New', monospace;
+  text-shadow: 0 0 3px #000;
+  pointer-events: none; line-height: 1;
 }
-.inv-slot.rarity-common   img { filter: none; }
-.inv-slot.rarity-uncommon img { filter: drop-shadow(0 0 3px #2ecc71); }
-.inv-slot.rarity-rare     img { filter: drop-shadow(0 0 3px #3498db); }
-.inv-slot.rarity-epic     img { filter: drop-shadow(0 0 4px #9b59b6); }
-.inv-slot.rarity-legend   img { filter: drop-shadow(0 0 6px #f5c542) drop-shadow(0 0 2px #f5c542); }
+
+.potion-modal {
+  position: fixed; inset: 0; z-index: 300;
+  background: rgba(0,0,0,0.75);
+  display: flex; align-items: center; justify-content: center;
+}
+.potion-modal.hidden { display: none; }
+.potion-modal-box {
+  background: #0e0e22;
+  border: 1.5px solid #3a1a3a;
+  border-radius: 16px;
+  padding: 20px 18px 16px;
+  width: 80%; max-width: 300px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.potion-modal-title {
+  font-size: 16px; font-weight: bold; color: #f88;
+  text-align: center; margin-bottom: 2px;
+  font-family: 'Courier New', monospace;
+}
+.potion-modal-info {
+  font-size: 10px; color: #778; text-align: center; margin-bottom: 4px;
+}
+.potion-modal-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.potion-modal-label { font-size: 12px; color: #aaa; flex: 1; }
+.potion-modal-val { font-size: 14px; font-weight: bold; color: #fff; }
+.potion-buy-row {
+  display: flex; gap: 8px; justify-content: center; margin-top: 4px;
+}
+.potion-buy-btn {
+  flex: 1; padding: 8px 0; border-radius: 8px;
+  border: 1px solid #f44; background: rgba(255,50,50,0.12);
+  color: #f88; font-size: 14px; font-weight: bold;
+  cursor: pointer; font-family: 'Courier New', monospace;
+}
+.potion-buy-btn:active { background: rgba(255,50,50,0.3); }
+.potion-threshold-input {
+  width: 48px; padding: 4px 6px; border-radius: 6px;
+  border: 1px solid #444; background: #1a1a2e;
+  color: #fff; font-size: 13px; text-align: center;
+  font-family: 'Courier New', monospace;
+}
+.potion-close-btn {
+  margin-top: 8px; padding: 10px; border-radius: 8px;
+  border: 1px solid #333; background: rgba(255,255,255,0.05);
+  color: #aaa; font-size: 13px; cursor: pointer;
+  font-family: 'Courier New', monospace;
+}
+.potion-close-btn:active { background: rgba(255,255,255,0.12); }
+
+/* Кулдаун зелья — левый верхний угол */
+#potionCd {
+  position: absolute; top: 2px; left: 3px;
+  bottom: auto; right: auto;
+  font-size: 9px; font-weight: bold; color: #fff;
+  font-family: 'Courier New', monospace;
+  text-shadow: 0 0 3px #000;
+  pointer-events: none; line-height: 1;
+}
+
+/* ══════════════════════════════════
+   BATTLE PASS
+   ══════════════════════════════════ */
+.bp-hud-btn {
+  position: absolute; z-index: 52;
+  right: 8px; top: 56px;
+  width: 44px; height: 36px;
+  border-radius: 8px;
+  background: rgba(10,8,20,0.88);
+  border: 1.5px solid rgba(255,200,0,0.5);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; cursor: pointer;
+  box-shadow: 0 0 10px rgba(255,200,0,0.2);
+}
+.bp-hud-btn:active { transform: scale(0.9); }
+.bp-hud-label { font-size: 7px; font-weight: bold; color: #ffd700; letter-spacing: 0.5px; line-height: 1; font-family: 'Courier New', monospace; }
+.prem-hud-btn {
+  position: absolute; z-index: 52;
+  right: 8px; top: 98px;
+  width: 44px; height: 36px;
+  border-radius: 8px;
+  background: rgba(10,5,25,0.88);
+  border: 1.5px solid rgba(180,100,255,0.5);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; cursor: pointer;
+  box-shadow: 0 0 10px rgba(160,80,255,0.2);
+}
+.prem-hud-btn:active { transform: scale(0.9); }
+.prem-hud-label { font-size: 7px; font-weight: bold; color: #c080ff; letter-spacing: 0.5px; line-height: 1; font-family: 'Courier New', monospace; }
+
+/* Премиум модалка */
+.prem-modal {
+  position: fixed; inset: 0; z-index: 300;
+  background: rgba(0,0,0,0.82);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 60px; overflow-y: auto;
+}
+.prem-modal.hidden { display: none; }
+.prem-modal-box {
+  background: #08051a;
+  border: 1.5px solid #3a1a5a;
+  border-radius: 16px;
+  width: 92%; max-width: 360px;
+  padding: 16px 14px 20px;
+  display: flex; flex-direction: column; gap: 10px;
+  margin-bottom: 20px;
+}
+.prem-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.prem-modal-title {
+  font-size: 16px; font-weight: bold; color: #c080ff;
+  font-family: 'Courier New', monospace; letter-spacing: 1px;
+}
+.prem-close-btn {
+  background: none; border: none; color: #888;
+  font-size: 18px; cursor: pointer; padding: 0 4px;
+}
+.prem-status {
+  font-size: 11px; text-align: center;
+  background: rgba(160,80,255,0.08); border: 1px solid #3a1a5a;
+  border-radius: 8px; padding: 7px; color: #aaa;
+}
+.prem-card {
+  border-radius: 12px; padding: 12px;
+  border: 1.5px solid #2a1a4a;
+  background: rgba(255,255,255,0.03);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.prem-card.gold-card  { border-color: #c08000; background: rgba(200,140,0,0.07); }
+.prem-card.plat-card  { border-color: #9b59b6; background: rgba(155,89,182,0.09); }
+.prem-card.ultra-card { border-color: #e74c3c; background: rgba(231,76,60,0.09); }
+.prem-card-title { font-size: 13px; font-weight: bold; font-family: 'Courier New', monospace; }
+.gold-card  .prem-card-title { color: #ffd700; }
+.plat-card  .prem-card-title { color: #c080ff; }
+.ultra-card .prem-card-title { color: #ff6060; }
+.prem-card-price { font-size: 10px; color: #aaa; margin-bottom: 2px; }
+.prem-card-perks { font-size: 10px; color: #ccc; line-height: 1.7; }
+.prem-card-btn {
+  margin-top: 4px; padding: 8px; border-radius: 8px;
+  font-size: 12px; font-weight: bold; cursor: pointer;
+  font-family: 'Courier New', monospace; border: 1px solid;
+}
+.gold-card  .prem-card-btn { background: rgba(200,140,0,0.2); border-color: #ffd700; color: #ffd700; }
+.plat-card  .prem-card-btn { background: rgba(155,89,182,0.2); border-color: #c080ff; color: #c080ff; }
+.ultra-card .prem-card-btn { background: rgba(231,76,60,0.2); border-color: #ff6060; color: #ff6060; }
+.prem-card-btn:active { opacity: 0.7; }
+
+/* Battle Pass модалка */
+.bp-modal {
+  position: fixed; inset: 0; z-index: 300;
+  background: rgba(0,0,0,0.82);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 60px; overflow-y: auto;
+}
+.bp-modal.hidden { display: none; }
+.bp-modal-box {
+  background: #0a0a1e; border: 1.5px solid #4a3a00;
+  border-radius: 16px; width: 92%; max-width: 360px;
+  padding: 16px 14px 20px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.bp-modal-header { display: flex; align-items: center; justify-content: space-between; }
+.bp-modal-title { font-size: 16px; font-weight: bold; color: #ffd700; font-family: 'Courier New', monospace; letter-spacing: 1px; }
+.bp-close-btn { background: none; border: none; color: #888; font-size: 18px; cursor: pointer; padding: 0 4px; }
+.bp-status { font-size: 11px; color: #aaa; text-align: center; background: rgba(255,200,0,0.06); border: 1px solid #3a2a00; border-radius: 8px; padding: 6px; }
+.bp-buy-row { display: flex; align-items: center; justify-content: space-between; background: rgba(255,180,0,0.08); border: 1px solid #4a3500; border-radius: 10px; padding: 8px 12px; }
+.bp-buy-row.hidden { display: none; }
+.bp-buy-label { font-size: 12px; color: #cca040; }
+.bp-buy-btn { background: linear-gradient(90deg, #7a5000, #c08000); border: 1px solid #ffd700; border-radius: 8px; color: #fff8e0; font-size: 12px; font-weight: bold; padding: 6px 14px; cursor: pointer; font-family: 'Courier New', monospace; }
+.bp-buy-btn:active { opacity: 0.7; }
+.bp-rewards-list { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.bp-reward-row { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.03); border: 1px solid #1e1e3a; border-radius: 10px; padding: 8px 10px; }
+.bp-reward-row.bp-claimed { opacity: 0.45; border-color: #2a2a1a; }
+.bp-reward-row.bp-available { border-color: #c08000; background: rgba(200,140,0,0.08); }
+.bp-reward-lv { font-size: 11px; font-weight: bold; color: #ffd700; min-width: 38px; text-align: center; font-family: 'Courier New', monospace; }
+.bp-reward-lv-locked { color: #888; }
+.bp-reward-icon { font-size: 20px; }
+.bp-reward-desc { flex: 1; font-size: 11px; color: #ccc; line-height: 1.4; }
+.bp-reward-desc-locked { color: #999; }
+.bp-claim-btn { background: linear-gradient(90deg, #6a4000, #c08000); border: 1px solid #ffd700; border-radius: 7px; color: #fff8d0; font-size: 11px; font-weight: bold; padding: 5px 10px; cursor: pointer; font-family: 'Courier New', monospace; white-space: nowrap; }
+.bp-claim-btn:active { opacity: 0.7; }
+.bp-claimed-label { font-size: 10px; color: #8a8a5a; font-family: 'Courier New', monospace; }
+.bp-lock-label { font-size: 10px; color: #888; font-family: 'Courier New', monospace; }
+
+/* ══════════════════════════════════
+   МОДАЛКА СМЕРТИ
+   ══════════════════════════════════ */
+.death-modal {
+  position: fixed; inset: 0; z-index: 400;
+  background: rgba(0,0,0,0.88);
+  display: flex; align-items: center; justify-content: center;
+}
+.death-modal.hidden { display: none; }
+.death-modal-box {
+  background: #0e0508;
+  border: 2px solid #6a0000;
+  border-radius: 18px;
+  padding: 28px 24px 22px;
+  width: 80%; max-width: 300px;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  box-shadow: 0 0 40px rgba(180,0,0,0.4);
+}
+.death-modal-skull {
+  font-size: 52px; line-height: 1;
+  animation: deathPulse 1.2s ease-in-out infinite;
+}
+@keyframes deathPulse {
+  0%,100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.12); opacity: 0.7; }
+}
+.death-modal-title {
+  font-size: 20px; font-weight: bold; color: #d00;
+  font-family: 'Courier New', monospace; letter-spacing: 3px;
+  text-shadow: 0 0 12px rgba(220,0,0,0.6);
+}
+.death-modal-penalty {
+  font-size: 13px; color: #f88;
+  text-align: center; line-height: 1.5;
+  font-family: 'Courier New', monospace;
+}
+.death-revive-btn {
+  margin-top: 8px;
+  width: 100%; padding: 13px;
+  border-radius: 10px;
+  border: 1.5px solid #c00;
+  background: linear-gradient(180deg, #3a0000, #1a0000);
+  color: #ff8080; font-size: 15px; font-weight: bold;
+  cursor: pointer; font-family: 'Courier New', monospace;
+  letter-spacing: 1px;
+}
+.death-revive-btn:active { opacity: 0.7; transform: scale(0.97); }
