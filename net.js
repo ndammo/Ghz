@@ -2,19 +2,14 @@
   ══════════════════════════════════════════════════════
   net.js — Сетевой слой: Telegram-авторизация, сохранение
   прогресса на сервер (MongoDB), локальный кеш.
+  Версия: 2.1 (финальная)
 
   Логика:
-   • При запуске: моментальный старт из localStorage (без
-     мигания экрана выбора), затем сверка с сервером.
-   • HP / баланс / весь снапшот:
-       – localStorage каждые 5 сек,
-       – сервер каждые 30 сек,
-       – + при закрытии/сворачивании (visibilitychange + TG close event).
-   • Структурные действия (покупка, экипировка, заточка,
-     навыки, BP, premium, этаж, выбор персонажа) —
-     сохраняются сразу (debounce 1.2с).
-   • Полный снапшот, поэтому при обновлении/закрытии в
-     Telegram прогресс не теряется.
+   • При запуске: моментальный старт из localStorage, затем сверка с сервером.
+   • localStorage каждые 5 сек, сервер каждые 30 сек.
+   • При закрытии/сворачивании — flush() через fetch + keepalive.
+   • Структурные действия — сохраняются сразу (debounce 1.2с).
+   • Слияние данных: сервер ↔ локальный по updatedAt.
 
   Подключать ПОСЛЕ ui.js (последним скриптом).
   ══════════════════════════════════════════════════════
@@ -23,24 +18,42 @@
   'use strict';
 
   var API    = 'https://ghz-production.up.railway.app';
-  var LS_KEY = 'prrpg_save_v1';
+  var LS_KEY = 'prrpg_save_v2';
   var EQUIP_SLOTS = ['weapon', 'armor', 'ring', 'boots', 'helmet'];
 
   var TG_INIT = '';
   var SYNC = {
-    booted: false,   // прошёл boot
-    started: false,  // игра запущена (персонаж есть)
-    online: false,   // есть валидный initData -> можем писать на сервер
+    booted: false,
+    started: false,
+    online: false,
     pushing: false,
     dirtyTimer: null,
     lastServerTs: 0,
+    saveQueue: [],
+    bootLocked: false,
   };
+
+  // ───────────────────────────────
+  //  УТИЛИТЫ
+  // ───────────────────────────────
+  function num(v, d) { v = Number(v); return isFinite(v) ? v : d; }
+  
+  function clone(o) {
+    if (!o || typeof o !== 'object') return o;
+    try { return JSON.parse(JSON.stringify(o)); }
+    catch (e) { return Object.assign({}, o); }
+  }
+
+  function isValidSave(s) {
+    return s && typeof s === 'object' && s.v === 1 && s.charId && s.level != null;
+  }
 
   // ───────────────────────────────
   //  ЭКРАН ЗАГРУЗКИ
   // ───────────────────────────────
-  var LS_MIN_MS = 800; // минимальное время показа (чтоб не мелькало)
+  var LS_MIN_MS = 800;
   var _lsShownAt = Date.now();
+  var _lsHidden = false;
 
   function lsSetStatus(text, pct) {
     var el = document.getElementById('lsStatus');
@@ -50,10 +63,11 @@
   }
 
   function lsHide() {
+    if (_lsHidden) return;
+    _lsHidden = true;
     var el = document.getElementById('loadingScreen');
     if (!el || el.classList.contains('fade-out')) return;
-    var elapsed = Date.now() - _lsShownAt;
-    var delay = Math.max(0, LS_MIN_MS - elapsed);
+    var delay = Math.max(0, LS_MIN_MS - (Date.now() - _lsShownAt));
     setTimeout(function () {
       lsSetStatus('Готово', 100);
       setTimeout(function () {
@@ -63,28 +77,25 @@
     }, delay);
   }
 
-  // Генерация звёзд фона
   function lsInitStars() {
     var wrap = document.getElementById('lsStars');
     if (!wrap) return;
     var html = '';
     for (var i = 0; i < 60; i++) {
-      var x = (Math.random() * 100).toFixed(1);
-      var y = (Math.random() * 100).toFixed(1);
-      var dur = (1.5 + Math.random() * 2.5).toFixed(1);
-      var del = (Math.random() * 3).toFixed(1);
-      var op = (0.1 + Math.random() * 0.4).toFixed(2);
-      html += '<div class="ls-star" style="left:' + x + '%;top:' + y + '%;opacity:' + op + ';--dur:' + dur + 's;--delay:-' + del + 's;"></div>';
+      html += '<div class="ls-star" style="left:' + (Math.random() * 100).toFixed(1) + 
+              '%;top:' + (Math.random() * 100).toFixed(1) + 
+              '%;opacity:' + (0.1 + Math.random() * 0.4).toFixed(2) + 
+              ';--dur:' + (1.5 + Math.random() * 2.5).toFixed(1) + 
+              's;--delay:-' + (Math.random() * 3).toFixed(1) + 's;"></div>';
     }
     wrap.innerHTML = html;
   }
 
-  function num(v, d) { v = Number(v); return isFinite(v) ? v : d; }
-  function clone(o)  { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return Object.assign({}, o); } }
+  // ───────────────────────────────
+  //  СЕРИАЛИЗАЦИЯ
+  // ───────────────────────────────
+  var _cachedCP = 0, _cachedCPTime = 0;
 
-  // ───────────────────────────────
-  //  СЕРИАЛИЗАЦИЯ СОСТОЯНИЯ (полный снапшот G)
-  // ───────────────────────────────
   function serializeState() {
     var eq = {};
     EQUIP_SLOTS.forEach(function (slot) {
@@ -93,116 +104,112 @@
     });
 
     var inv = (G.inventory || []).map(function (it) {
-      var c = clone(it);
-      delete c._equipped; // ссылку восстанавливаем по equipped при загрузке
+      var c = Object.assign({}, it);
+      delete c._equipped;
       return c;
     });
+
+    var now = Date.now();
+    if (now - _cachedCPTime > 5000) {
+      _cachedCP = (typeof calcCP === 'function') ? calcCP() : 0;
+      _cachedCPTime = now;
+    }
 
     return {
       v: 1,
       charId: (typeof G_CHAR !== 'undefined' && G_CHAR) ? G_CHAR.id : (G.charId || null),
-
       gold: G.gold, pixr: G.pixr, gram: G.gram,
       level: G.level, xp: G.xp, xpNeeded: G.xpNeeded,
       floor: G.floor, maxFloor: G.maxFloor, killCount: G.killCount,
       hp: G.hp, maxHp: G.maxHp,
-
       baseStats: clone(G.baseStats),
-      stats:     clone(G.stats),
-      upg:       clone(G.upg),
-
+      stats: clone(G.stats),
+      upg: clone(G.upg),
       potionLv: G.potionLv, potions: G.potions, potionThreshold: G.potionThreshold,
-      bp:     clone(G.bp     || { active: false, claimed: [] }),
-      prem:   clone(G.prem   || { tier: null, expiresAt: 0 }),
+      bp: clone(G.bp || { active: false, claimed: [] }),
+      prem: clone(G.prem || { tier: null, expiresAt: 0 }),
       skills: clone(G.skills || {}),
-
       inventory: inv,
-      equipped:  eq,
+      equipped: eq,
       invIdCounter: (typeof _invIdCounter === 'number') ? _invIdCounter : 0,
       invFilter: G.invFilter || 'all',
-
-      cp: (typeof calcCP === 'function') ? calcCP() : 0,
-      updatedAt: Date.now(),
+      cp: _cachedCP,
+      updatedAt: now,
     };
   }
 
   // ───────────────────────────────
-  //  ПРИМЕНЕНИЕ СНАПШОТА К G
+  //  ПРИМЕНЕНИЕ СНАПШОТА
   // ───────────────────────────────
   function applySnapshot(s) {
     if (!s || typeof s !== 'object') return false;
+    try {
+      if (s.charId && typeof CHARS !== 'undefined' && CHARS[s.charId]) {
+        G_CHAR = CHARS[s.charId];
+        G.charId = s.charId;
+        if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
+      }
 
-    // Персонаж (спрайты, без сброса прокачанных статов)
-    if (s.charId && typeof CHARS !== 'undefined' && CHARS[s.charId]) {
-      G_CHAR = CHARS[s.charId];
-      G.charId = s.charId;
-      if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
+      if (s.baseStats) G.baseStats = Object.assign({}, s.baseStats);
+      G.gold = num(s.gold, G.gold);
+      G.pixr = num(s.pixr, G.pixr);
+      G.gram = num(s.gram, G.gram);
+      G.level = num(s.level, G.level);
+      G.xp = num(s.xp, G.xp);
+      G.xpNeeded = num(s.xpNeeded, G.xpNeeded);
+      G.floor = num(s.floor, G.floor);
+      G.maxFloor = num(s.maxFloor, G.maxFloor);
+      G.killCount = num(s.killCount, G.killCount);
+
+      G.upg = Object.assign({ atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 }, s.upg || {});
+      G.potionLv = num(s.potionLv, 0);
+      G.potions = num(s.potions, 0);
+      G.potionThreshold = num(s.potionThreshold, 30);
+      G.bp = s.bp || { active: false, claimed: [] };
+      if (!G.bp.claimed) G.bp.claimed = [];
+      G.prem = s.prem || { tier: null, expiresAt: 0 };
+      G.skills = s.skills || {};
+      G.invFilter = s.invFilter || 'all';
+
+      G.inventory = (s.inventory || []).map(function (it) {
+        var c = Object.assign({}, it);
+        c._equipped = false;
+        return c;
+      });
+
+      var itemIndex = {};
+      G.inventory.forEach(function (item) { if (item.id != null) itemIndex[item.id] = item; });
+
+      if (typeof s.invIdCounter === 'number') _invIdCounter = s.invIdCounter;
+      G.inventory.forEach(function (i) { if (typeof i.id === 'number' && i.id > _invIdCounter) _invIdCounter = i.id; });
+
+      G.equipped = { weapon: null, armor: null, ring: null, boots: null, helmet: null };
+      var eq = s.equipped || {};
+      EQUIP_SLOTS.forEach(function (slot) {
+        var id = eq[slot];
+        if (id != null && itemIndex[id]) {
+          itemIndex[id]._equipped = true;
+          G.equipped[slot] = itemIndex[id];
+        }
+      });
+
+      if (typeof recalcStats === 'function') recalcStats();
+      var hp = num(s.hp, G.maxHp);
+      if (hp <= 0) hp = Math.floor(G.maxHp * 0.3);
+      G.hp = Math.max(1, Math.min(hp, G.maxHp));
+
+      return true;
+    } catch (e) {
+      console.error('applySnapshot:', e);
+      return false;
     }
-
-    // Базовые статы и числа
-    if (s.baseStats) G.baseStats = Object.assign({}, s.baseStats);
-    G.gold = num(s.gold, G.gold);
-    G.pixr = num(s.pixr, G.pixr);
-    G.gram = num(s.gram, G.gram);
-    G.level = num(s.level, G.level);
-    G.xp = num(s.xp, G.xp);
-    G.xpNeeded = num(s.xpNeeded, G.xpNeeded);
-    G.floor = num(s.floor, G.floor);
-    G.maxFloor = num(s.maxFloor, G.maxFloor);
-    G.killCount = num(s.killCount, G.killCount);
-
-    G.upg = Object.assign(
-      { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 },
-      s.upg || {}
-    );
-    G.potionLv = num(s.potionLv, 0);
-    G.potions = num(s.potions, 0);
-    G.potionThreshold = num(s.potionThreshold, 30);
-    G.bp = s.bp || { active: false, claimed: [] };
-    if (!G.bp.claimed) G.bp.claimed = [];
-    G.prem = s.prem || { tier: null, expiresAt: 0 };
-    G.skills = s.skills || {};
-    G.invFilter = s.invFilter || 'all';
-
-    // Инвентарь
-    G.inventory = (s.inventory || []).map(function (it) {
-      var c = clone(it); c._equipped = false; return c;
-    });
-
-    // Счётчик id (не ниже максимального существующего)
-    if (typeof s.invIdCounter === 'number') _invIdCounter = s.invIdCounter;
-    G.inventory.forEach(function (i) {
-      if (typeof i.id === 'number' && i.id > _invIdCounter) _invIdCounter = i.id;
-    });
-
-    // Экипировка: восстанавливаем ССЫЛКИ на объекты инвентаря
-    G.equipped = { weapon: null, armor: null, ring: null, boots: null, helmet: null };
-    var eq = s.equipped || {};
-    EQUIP_SLOTS.forEach(function (slot) {
-      var id = eq[slot];
-      if (id == null) return;
-      var it = G.inventory.find(function (i) { return i.id === id; });
-      if (it) { it._equipped = true; G.equipped[slot] = it; }
-    });
-
-    // Пересчёт статов от базы + экипировки, затем HP
-    if (typeof recalcStats === 'function') recalcStats();
-    var hp = num(s.hp, G.maxHp);
-    if (hp <= 0) hp = Math.floor(G.maxHp * 0.3);
-    G.hp = Math.max(1, Math.min(hp, G.maxHp));
-
-    return true;
   }
 
   // ───────────────────────────────
-  //  ЛОКАЛЬНЫЙ КЕШ
+  //  LOCALSTORAGE
   // ───────────────────────────────
-  function writeLocal(snap) {
-    try { localStorage.setItem(LS_KEY, JSON.stringify(snap)); } catch (e) {}
-  }
-  function readLocal() {
-    try { var s = localStorage.getItem(LS_KEY); return s ? JSON.parse(s) : null; } catch (e) { return null; }
-  }
+  function writeLocal(snap) { try { localStorage.setItem(LS_KEY, JSON.stringify(snap)); } catch (e) {} }
+  function readLocal() { try { var s = localStorage.getItem(LS_KEY); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
   function saveLocal() { if (SYNC.started) writeLocal(serializeState()); }
 
   // ───────────────────────────────
@@ -214,7 +221,7 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ initData: TG_INIT }),
-    }).then(function (r) { return r.json(); });
+    }).then(function (r) { return r.ok ? r.json() : null; });
   }
 
   function serverSave(snap) {
@@ -223,21 +230,28 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ initData: TG_INIT, data: snap }),
-    }).then(function (r) { return r.json(); });
+      keepalive: true,
+    }).then(function (r) { return r.ok ? r.json() : { ok: false }; });
+  }
+
+  function processSaveQueue() {
+    if (!SYNC.online || !SYNC.started || SYNC.pushing || !SYNC.saveQueue.length) return;
+    SYNC.pushing = true;
+    var snap = SYNC.saveQueue.shift();
+    serverSave(snap)
+      .then(function (r) { if (r && r.ok) SYNC.lastServerTs = r.updatedAt || snap.updatedAt; })
+      .catch(function () { if (SYNC.saveQueue.length < 5) SYNC.saveQueue.unshift(snap); })
+      .then(function () { SYNC.pushing = false; if (SYNC.saveQueue.length) setTimeout(processSaveQueue, 500); });
   }
 
   function pushServer() {
-    if (!SYNC.online || !SYNC.started || SYNC.pushing) { saveLocal(); return; }
+    if (!SYNC.online || !SYNC.started) { saveLocal(); return; }
     var snap = serializeState();
     writeLocal(snap);
-    SYNC.pushing = true;
-    serverSave(snap)
-      .then(function (r) { if (r && r.ok) SYNC.lastServerTs = r.updatedAt || snap.updatedAt; })
-      .catch(function () {})
-      .then(function () { SYNC.pushing = false; });
+    if (SYNC.saveQueue.length < 3) SYNC.saveQueue.push(snap);
+    processSaveQueue();
   }
 
-  // Сохранение «сразу» после структурных действий (с коалесингом)
   function touch() {
     if (!SYNC.started) return;
     saveLocal();
@@ -246,25 +260,21 @@
     SYNC.dirtyTimer = setTimeout(pushServer, 1200);
   }
 
-function flush() {
-  if (!SYNC.started) return;
-  
-  var snap = serializeState();
-  writeLocal(snap); // всегда в localStorage синхронно
-  
-  if (!SYNC.online) return;
-  
-  try {
-    fetch(API + '/api/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData: TG_INIT, data: snap }),
-      keepalive: true // ← ДОБАВИТЬ ЭТУ СТРОКУ
-    }).catch(function() {}); // ← ДОБАВИТЬ ЭТУ СТРОКУ
-  } catch (e) {
-    // Игнорируем ошибки
+  function flush() {
+    if (!SYNC.started) return;
+    try {
+      var snap = serializeState();
+      writeLocal(snap);
+      if (SYNC.online) {
+        fetch(API + '/api/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initData: TG_INIT, data: snap }),
+          keepalive: true,
+        }).catch(function () {});
+      }
+    } catch (e) {}
   }
-}
 
   // ───────────────────────────────
   //  ЭКРАН ВЫБОРА ПЕРСОНАЖА
@@ -273,56 +283,72 @@ function flush() {
     try { if (typeof _csSpriteTimers !== 'undefined') Object.keys(_csSpriteTimers).forEach(function (k) { clearInterval(_csSpriteTimers[k]); }); } catch (e) {}
     try { if (typeof _csParticleTimer !== 'undefined' && _csParticleTimer) cancelAnimationFrame(_csParticleTimer); } catch (e) {}
   }
+
   function hideCharSelect() {
     var cs = document.getElementById('charSelect');
     if (cs) cs.classList.add('hidden');
     stopCharSelectAnims();
   }
 
-  // ───────────────────────────────
-  //  СТАРТ ИГРЫ ИЗ СНАПШОТА
-  // ───────────────────────────────
-  function bootFromSnapshot(snap) {
-    if (SYNC.started) return;
-    if (!applySnapshot(snap)) return;
-    hideCharSelect();
-    SYNC.started = true;
-    if (typeof startGame === 'function') startGame();
+  function showCharSelect() {
+    stopCharSelectAnims();
+    var cs = document.getElementById('charSelect');
+    if (cs) {
+      cs.classList.remove('hidden');
+      if (typeof initCharSelect === 'function') initCharSelect();
+      if (typeof window._csSelected === 'object') window._csSelected = null;
+      if (typeof updateConfirmBtn === 'function') updateConfirmBtn();
+    }
   }
 
-  // Применить серверный снапшот поверх уже идущей игры (другое устройство)
+  // ───────────────────────────────
+  //  ЗАПУСК ИГРЫ
+  // ───────────────────────────────
+  function bootFromSnapshot(snap) {
+    if (SYNC.started) return false;
+    if (!applySnapshot(snap)) return false;
+    hideCharSelect();
+    SYNC.started = true;
+    try { if (typeof startGame === 'function') startGame(); } catch (e) { console.error('startGame:', e); return false; }
+    return true;
+  }
+
   function hotApply(snap) {
-    if (!applySnapshot(snap)) return;
-    if (typeof updateHUD === 'function') updateHUD();
-    if (typeof initSkillsHud === 'function') initSkillsHud();
-    if (typeof updatePotionHud === 'function') updatePotionHud();
-    try { if (typeof switchTab === 'function' && typeof activeTab !== 'undefined') switchTab(activeTab); } catch (e) {}
+    if (!SYNC.started || !applySnapshot(snap)) return false;
+    try {
+      if (typeof updateHUD === 'function') updateHUD();
+      if (typeof initSkillsHud === 'function') initSkillsHud();
+      if (typeof updatePotionHud === 'function') updatePotionHud();
+      try { if (typeof switchTab === 'function' && typeof activeTab !== 'undefined') switchTab(activeTab); } catch (e) {}
+    } catch (e) { console.error('hotApply:', e); return false; }
+    return true;
+  }
+
+  function mergeSnapshots(local, server) {
+    if (!server || !server.data) return local;
+    if (!local) return server.data;
+    return (server.updatedAt || 0) > (local.updatedAt || 0) ? server.data : local;
   }
 
   // ───────────────────────────────
   //  ЦИКЛЫ СИНХРОНИЗАЦИИ
   // ───────────────────────────────
+  var _syncIntervals = [];
+
   function startSyncLoops() {
-    setInterval(saveLocal, 1000);            // localStorage каждую 1 сек (дёшево, не теряем HP/золото)
-    setInterval(pushServer, 15000);          // сервер каждые 15 сек
-
-    // visibilitychange — срабатывает при сворачивании в Telegram
-    document.addEventListener('visibilitychange', function () {
-      if (document.hidden) flush();
-    });
-
-    // Telegram WebApp события — надёжнее beforeunload
-    if (window.Telegram && window.Telegram.WebApp) {
-      // close: юзер закрыл мини-апп кнопкой X
-      try { window.Telegram.WebApp.onEvent('close', flush); } catch (e) {}
-      // viewportChanged: изменился размер вьюпорта (сворачивание/разворачивание)
-      try { window.Telegram.WebApp.onEvent('viewportChanged', saveLocal); } catch (e) {}
-    }
-
-    // pagehide — иногда работает в некоторых WebView
+    if (SYNC.booted) return;
+    _syncIntervals.push(setInterval(saveLocal, 5000));
+    _syncIntervals.push(setInterval(pushServer, 30000));
+    document.addEventListener('visibilitychange', function () { if (document.hidden) flush(); });
     window.addEventListener('pagehide', flush);
-    // beforeunload — НЕ работает в Telegram WebView, но оставим для браузера
     window.addEventListener('beforeunload', flush);
+    SYNC.booted = true;
+  }
+
+  function stopSyncLoops() {
+    _syncIntervals.forEach(function (i) { clearInterval(i); });
+    _syncIntervals = [];
+    SYNC.booted = false;
   }
 
   // ───────────────────────────────
@@ -332,143 +358,131 @@ function flush() {
     if (window.Telegram && window.Telegram.WebApp) {
       try { window.Telegram.WebApp.ready(); } catch (e) {}
       try { window.Telegram.WebApp.expand(); } catch (e) {}
-      // не закрывать свайпом вниз случайно (где поддерживается)
       try { window.Telegram.WebApp.disableVerticalSwipes && window.Telegram.WebApp.disableVerticalSwipes(); } catch (e) {}
       TG_INIT = window.Telegram.WebApp.initData || '';
+      try { window.Telegram.WebApp.onEvent('close', flush); } catch (e) {}
     }
     SYNC.online = !!TG_INIT;
   }
 
   function boot() {
+  if (SYNC.bootLocked) return;
+  SYNC.bootLocked = true;
+
   lsInitStars();
   lsSetStatus('Подключение', 10);
   initTelegram();
 
-  // ВРЕМЕННО НЕ ЗАГРУЖАЕМ ИЗ LOCALSTORAGE!
-  // var local = readLocal(); // ← ЗАКОММЕНТИРОВАТЬ
+  var local = readLocal();
+  if (local && isValidSave(local) && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
+    lsSetStatus('Локальная загрузка', 30);
+    bootFromSnapshot(local);
+  }
 
-  // Таймаут: если сервер не ответил за 6 сек — грузим из localStorage (офлайн)
   var lsTimeout = setTimeout(function () {
-    // Если сервер не ответил — загружаем из localStorage как запасной вариант
-    var local = readLocal();
-    if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
-      lsSetStatus('Офлайн загрузка', 40);
-      bootFromSnapshot(local);
-    }
-    lsHide();
-  }, 6000);
-
-  lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
-
-  // 2) Сверка с сервером
-  serverLoad().then(function (r) {
-    clearTimeout(lsTimeout);
-    
-    var server = r && r.save;
-    var hasServerData = server && server.data && server.data.charId &&
-                        typeof CHARS !== 'undefined' && CHARS[server.data.charId];
-
-    // =============================================
-    // ГЛАВНАЯ ЛОГИКА: сервер всегда главный
-    // =============================================
-    if (r && r.ok) {
-      if (hasServerData) {
-        // На сервере ЕСТЬ данные — загружаем их
-        lsSetStatus('Загрузка с сервера', 70);
-        
-        // Сохраняем данные сервера в localStorage
-        try {
-          localStorage.setItem(LS_KEY, JSON.stringify(server.data));
-        } catch (e) {}
-        
-        // Запускаем игру из данных сервера
-        if (!SYNC.started) {
-          bootFromSnapshot(server.data);
-        } else {
-          hotApply(server.data);
-        }
-        
-        lsSetStatus('Готово', 90);
-        
-      } else {
-        // НА СЕРВЕРЕ ПУСТО — удаляем localStorage и показываем выбор персонажа
-        try {
-          localStorage.removeItem(LS_KEY);
-        } catch (e) {}
-        
-        // Если игра уже запущена — перезагружаем
-        if (SYNC.started) {
-          location.reload();
-          return;
-        }
-        
-        // Показываем экран выбора персонажа
-        lsSetStatus('Новый игрок', 50);
-        
-        stopCharSelectAnims();
-        
-        var cs = document.getElementById('charSelect');
-        if (cs) {
-          cs.classList.remove('hidden');
-          if (typeof initCharSelect === 'function') {
-            initCharSelect();
-          }
-          if (typeof window._csSelected === 'object') {
-            window._csSelected = null;
-          }
-          if (typeof updateConfirmBtn === 'function') {
-            updateConfirmBtn();
-          }
-        }
-        
-        lsHide();
-        return;
+    if (!SYNC.started) {
+      var fallback = readLocal();
+      if (fallback && isValidSave(fallback) && typeof CHARS !== 'undefined' && CHARS[fallback.charId]) {
+        lsSetStatus('Офлайн загрузка', 60);
+        bootFromSnapshot(fallback);
       }
     }
-    
+    lsHide();
+    finishBoot();
+  }, 6000);
+
+  lsSetStatus(SYNC.online ? 'Синхронизация с сервером' : 'Офлайн режим', 50);
+
+  serverLoad().then(function (r) {
+    clearTimeout(lsTimeout);
+
+    if (r && r.ok) {
+      var srv = r.save;
+      var hasSrv = srv && srv.data && srv.data.charId && typeof CHARS !== 'undefined' && CHARS[srv.data.charId];
+
+      if (hasSrv) {
+        // Сервер имеет данные — загружаем
+        if (!SYNC.started) {
+          lsSetStatus('Загрузка с сервера', 70);
+          bootFromSnapshot(srv.data);
+        } else {
+          lsSetStatus('Слияние данных', 70);
+          hotApply(mergeSnapshots(readLocal(), srv));
+        }
+        try { writeLocal(srv.data); } catch (e) {}
+        
+      } else {
+        // Сервер пуст: новый игрок или админ удалил данные
+        // Удаляем localStorage, чтобы старые данные не вернулись
+        try { localStorage.removeItem(LS_KEY); } catch (e) {}
+        
+        // Сбрасываем состояние
+        if (SYNC.started) {
+          SYNC.started = false;
+          SYNC.booted = false;
+          stopSyncLoops();
+        }
+        
+        // Показываем выбор персонажа
+        showCharSelect();
+        lsHide();
+        finishBoot();
+        return;
+      }
+      
+      lsSetStatus('Готово', 90);
+    }
   }).catch(function () {
     clearTimeout(lsTimeout);
-    // Если сервер не ответил — загружаем из localStorage (офлайн режим)
-    var local = readLocal();
-    if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
-      lsSetStatus('Офлайн загрузка', 40);
-      bootFromSnapshot(local);
+    if (!SYNC.started) {
+      var off = readLocal();
+      if (off && isValidSave(off) && typeof CHARS !== 'undefined' && CHARS[off.charId]) {
+        lsSetStatus('Офлайн режим', 60);
+        bootFromSnapshot(off);
+      } else {
+        showCharSelect();
+      }
     }
+    lsSetStatus('Офлайн (сервер недоступен)', 80);
   }).then(function () {
-    SYNC.booted = true;
-    startSyncLoops();
-    if (SYNC.online && SYNC.started) pushServer();
     lsHide();
+    finishBoot();
   });
 }
 
+  function finishBoot() {
+    if (!SYNC.booted) {
+      startSyncLoops();
+      if (SYNC.online && SYNC.started) setTimeout(pushServer, 1000);
+    }
+  }
+
   // ───────────────────────────────
-  //  ХУКИ: выбор персонажа + структурные действия
+  //  ХУКИ
   // ───────────────────────────────
   function hookCharSelect() {
     var orig = window.confirmChar;
     if (typeof orig !== 'function') return;
     window.confirmChar = function () {
       var r = orig.apply(this, arguments);
-      if (typeof G_CHAR === 'undefined' || !G_CHAR) return r; // не выбрали — выходим
+      if (typeof G_CHAR === 'undefined' || !G_CHAR) return r;
       G.charId = G_CHAR.id;
       SYNC.started = true;
       stopCharSelectAnims();
       saveLocal();
       if (SYNC.online) {
-        try {
-          fetch(API + '/api/character', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ initData: TG_INIT, charId: G.charId }),
-          });
-        } catch (e) {}
-        pushServer();
+        fetch(API + '/api/character', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initData: TG_INIT, charId: G.charId }),
+          keepalive: true,
+        }).catch(function () {});
+        setTimeout(pushServer, 500);
       }
       return r;
     };
   }
 
-  // Дебаунс для saveLocal из updateHUD (не чаще раза в 500мс)
   var _hudSaveTimer = null;
   function saveLocalDebounced() {
     if (_hudSaveTimer) return;
@@ -476,47 +490,31 @@ function flush() {
   }
 
   function hookActions() {
-    // Структурные действия — сохраняем сразу (debounce 1.2с на сервер)
-    var names = [
-      'buyUpgrade', 'equipItem', 'unequipItem', 'destroyItem', 'refineItem',
-      'useSkillBook', 'buyBattlePass', 'claimBpReward', 'buyPrem', 'exchangePixr',
-      'upgPotion', 'buyPotions', 'revivePlayer', 'goToFloor', 'savePotionThreshold',
-    ];
-    names.forEach(function (name) {
+    ['buyUpgrade','equipItem','unequipItem','destroyItem','refineItem','useSkillBook','buyBattlePass',
+     'claimBpReward','buyPrem','exchangePixr','upgPotion','buyPotions','revivePlayer','goToFloor',
+     'savePotionThreshold'].forEach(function (name) {
       var fn = window[name];
       if (typeof fn !== 'function') return;
-      window[name] = function () {
-        var r = fn.apply(this, arguments);
-        try { touch(); } catch (e) {}
-        return r;
-      };
+      window[name] = function () { var r = fn.apply(this, arguments); try { touch(); } catch (e) {} return r; };
     });
 
-    // updateHUD вызывается при каждом изменении HP/XP/золота —
-    // цепляемся сюда для максимально быстрого сохранения в localStorage.
-    // Используем debounce 500мс чтобы не тормозить игровой loop.
     var origHUD = window.updateHUD;
     if (typeof origHUD === 'function') {
-      window.updateHUD = function () {
-        var r = origHUD.apply(this, arguments);
-        if (SYNC.started) saveLocalDebounced();
-        return r;
-      };
+      window.updateHUD = function () { var r = origHUD.apply(this, arguments); if (SYNC.started) saveLocalDebounced(); return r; };
     }
   }
 
-  // Установка хуков сразу (все скрипты выше уже загружены)
+  // ───────────────────────────────
+  //  СТАРТ
+  // ───────────────────────────────
   hookCharSelect();
   hookActions();
 
-  // Boot после полной загрузки (ui.js успевает инициализировать экран выбора)
-  if (document.readyState === 'complete') {
-    boot();
-  } else {
-    window.addEventListener('load', boot);
-  }
+  if (document.readyState === 'complete') boot();
+  else window.addEventListener('load', boot);
 
-  // Публичный API (на всякий случай)
+  window.addEventListener('unload', stopSyncLoops);
+
   window.GameSync = {
     save: pushServer,
     flush: flush,
@@ -524,5 +522,6 @@ function flush() {
     serialize: serializeState,
     apply: applySnapshot,
     state: SYNC,
+    reset: function () { stopSyncLoops(); SYNC.bootLocked = false; SYNC.started = false; SYNC.booted = false; SYNC.saveQueue = []; },
   };
 })();
