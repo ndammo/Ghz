@@ -27,8 +27,6 @@ function buyUpgrade(u) {
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
-  SaveSystem.markDirty();
-  SaveSystem.saveServer();
 }
 
 function renderUpgrades() {
@@ -254,8 +252,6 @@ function goToFloor(n) {
   monsters = [];
   nextMonsterSpawn = player.worldX + 400;
   updateHUD(); switchTab('game');
-  SaveSystem.markDirty();
-  SaveSystem.saveServer();
 }
 
 // ═══════════════════════════════
@@ -404,14 +400,12 @@ function confirmChar() {
   G_CHAR = CHARS[_csSelected];
   applyCharacter(G_CHAR);
   document.getElementById('charSelect').classList.add('hidden');
-  // Сообщаем SaveSystem какого персонажа выбрал игрок
-  if (typeof SaveSystem !== 'undefined') SaveSystem.setCharId(_csSelected);
-  recalcStats();
   startGame();
+  // Запускаем автосохранение после старта игры
+  if (typeof startAutoSave === 'function') startAutoSave();
 }
 
-// keepHp=true — не трогать G.hp/G.maxHp (при загрузке сейва)
-function applyCharacter(ch, keepHp) {
+function applyCharacter(ch) {
   spriteRun.src  = ch.runSrc;
   spriteAtk.src  = ch.atkSrc;
   spriteIdle.src = ch.idleSrc;
@@ -421,11 +415,9 @@ function applyCharacter(ch, keepHp) {
   window.ATK_FW_CUR      = ch.atkFW;
   window.IDLE_FRAMES_CUR = ch.idleFrames;
   window.IDLE_FW_CUR     = ch.idleFW;
-  if (!keepHp) {
-    G.baseStats = Object.assign({}, ch.baseStats);
-    Object.assign(G.stats, ch.baseStats);
-    G.hp = G.stats.hp; G.maxHp = G.stats.hp;
-  }
+  G.baseStats = Object.assign({}, ch.baseStats);
+  Object.assign(G.stats, ch.baseStats);
+  G.hp = G.stats.hp; G.maxHp = G.stats.hp;
   // аватар теперь SVG, не трогаем
 }
 
@@ -488,5 +480,49 @@ function initCsParticles() {
   tick();
 }
 
-// ── resize ──
+// ── Инициализация экрана выбора при загрузке страницы ──
+window.addEventListener('load', function() {
+  initCharSelectSprites();
+  initCsParticles();
+  _initWithAuth();
+});
+
+// ── resize и Telegram SDK ──
 window.addEventListener('resize', resize);
+if (window.Telegram && window.Telegram.WebApp) {
+  Telegram.WebApp.ready();
+  Telegram.WebApp.expand();
+}
+
+// ═══════════════════════════════════════════
+//  ИНИЦИАЛИЗАЦИЯ: авторизация + загрузка сохранения
+// ═══════════════════════════════════════════
+async function _initWithAuth() {
+  var loadEl = document.getElementById('authLoader');
+  if (loadEl) loadEl.style.display = 'flex';
+
+  try {
+    // 1. Авторизация через Telegram
+    var profile = await apiAuth();
+
+    // 2. Есть сохранение — загружаем и пропускаем экран выбора
+    if (profile.hasSave && profile.charType && CHARS[profile.charType]) {
+      var saved = await apiLoad();
+      if (saved.hasSave && saved.saveData) {
+        applyLoadedSave(saved.saveData);
+        if (loadEl) loadEl.style.display = 'none';
+        _csSelected = profile.charType;
+        G_CHAR = CHARS[profile.charType];
+        applyCharacter(G_CHAR);
+        document.getElementById('charSelect').classList.add('hidden');
+        startGame();
+        startAutoSave();
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn('[auth/load] error:', e.message);
+  }
+
+  if (loadEl) loadEl.style.display = 'none';
+}

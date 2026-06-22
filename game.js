@@ -340,7 +340,6 @@ function update(dt) {
       }
       updateHUD();
       checkFloorUnlock();
-      if (typeof SaveSystem !== 'undefined') SaveSystem.markDirty();
       return false;
     }
     return true;
@@ -365,7 +364,6 @@ function gainXP(amount) {
     G.hp = G.maxHp;
     showDmgPop('LV UP!', W * 0.4, GROUND * 0.5, '#fa0');
     updateHUD();
-    if (typeof SaveSystem !== 'undefined') SaveSystem.saveServer();
   }
 }
 
@@ -381,6 +379,8 @@ function checkFloorUnlock() {
     document.getElementById('fuText').textContent = 'Этаж ' + next.n + ': ' + next.name + ' · Зайди через Этажи';
     fu.classList.remove('show'); void fu.offsetWidth; fu.classList.add('show');
     setTimeout(function() { fu.classList.remove('show'); }, 3500);
+    // Сохраняем при открытии нового этажа
+    if (typeof triggerSave === 'function') triggerSave('floor');
   }
 }
 
@@ -396,6 +396,8 @@ function gameOverSequence() {
       : 'Вы погибли в бою';
   }
   if (modal) modal.classList.remove('hidden');
+  // Сохраняем при смерти
+  if (typeof triggerSave === 'function') triggerSave('death');
 }
 
 function revivePlayer() {
@@ -493,7 +495,6 @@ function upgPotion() {
   G.potionLv = lv + 1;
   updateHUD();
   openPotionModal();
-  if (typeof SaveSystem !== 'undefined') { SaveSystem.markDirty(); SaveSystem.saveServer(); }
 }
 function closePotionModal() {
   document.getElementById('potionModal').classList.add('hidden');
@@ -596,7 +597,6 @@ function buyBattlePass() {
   G.gram = parseFloat(((G.gram || 0) - 10).toFixed(3));
   G.bp.active = true;
   renderBattlePass();
-  if (typeof SaveSystem !== 'undefined') { SaveSystem.markDirty(); SaveSystem.saveServer(); }
 }
 function claimBpReward(idx) {
   if (!G.bp || !G.bp.active) return;
