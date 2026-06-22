@@ -493,53 +493,32 @@ function initCsParticles() {
 // ══════════════════════════════════════════════════════
 
 window.addEventListener('load', async function() {
-  // Telegram SDK
   if (window.Telegram && window.Telegram.WebApp) {
     Telegram.WebApp.ready();
     Telegram.WebApp.expand();
   }
 
-  // Запускаем анимации пока грузимся
   initCharSelectSprites();
   initCsParticles();
 
-  // ── Авторизация и загрузка сохранения ──
   var loadStatus = document.getElementById('loadingStatus');
-  if (loadStatus) loadStatus.textContent = 'Авторизация Telegram...';
+  if (loadStatus) loadStatus.textContent = 'Загрузка данных...';
 
   var charId = null;
   try {
     charId = await API.init();
-    if (loadStatus) loadStatus.textContent = 'Загрузка данных...';
-    // Устанавливаем фото из Telegram
-    if (API.photoUrl) {
-      var img = document.getElementById('hudAvatarImg');
-      var svg = document.getElementById('hudAvatarSvg');
-      if (img) {
-        img.src = API.photoUrl;
-        img.onload = function() {
-          img.style.display = 'block';
-          if (svg) svg.style.display = 'none';
-        };
-        img.onerror = function() {
-          img.style.display = 'none';
-          if (svg) svg.style.display = '';
-        };
-      }
-    }
+    if (loadStatus) loadStatus.textContent = 'Данные загружены';
   } catch(e) {
     console.warn('[UI] API.init error:', e);
     if (loadStatus) loadStatus.textContent = 'Офлайн режим';
   }
 
-  // Данные загружены — скрываем экран загрузки
   var loadScreen = document.getElementById('loadingScreen');
   if (loadScreen) loadScreen.style.display = 'none';
 
-  // Если у игрока уже был выбран персонаж — восстанавливаем
+  // ✅ Если есть персонаж — запускаем игру
   if (charId && CHARS[charId]) {
     G_CHAR = CHARS[charId];
-
     applyCharacter(G_CHAR);
     recalcStats();
 
@@ -551,8 +530,61 @@ window.addEventListener('load', async function() {
 
     document.getElementById('charSelect').classList.add('hidden');
     startGame();
+    return;
   }
-  // Иначе — показываем экран выбора
+  
+  // ✅ Если персонаж уже есть в G (загружен из локального)
+  if (G_CHAR) {
+    document.getElementById('charSelect').classList.add('hidden');
+    startGame();
+    return;
+  }
+  
+  // ✅ Пытаемся восстановить из localStorage напрямую
+  try {
+    // Ищем с userId
+    var keys = [];
+    for (var i = 0; i < localStorage.length; i++) {
+      var key = localStorage.key(i);
+      if (key && key.startsWith('pixelrpg_save')) {
+        keys.push(key);
+      }
+    }
+    
+    for (var k = 0; k < keys.length; k++) {
+      var raw = localStorage.getItem(keys[k]);
+      if (!raw) continue;
+      var parsed = JSON.parse(raw);
+      if (parsed.data && parsed.data.charId && CHARS[parsed.data.charId]) {
+        console.log('[UI] Restoring from localStorage:', keys[k]);
+        var charId2 = parsed.data.charId;
+        G_CHAR = CHARS[charId2];
+        applyCharacter(G_CHAR);
+        
+        var scalars = ['gold','pixr','gram','level','xp','xpNeeded','floor','maxFloor','killCount','potionLv','potions','potionThreshold'];
+        scalars.forEach(function(s) {
+          if (parsed.data[s] !== undefined) G[s] = parsed.data[s];
+        });
+        if (parsed.data.hp) G.hp = parsed.data.hp;
+        if (parsed.data.maxHp) G.maxHp = parsed.data.maxHp;
+        if (parsed.data.baseStats) Object.assign(G.baseStats, parsed.data.baseStats);
+        if (parsed.data.stats) Object.assign(G.stats, parsed.data.stats);
+        if (parsed.data.upg) Object.assign(G.upg, parsed.data.upg);
+        if (parsed.data.equipped) Object.assign(G.equipped, parsed.data.equipped);
+        if (Array.isArray(parsed.data.inventory)) G.inventory = parsed.data.inventory;
+        if (parsed.data.skills) Object.assign(G.skills, parsed.data.skills);
+        recalcStats();
+        document.getElementById('charSelect').classList.add('hidden');
+        startGame();
+        return;
+      }
+    }
+  } catch(e) {
+    console.warn('[UI] Failed to restore from localStorage:', e);
+  }
+
+  // ✅ Иначе — показываем экран выбора
+  document.getElementById('charSelect').classList.remove('hidden');
 });
 
 // ── resize ──

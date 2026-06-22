@@ -5,7 +5,7 @@
 
   СТРАТЕГИЯ СОХРАНЕНИЙ (С MERGE):
   1. localStorage — мгновенное сохранение при каждом изменении
-  2. Сервер — сохранение каждые 30 секунд
+  2. Сервер — сохранение каждые 30 секунд (с retry)
   3. При загрузке: берем НОВЕЙШЕЕ (сервер vs локальное)
   4. При закрытии: только localStorage (гарантированно!)
 
@@ -76,8 +76,19 @@ const API = (function() {
 
   function readLocal() {
     try {
-      var key = _userId ? LS_KEY + '_' + _userId : LS_KEY;
-      var raw = localStorage.getItem(key);
+      // Сначала ищем с userId
+      var keyWithId = _userId ? LS_KEY + '_' + _userId : null;
+      var raw = null;
+      
+      if (keyWithId) {
+        raw = localStorage.getItem(keyWithId);
+      }
+      
+      // Если не нашли — ищем без userId (старый формат или без авторизации)
+      if (!raw) {
+        raw = localStorage.getItem(LS_KEY);
+      }
+      
       if (!raw) return null;
       var parsed = JSON.parse(raw);
       return {
@@ -93,6 +104,8 @@ const API = (function() {
     try {
       var key = _userId ? LS_KEY + '_' + _userId : LS_KEY;
       localStorage.removeItem(key);
+      // Также удаляем старый ключ
+      localStorage.removeItem(LS_KEY);
     } catch(e) {}
   }
 
@@ -163,14 +176,12 @@ const API = (function() {
       _ts: Date.now(),
     };
     
-    // Скаляры
     ['gold','pixr','gram','level','xp','xpNeeded','floor','maxFloor','killCount',
      'hp','maxHp','potionLv','potions','potionThreshold'
     ].forEach(function(k) {
       data[k] = G[k];
     });
     
-    // Вложенные объекты
     ['baseStats','stats','upg','bp','prem','equipped','skills'].forEach(function(k) {
       data[k] = Object.assign({}, G[k]);
     });
@@ -186,8 +197,25 @@ const API = (function() {
   async function init() {
     var startTime = Date.now();
     _initData = getInitData();
+    
+    // ✅ Если нет initData — пытаемся загрузить локальное
     if (!_initData) {
-      console.warn('[API] No initData');
+      console.warn('[API] No initData, trying local save');
+      var localData = readLocal();
+      if (localData && localData.data) {
+        console.log('[API] Using local save (offline mode)');
+        var charId = applySave(localData.data);
+        // Запускаем таймер для попытки reconnect
+        _saveTimer = setInterval(function() {
+          if (_dirty && !_isSaving) {
+            save().catch(function(e) {
+              console.warn('[API] Server save failed:', e.message);
+            });
+            _dirty = false;
+          }
+        }, 30000);
+        return charId;
+      }
       return null;
     }
 
@@ -207,7 +235,6 @@ const API = (function() {
       var bestSave = mergeSaves(serverSave, localData);
       var charId = applySave(bestSave);
       
-      // Если взяли локальное — отправляем на сервер
       if (localData && localData.timestamp > (serverSave?._ts || 0)) {
         console.log('[API] Local is newer, syncing to server...');
         setTimeout(function() {
@@ -217,10 +244,8 @@ const API = (function() {
         }, 1000);
       }
       
-      // Обновляем локальное сохранение (кэш)
       writeLocal(buildSnapshot());
 
-      // Серверное сохранение каждые 30 секунд
       _saveTimer = setInterval(function() {
         if (_dirty && !_isSaving) {
           save().catch(function(e) {
@@ -236,24 +261,33 @@ const API = (function() {
     } catch (e) {
       console.error('[API] Auth failed:', e.message);
       
+      // ✅ ВСЕГДА пытаемся загрузить локальное сохранение
       var localData = readLocal();
       if (localData && localData.data) {
         console.log('[API] Using local save (server unavailable)');
-        return applySave(localData.data);
+        var charId = applySave(localData.data);
+        // Запускаем таймер для retry
+        _saveTimer = setInterval(function() {
+          if (_dirty && !_isSaving) {
+            save().catch(function(e) {
+              console.warn('[API] Server save failed:', e.message);
+            });
+            _dirty = false;
+          }
+        }, 30000);
+        return charId;
       }
       
       return null;
     }
   }
 
-  // ✅ Мгновенное сохранение в localStorage
   function saveLocal() {
     if (!_initData) return;
     var snapshot = buildSnapshot();
     writeLocal(snapshot);
   }
 
-  // ✅ Сохранение на сервер с повторными попытками
   async function save(retries) {
     retries = retries || 3;
     if (!_initData || _isSaving) return;
@@ -278,14 +312,12 @@ const API = (function() {
           _isSaving = false;
           throw e;
         }
-        // Экспоненциальная задержка
         await new Promise(function(r) { setTimeout(r, 1000 * Math.pow(2, attempt)); });
       }
     }
     _isSaving = false;
   }
 
-  // ✅ Частичное обновление (сервер + локально)
   async function partial(fields) {
     if (!_initData || _isSaving) return;
     
@@ -302,12 +334,11 @@ const API = (function() {
     } catch (e) {
       console.error('[API] Partial failed:', e.message);
       writeLocal(snapshot);
-      _dirty = true; // ✅ Помечаем для повторной попытки
+      _dirty = true;
       throw e;
     }
   }
 
-  // ✅ Пометить, что нужно сохранить на сервер + мгновенно локально
   function markDirty() {
     _dirty = true;
     saveLocal();
