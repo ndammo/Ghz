@@ -381,7 +381,7 @@ function confirmChar() {
   startGame();
 }
 
-// Автозапуск с сохранённым персонажем (после загрузки с сервера)
+// Автозапуск с сохранённым персонажем (вызывается из state.js после загрузки)
 function confirmCharById(charId) {
   if (!CHARS[charId]) return;
   Object.values(_csSpriteTimers).forEach(clearInterval);
@@ -389,12 +389,12 @@ function confirmCharById(charId) {
   _csSelected = charId;
   G_CHAR = CHARS[charId];
   applyCharacter(G_CHAR);
-  // Восстанавливаем статы из сохранения (applyCharacter перезаписывает baseStats)
+  // Восстанавливаем статы из сохранения (applyCharacter сбросил их на дефолт персонажа)
   if (G._savedBaseStats) {
     G.baseStats = Object.assign({}, G._savedBaseStats);
     Object.assign(G.stats, G._savedBaseStats);
-    G.hp   = Math.min(G.hp,   G.maxHp);
-    G.maxHp = G.baseStats.hp + (G.upg.hp || 0) * 15;
+    G.maxHp = G.baseStats.hp;
+    G.hp    = Math.min(G.hp, G.maxHp);
   }
   document.getElementById('charSelect').classList.add('hidden');
   startGame();
@@ -413,7 +413,7 @@ function applyCharacter(ch) {
   G.baseStats = Object.assign({}, ch.baseStats);
   Object.assign(G.stats, ch.baseStats);
   G.hp = G.stats.hp; G.maxHp = G.stats.hp;
-  document.querySelector('.hud-avatar').textContent = ch.avatar;
+  // аватар теперь SVG, не трогаем
 }
 
 function startGame() {

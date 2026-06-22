@@ -79,41 +79,53 @@ function tgInit() {
   document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'hidden') _saveNow();
   });
-  // FIX: _saveSoon → triggerSave (функция была не определена)
+  // FIX: была _saveSoon (не определена) → triggerSave
   setInterval(triggerSave, 30000);
 }
 
 // ── Авторизация и загрузка сохранения ──
 async function _authAndLoad() {
-  _showLoadingScreen(true);
+  _showLoadingScreen(true, 'Подключение...');
+
+  // Минимум 2.5с на экране загрузки — чтобы все скрипты успели выполниться
+  var minWait = new Promise(function(r) { setTimeout(r, 2500); });
+
+  var savedCharId = null;
   try {
     var res = await fetch(API_URL + '/auth', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'TMA ' + _tgInitData }
     });
     var data = await res.json();
-    if (data.ok && !data.isNew && data.save) {
+    if (data.ok && data.save) {
       _applyServerSave(data.save);
-      // Если был сохранён персонаж — автозапускаем игру, минуя экран выбора
-      if (data.save.charId && window.CHARS && window.CHARS[data.save.charId]) {
-        _showLoadingScreen(false);
-        // Ждём пока ui.js загрузится (он после state.js)
-        var attempts = 0;
-        var tryStart = setInterval(function() {
-          attempts++;
-          if (typeof confirmCharById === 'function') {
-            clearInterval(tryStart);
-            confirmCharById(data.save.charId);
-          } else if (attempts > 50) {
-            clearInterval(tryStart);
-            _showLoadingScreen(false);
-          }
-        }, 100);
-        return;
+      if (!data.isNew && data.save.charId) {
+        savedCharId = data.save.charId;
+        _showLoadingScreen(true, 'Загрузка сохранения...');
       }
     }
-  } catch(e) { console.error('Auth failed:', e); }
-  finally    { _showLoadingScreen(false); }
+  } catch(e) {
+    console.error('Auth failed:', e);
+    _showLoadingScreen(true, 'Оффлайн режим...');
+  }
+
+  // Дожидаемся минимального времени показа
+  await minWait;
+  _showLoadingScreen(false);
+
+  // Если есть сохранённый персонаж — автозапуск без экрана выбора
+  if (savedCharId && window.CHARS && window.CHARS[savedCharId]) {
+    var attempts = 0;
+    var tryStart = setInterval(function() {
+      attempts++;
+      if (typeof confirmCharById === 'function') {
+        clearInterval(tryStart);
+        confirmCharById(savedCharId);
+      } else if (attempts > 30) {
+        clearInterval(tryStart);
+      }
+    }, 100);
+  }
 }
 
 // ── Применить сохранение с сервера → G ──
@@ -125,7 +137,7 @@ function _applyServerSave(save) {
   if (save.baseStats) {
     G.baseStats = Object.assign({}, save.baseStats);
     Object.assign(G.stats, save.baseStats);
-    // Запоминаем отдельно — confirmCharById восстановит после applyCharacter
+    // Сохраняем отдельно — confirmCharById восстановит после applyCharacter
     G._savedBaseStats = Object.assign({}, save.baseStats);
   }
   if (save.charId) G._savedCharId = save.charId;
@@ -162,22 +174,76 @@ function triggerSave() {
   _saveDebounceTm = setTimeout(_saveNow, 3000);
 }
 
-// ── Загрузочный экран ──
-function _showLoadingScreen(show) {
+// ── Загрузочный экран с анимированным статусом ──
+function _showLoadingScreen(show, statusText) {
   var el = document.getElementById('tgLoadScreen');
   if (!el && show) {
     el = document.createElement('div');
     el.id = 'tgLoadScreen';
-    el.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#0d0d1a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;';
-    el.innerHTML = '<svg width="48" height="48" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated;animation:tgSpin 1s linear infinite"><rect x="7" y="1" width="2" height="4" fill="#f5c542"/><rect x="7" y="11" width="2" height="4" fill="#f5c542" opacity="0.3"/><rect x="1" y="7" width="4" height="2" fill="#f5c542" opacity="0.6"/><rect x="11" y="7" width="4" height="2" fill="#f5c542" opacity="0.6"/><rect x="2" y="2" width="3" height="3" fill="#f5c542" opacity="0.8"/><rect x="11" y="2" width="3" height="3" fill="#f5c542" opacity="0.5"/><rect x="2" y="11" width="3" height="3" fill="#f5c542" opacity="0.4"/><rect x="11" y="11" width="3" height="3" fill="#f5c542" opacity="0.2"/></svg>'
-      + '<div style="font-family:Courier New,monospace;color:#f5c542;font-size:13px;letter-spacing:2px;">ЗАГРУЗКА...</div>'
-      + '<div style="font-family:Courier New,monospace;color:#556;font-size:10px;">Pixel Runner RPG</div>';
+    el.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#0d0d1a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;';
+    el.innerHTML =
+      // pixel-art лого
+      '<svg width="64" height="64" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated">' +
+        // мечи крест
+        '<rect x="1" y="1" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="3" y="3" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="5" y="5" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="7" y="7" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="9" y="9" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="11" y="11" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="13" y="1" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="11" y="3" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="9" y="5" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="5" y="9" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="3" y="11" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="1" y="13" width="2" height="2" fill="#f5c542"/>' +
+        // гарда
+        '<rect x="5" y="7" width="2" height="2" fill="#c8a000"/>' +
+        '<rect x="9" y="7" width="2" height="2" fill="#c8a000"/>' +
+        '<rect x="7" y="5" width="2" height="2" fill="#c8a000"/>' +
+        '<rect x="7" y="9" width="2" height="2" fill="#c8a000"/>' +
+      '</svg>' +
+      '<div style="text-align:center;">' +
+        '<div style="font-family:Courier New,monospace;color:#f5c542;font-size:15px;font-weight:bold;letter-spacing:3px;margin-bottom:6px;">PIXEL RUNNER RPG</div>' +
+        '<div id="tgLoadStatus" style="font-family:Courier New,monospace;color:#778;font-size:10px;letter-spacing:1px;">Загрузка...</div>' +
+      '</div>' +
+      // прогресс-бар
+      '<div style="width:160px;height:4px;background:#111130;border-radius:2px;overflow:hidden;border:1px solid #2a2a5a;">' +
+        '<div id="tgLoadBar" style="height:100%;width:0%;background:linear-gradient(90deg,#5b1f8a,#f5c542);border-radius:2px;transition:width 0.4s ease;"></div>' +
+      '</div>';
     var st = document.createElement('style');
     st.textContent = '@keyframes tgSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}';
     document.head.appendChild(st);
     document.body.appendChild(el);
+
+    // Анимация прогресс-бара
+    var pct = 0;
+    var barTimer = setInterval(function() {
+      pct = Math.min(pct + (Math.random() * 8 + 3), 90);
+      var bar = document.getElementById('tgLoadBar');
+      if (bar) bar.style.width = pct + '%';
+      else clearInterval(barTimer);
+    }, 200);
+    el._barTimer = barTimer;
   }
-  if (el) el.style.display = show ? 'flex' : 'none';
+
+  if (!el) return;
+
+  if (show) {
+    el.style.display = 'flex';
+    if (statusText) {
+      var st = document.getElementById('tgLoadStatus');
+      if (st) st.textContent = statusText;
+    }
+  } else {
+    // Завершаем бар до 100% и скрываем
+    clearInterval(el._barTimer);
+    var bar = document.getElementById('tgLoadBar');
+    if (bar) bar.style.width = '100%';
+    setTimeout(function() {
+      if (el) el.style.display = 'none';
+    }, 400);
+  }
 }
 
 // ── Запуск при загрузке страницы ──
