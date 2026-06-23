@@ -658,7 +658,7 @@ app.post('/api/wallet/withdraw', async (req, res) => {
 });
 
 // ── Получение транзакций пользователя ──
-app.get('/api/wallet/transactions', async (req, res) => {
+app.post('/api/wallet/transactions', async (req, res) => {  // ← GET → POST
   const tg = authUser(req, res);
   if (!tg) return;
   
@@ -671,6 +671,51 @@ app.get('/api/wallet/transactions', async (req, res) => {
     res.json({ ok: true, transactions: txs });
   } catch (e) {
     console.error('❌ [wallet] transactions error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── ОБМЕН PIXR → GRAM ──
+app.post('/api/wallet/exchange', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  
+  const { amount } = req.body;
+  
+  if (!amount || amount < 1000 || amount % 1000 !== 0) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: 'Сумма должна быть кратна 1000 PIXR (минимум 1000)' 
+    });
+  }
+  
+  try {
+    const user = await Save.findOne({ tgId: tg.id });
+    if (!user) {
+      return res.status(404).json({ ok: false, error: 'user_not_found' });
+    }
+    
+    if (!user.data) user.data = { tgId: tg.id };
+    
+    const pixr = user.data.pixr || 0;
+    if (pixr < amount) {
+      return res.status(400).json({ ok: false, error: 'Недостаточно PIXR' });
+    }
+    
+    const gramEarned = amount / 1000;
+    
+    user.data.pixr = pixr - amount;
+    user.data.gram = (user.data.gram || 0) + gramEarned;
+    await user.save();
+    
+    res.json({ 
+      ok: true, 
+      pixr: user.data.pixr,
+      gram: user.data.gram,
+      earned: gramEarned
+    });
+  } catch (e) {
+    console.error('❌ [wallet] exchange error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });

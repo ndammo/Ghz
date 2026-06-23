@@ -286,7 +286,7 @@ function towerSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10"
 function atkSpdSvg()   { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="1" y="1" width="2" height="2" fill="#ffaa00"/><rect x="3" y="3" width="2" height="2" fill="#ffaa00"/><rect x="5" y="1" width="2" height="2" fill="#ffaa00"/><rect x="7" y="3" width="2" height="2" fill="#ffaa00"/><rect x="3" y="5" width="4" height="2" fill="#ffcc44"/><rect x="2" y="7" width="6" height="2" fill="#ff8800"/></svg>`; }
 
 // ═══════════════════════════════
-//  ВКЛАДКА КОШЕЛЕК (новая версия)
+//  ВКЛАДКА КОШЕЛЕК (исправленная)
 // ═══════════════════════════════
 
 var _walletTab = 'wallet'; // 'wallet' | 'stats'
@@ -319,17 +319,37 @@ function renderWallet() {
   }
   
   // ── КОШЕЛЕК ──
+  const canExchange = pixr >= 1000;
+  
   const html = `
     ${tabsHtml}
     
-    <!-- Баланс -->
-    <div style="padding:16px;background:rgba(64,208,255,0.06);border:1.5px solid #2a4a6a;border-radius:12px;margin-bottom:14px;text-align:center;">
-      <div style="font-size:10px;color:#778;letter-spacing:1px;">БАЛАНС</div>
-      <div style="font-size:32px;font-weight:bold;color:#40d0ff;margin:4px 0;">${gram} GRAM</div>
-      <div style="font-size:12px;color:#556;">≈ ${(parseFloat(gram) * 0.1).toFixed(2)} $</div>
+    <!-- Балансы -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
+      <div style="padding:14px;background:rgba(255,68,204,0.06);border:1.5px solid #4a2a5a;border-radius:12px;text-align:center;">
+        <div style="font-size:9px;color:#778;letter-spacing:1px;">PIXR</div>
+        <div style="font-size:20px;font-weight:bold;color:#ff44cc;">${pixr}</div>
+      </div>
+      <div style="padding:14px;background:rgba(64,208,255,0.06);border:1.5px solid #2a4a6a;border-radius:12px;text-align:center;">
+        <div style="font-size:9px;color:#778;letter-spacing:1px;">GRAM</div>
+        <div style="font-size:20px;font-weight:bold;color:#40d0ff;">${gram}</div>
+      </div>
     </div>
     
-    <!-- Кнопки -->
+    <!-- Обмен PIXR → GRAM -->
+    <div style="padding:12px;background:rgba(255,255,255,0.03);border:1px solid #2a2a5a;border-radius:10px;margin-bottom:12px;">
+      <div style="font-size:10px;color:#778;margin-bottom:6px;">💱 ОБМЕН PIXR → GRAM (1000:1)</div>
+      <div style="display:flex;gap:8px;">
+        <input id="exchangeAmount" type="number" min="1000" step="1000" value="1000" 
+          style="flex:1;padding:8px 10px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:6px;color:#fff;font-size:14px;font-family:'Courier New',monospace;">
+        <button onclick="submitExchange()" style="padding:8px 16px;background:linear-gradient(90deg,#4a2a8a,#7a4ad0);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
+          Обменять
+        </button>
+      </div>
+      <div id="exchangeResult" style="font-size:10px;color:#556;margin-top:4px;min-height:16px;"></div>
+    </div>
+    
+    <!-- Кнопки Пополнить/Вывести -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
       <button onclick="openDepositModal()" style="padding:14px;background:linear-gradient(90deg,#1a5a3a,#2a8a4a);border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
         📥 Пополнить
@@ -348,6 +368,128 @@ function renderWallet() {
   
   document.getElementById('walletBody').innerHTML = html;
   loadTransactions();
+}
+
+// ── ОБМЕН PIXR → GRAM ──
+function submitExchange() {
+  const amount = parseInt(document.getElementById('exchangeAmount').value);
+  const result = document.getElementById('exchangeResult');
+  
+  if (!amount || amount < 1000 || amount % 1000 !== 0) {
+    result.innerHTML = '<span style="color:#e74c3c;">Сумма должна быть кратна 1000 PIXR</span>';
+    return;
+  }
+  
+  if (amount > (G.pixr || 0)) {
+    result.innerHTML = '<span style="color:#e74c3c;">Недостаточно PIXR</span>';
+    return;
+  }
+  
+  result.innerHTML = '<span style="color:#f5c542;">Обмен...</span>';
+  
+  fetch(window.GameSync._API + '/api/wallet/exchange', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      initData: window.GameSync._INIT,
+      amount: amount
+    })
+  })
+  .then(r => r.json())
+  .then(r => {
+    if (r.ok) {
+      G.pixr = r.pixr;
+      G.gram = r.gram;
+      updateHUD();
+      result.innerHTML = `<span style="color:#2ecc71;">✅ Обменяно ${amount} PIXR → ${r.earned} GRAM</span>`;
+      setTimeout(function() {
+        renderWallet();
+      }, 1000);
+    } else {
+      result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (r.error || 'Ошибка') + '</span>';
+    }
+  })
+  .catch(function() {
+    result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка соединения</span>';
+  });
+}
+
+// ── ЗАГРУЗКА ТРАНЗАКЦИЙ (ИСПРАВЛЕННАЯ) ──
+function loadTransactions() {
+  var list = document.getElementById('txList');
+  if (!list) return;
+  
+  if (!window.GameSync || !window.GameSync._INIT) {
+    list.innerHTML = '<div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">Авторизуйтесь в Telegram</div>';
+    return;
+  }
+  
+  list.innerHTML = '<div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">Загрузка...</div>';
+  
+  fetch(window.GameSync._API + '/api/wallet/transactions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: window.GameSync._INIT })
+  })
+  .then(function(r) { 
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json(); 
+  })
+  .then(function(r) {
+    if (!r.ok) throw new Error(r.error || 'Unknown error');
+    
+    if (!r.transactions || r.transactions.length === 0) {
+      list.innerHTML = `
+        <div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">
+          <div style="font-size:24px;margin-bottom:8px;">📭</div>
+          Нет транзакций
+        </div>
+      `;
+      return;
+    }
+    
+    var statusColors = {
+      pending: '#f5c542',
+      approved: '#2ecc71',
+      rejected: '#e74c3c'
+    };
+    var statusLabels = {
+      pending: '⏳ Ожидание',
+      approved: '✅ Подтверждено',
+      rejected: '❌ Отклонено'
+    };
+    var typeLabels = {
+      deposit: '📥 Пополнение',
+      withdraw: '📤 Вывод'
+    };
+    
+    var html = '';
+    r.transactions.slice(0, 10).forEach(function(tx) {
+      var date = new Date(tx.createdAt).toLocaleDateString('ru-RU');
+      
+      html += `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #0a0a1a;font-size:11px;">
+          <div>
+            <div style="color:#ddd;">${typeLabels[tx.type] || tx.type}</div>
+            <div style="color:#556;font-size:9px;">${date}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="color:${tx.type === 'deposit' ? '#2ecc71' : '#e74c3c'};font-weight:bold;">
+              ${tx.type === 'deposit' ? '+' : '-'} ${tx.amount} GRAM
+            </div>
+            <div style="color:${statusColors[tx.status] || '#556'};font-size:9px;">
+              ${statusLabels[tx.status] || tx.status}
+            </div>
+          </div>
+        </div>
+      `;
+    });
+    list.innerHTML = html;
+  })
+  .catch(function(err) {
+    console.error('❌ [wallet] loadTransactions error:', err.message);
+    list.innerHTML = '<div style="color:#e74c3c;text-align:center;padding:20px 0;font-size:12px;">Ошибка загрузки</div>';
+  });
 }
 
 function switchWalletTab(tab) {
