@@ -1003,8 +1003,8 @@ body {
               '<div style="font-size:10px;color:#f5c542;margin-top:3px;">' + (icons[t.rewardType]||'🎁') + ' ' + t.rewardAmount + ' ' + t.rewardType + '</div>' +
             '</div>' +
             '<div style="display:flex;gap:4px;flex-shrink:0;">' +
-              '<button onclick="adminToggleTask('' + t.taskId + '')" style="padding:4px 8px;font-size:10px;background:' + (t.active ? 'rgba(46,204,113,0.15)' : 'rgba(255,255,255,0.05)') + ';border:1px solid ' + (t.active ? '#2ecc71' : '#444') + ';border-radius:5px;color:' + (t.active ? '#2ecc71' : '#666') + ';cursor:pointer;">' + (t.active ? 'ВКЛ' : 'ВЫКЛ') + '</button>' +
-              '<button onclick="adminDeleteTask('' + t.taskId + '')" style="padding:4px 8px;font-size:10px;background:rgba(231,76,60,0.15);border:1px solid #e74c3c;border-radius:5px;color:#e74c3c;cursor:pointer;">🗑</button>' +
+              '<button onclick="adminToggleTask(this.dataset.id)" data-id=\' + t.taskId + \' style="padding:4px 8px;font-size:10px;background:' + (t.active ? 'rgba(46,204,113,0.15)' : 'rgba(255,255,255,0.05)') + ';border:1px solid ' + (t.active ? '#2ecc71' : '#444') + ';border-radius:5px;color:' + (t.active ? '#2ecc71' : '#666') + ';cursor:pointer;">' + (t.active ? 'ВКЛ' : 'ВЫКЛ') + '</button>' +
+              '<button onclick="adminDeleteTask(this.dataset.id)" data-id=\' + t.taskId + \' style="padding:4px 8px;font-size:10px;background:rgba(231,76,60,0.15);border:1px solid #e74c3c;border-radius:5px;color:#e74c3c;cursor:pointer;">🗑</button>' +
             '</div>' +
           '</div>';
         }).join('');
