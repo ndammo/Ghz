@@ -21,7 +21,7 @@ const REF_MILESTONE_STEP     = 5;
 // ── CORS ──
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS,DELETE,PATCH');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
   res.header('Vary', 'Origin');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
@@ -109,6 +109,21 @@ const AdminLogSchema = new mongoose.Schema({
   timestamp: { type: Number, default: Date.now }
 });
 const AdminLog = mongoose.model('AdminLog', AdminLogSchema);
+// ── Специальные задания (создаются через админку) ──
+const SpecialTaskSchema = new mongoose.Schema({
+  taskId:       { type: String, required: true, unique: true },
+  title:        { type: String, required: true },
+  description:  { type: String, default: '' },
+  link:         { type: String, default: '' },
+  linkText:     { type: String, default: 'Перейти' },
+  rewardType:   { type: String, enum: ['gold', 'pixr', 'potions', 'gram'], required: true },
+  rewardAmount: { type: Number, required: true, min: 1 },
+  active:       { type: Boolean, default: true },
+  createdAt:    { type: Number, default: Date.now },
+}, { minimize: false });
+SpecialTaskSchema.index({ active: 1, createdAt: -1 });
+const SpecialTask = mongoose.model('SpecialTask', SpecialTaskSchema);
+
 
 // ═══════════════════════════════
 //  КОНФИГ КОШЕЛЬКА
@@ -487,6 +502,99 @@ app.post('/api/ref/claim', async (req, res) => {
   }
 });
 
+
+
+// ═══════════════════════════════
+//  ЗАДАНИЯ
+// ═══════════════════════════════
+
+const DAILY_MILESTONES = [
+  { id: 0, minutes: 10, rewardType: 'potions', amount: 50   },
+  { id: 1, minutes: 20, rewardType: 'gold',    amount: 1000 },
+  { id: 2, minutes: 30, rewardType: 'pixr',    amount: 5    },
+  { id: 3, minutes: 60, rewardType: 'gold',    amount: 2000 },
+];
+
+// ── Получить задания + состояние пользователя ──
+app.post('/api/tasks', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  try {
+    const [tasks, user] = await Promise.all([
+      SpecialTask.find({ active: true }).sort({ createdAt: -1 }).lean(),
+      Save.findOne({ tgId: tg.id }).select('data').lean()
+    ]);
+    const userData = (user && user.data) || {};
+    res.json({
+      ok: true,
+      tasks,
+      dailyTasks:          userData.dailyTasks          || { date: '', seconds: 0, claimed: [] },
+      specialTasksClaimed: userData.specialTasksClaimed || {},
+    });
+  } catch (e) {
+    console.error('❌ [tasks] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ── Забрать ежедневную награду ──
+app.post('/api/tasks/daily/claim', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  const { milestoneId } = req.body;
+  const milestone = DAILY_MILESTONES.find(m => m.id === milestoneId);
+  if (!milestone) return res.status(400).json({ ok: false, error: 'invalid_milestone' });
+  try {
+    const user = await Save.findOne({ tgId: tg.id });
+    if (!user || !user.data) return res.status(404).json({ ok: false, error: 'no_save' });
+    const daily    = user.data.dailyTasks || { date: '', seconds: 0, claimed: [] };
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (daily.date !== todayStr)
+      return res.status(400).json({ ok: false, error: 'day_reset' });
+    if ((daily.claimed || []).includes(milestoneId))
+      return res.status(400).json({ ok: false, error: 'already_claimed' });
+    if (Math.floor((daily.seconds || 0) / 60) < milestone.minutes)
+      return res.status(400).json({ ok: false, error: 'not_enough_time' });
+    const rewardField = 'data.' + milestone.rewardType;
+    const newClaimed  = [...(daily.claimed || []), milestoneId];
+    await Save.findOneAndUpdate(
+      { tgId: tg.id },
+      { $inc: { [rewardField]: milestone.amount }, $set: { 'data.dailyTasks.claimed': newClaimed } }
+    );
+    res.json({ ok: true, reward: { type: milestone.rewardType, amount: milestone.amount } });
+  } catch (e) {
+    console.error('❌ [tasks/daily/claim] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ── Забрать специальное задание ──
+app.post('/api/tasks/special/claim', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  const { taskId } = req.body;
+  if (!taskId) return res.status(400).json({ ok: false, error: 'missing_taskId' });
+  try {
+    const [task, user] = await Promise.all([
+      SpecialTask.findOne({ taskId, active: true }).lean(),
+      Save.findOne({ tgId: tg.id })
+    ]);
+    if (!task) return res.status(404).json({ ok: false, error: 'task_not_found' });
+    if (!user)  return res.status(404).json({ ok: false, error: 'no_save' });
+    const claimed = (user.data && user.data.specialTasksClaimed) || {};
+    if (claimed[taskId]) return res.status(400).json({ ok: false, error: 'already_claimed' });
+    const rewardField  = 'data.' + task.rewardType;
+    const newClaimed   = Object.assign({}, claimed, { [taskId]: Date.now() });
+    await Save.findOneAndUpdate(
+      { tgId: tg.id },
+      { $inc: { [rewardField]: task.rewardAmount }, $set: { 'data.specialTasksClaimed': newClaimed } }
+    );
+    res.json({ ok: true, reward: { type: task.rewardType, amount: task.rewardAmount } });
+  } catch (e) {
+    console.error('❌ [tasks/special/claim] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
 
 // ═══════════════════════════════
 //  ТРАНЗАКЦИИ (Пополнение/Вывод)
@@ -910,6 +1018,57 @@ app.get('/admin/api/users', requireAdmin, async (req, res) => {
   }
 });
 
+
+// ── Admin: список заданий ──
+app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
+  try {
+    const tasks = await SpecialTask.find().sort({ createdAt: -1 }).lean();
+    res.json({ ok: true, tasks });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Admin: создать задание ──
+app.post('/admin/api/tasks', requireAdmin, async (req, res) => {
+  try {
+    const { title, description, link, linkText, rewardType, rewardAmount } = req.body;
+    if (!title || !rewardType || !rewardAmount)
+      return res.status(400).json({ ok: false, error: 'missing_fields' });
+    const taskId = 'task_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+    const task   = await SpecialTask.create({
+      taskId, title,
+      description:  description  || '',
+      link:         link         || '',
+      linkText:     linkText     || 'Перейти',
+      rewardType,
+      rewardAmount: Number(rewardAmount),
+      active: true,
+      createdAt: Date.now(),
+    });
+    await logAdminAction(req.admin.login, 'create_task', taskId, { title, rewardType, rewardAmount });
+    res.json({ ok: true, task });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Admin: удалить задание ──
+app.delete('/admin/api/tasks/:taskId', requireAdmin, async (req, res) => {
+  try {
+    await SpecialTask.deleteOne({ taskId: req.params.taskId });
+    await logAdminAction(req.admin.login, 'delete_task', req.params.taskId, {});
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Admin: вкл/выкл задание ──
+app.patch('/admin/api/tasks/:taskId/toggle', requireAdmin, async (req, res) => {
+  try {
+    const task = await SpecialTask.findOne({ taskId: req.params.taskId });
+    if (!task) return res.status(404).json({ ok: false, error: 'not_found' });
+    task.active = !task.active;
+    await task.save();
+    res.json({ ok: true, active: task.active });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 app.get('/admin/api/user/:tgId', requireAdmin, async (req, res) => {
   try {
     const user = await Save.findOne({ tgId: req.params.tgId }).lean();
@@ -968,6 +1127,57 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     console.error('❌ [admin] update error:', e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+
+// ── Admin: список заданий ──
+app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
+  try {
+    const tasks = await SpecialTask.find().sort({ createdAt: -1 }).lean();
+    res.json({ ok: true, tasks });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Admin: создать задание ──
+app.post('/admin/api/tasks', requireAdmin, async (req, res) => {
+  try {
+    const { title, description, link, linkText, rewardType, rewardAmount } = req.body;
+    if (!title || !rewardType || !rewardAmount)
+      return res.status(400).json({ ok: false, error: 'missing_fields' });
+    const taskId = 'task_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+    const task   = await SpecialTask.create({
+      taskId, title,
+      description:  description  || '',
+      link:         link         || '',
+      linkText:     linkText     || 'Перейти',
+      rewardType,
+      rewardAmount: Number(rewardAmount),
+      active: true,
+      createdAt: Date.now(),
+    });
+    await logAdminAction(req.admin.login, 'create_task', taskId, { title, rewardType, rewardAmount });
+    res.json({ ok: true, task });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Admin: удалить задание ──
+app.delete('/admin/api/tasks/:taskId', requireAdmin, async (req, res) => {
+  try {
+    await SpecialTask.deleteOne({ taskId: req.params.taskId });
+    await logAdminAction(req.admin.login, 'delete_task', req.params.taskId, {});
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Admin: вкл/выкл задание ──
+app.patch('/admin/api/tasks/:taskId/toggle', requireAdmin, async (req, res) => {
+  try {
+    const task = await SpecialTask.findOne({ taskId: req.params.taskId });
+    if (!task) return res.status(404).json({ ok: false, error: 'not_found' });
+    task.active = !task.active;
+    await task.save();
+    res.json({ ok: true, active: task.active });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/api/user/:tgId/referrals', requireAdmin, async (req, res) => {

@@ -20,8 +20,10 @@ const player = {
 // ── Игровые переменные ──
 let monsters       = [];
 // ── Зелья ──
-if (!G.potions)          G.potions = 0;
-if (!G.potionThreshold)  G.potionThreshold = 30;
+if (!G.potions)             G.potions = 0;
+if (!G.potionThreshold)     G.potionThreshold = 30;
+if (!G.dailyTasks)          G.dailyTasks = { date: '', seconds: 0, claimed: [] };
+if (!G.specialTasksClaimed) G.specialTasksClaimed = {};
 let potionCooldown = 0;
 let nextMonsterSpawn = 600;
 let particles      = [];
@@ -710,3 +712,15 @@ function buyPrem(tier) {
   closePremModal();
   showDmgPop('👑 ' + t.name + ' активен!', PLAYER_SCREEN_X, player.y - 30, '#c080ff');
 }
+
+// ═══════════════════════════════
+//  ТАЙМЕР ЕЖЕДНЕВНЫХ ЗАДАНИЙ
+// ═══════════════════════════════
+setInterval(function() {
+  if (!gameActive || !G_CHAR || player.state === 'dead') return;
+  var today = new Date().toISOString().slice(0, 10);
+  if (!G.dailyTasks || G.dailyTasks.date !== today) {
+    G.dailyTasks = { date: today, seconds: 0, claimed: [] };
+  }
+  G.dailyTasks.seconds = (G.dailyTasks.seconds || 0) + 1;
+}, 1000);

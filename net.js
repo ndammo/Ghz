@@ -188,6 +188,8 @@
 
       // === ПРОЧИЕ (не отправляем тяжелые) ===
       invIdCounter: (typeof _invIdCounter === 'number') ? _invIdCounter : 0,
+      dailyTasks:          clone(G.dailyTasks          || { date: '', seconds: 0, claimed: [] }),
+      specialTasksClaimed: clone(G.specialTasksClaimed || {}),
       invFilter: G.invFilter || 'all',
       cp: (typeof calcCP === 'function') ? calcCP() : 0,
       updatedAt: Date.now(),
@@ -218,6 +220,8 @@
       potions: full.potions,
       invIdCounter: full.invIdCounter,
       invFilter: full.invFilter,
+      dailyTasks:          full.dailyTasks,
+      specialTasksClaimed: full.specialTasksClaimed,
       cp: full.cp,
       updatedAt: full.updatedAt,
     };
@@ -262,6 +266,8 @@
     if (!G.bp.claimed) G.bp.claimed = [];
     G.prem = s.prem || { tier: null, expiresAt: 0 };
     G.invFilter = s.invFilter || 'all';
+    G.dailyTasks          = s.dailyTasks          || { date: '', seconds: 0, claimed: [] };
+    G.specialTasksClaimed = s.specialTasksClaimed || {};
 
     G.gold = num(s.gold, G.gold);
     G.xp = num(s.xp, G.xp);
@@ -514,6 +520,8 @@
       G.skills = {};
       G.potions = 0;
       G.potionLv = 0;
+      G.dailyTasks = { date: '', seconds: 0, claimed: [] };
+      G.specialTasksClaimed = {};
     }} catch(e) {}
     if (typeof _invIdCounter !== 'undefined') window._invIdCounter = 0;
     
