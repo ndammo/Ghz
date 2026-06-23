@@ -957,6 +957,8 @@ function switchTab(tab) {
   document.getElementById('panelRating').classList.toggle('visible',   tab === 'rating');
   document.getElementById('panelWallet').classList.toggle('visible',   tab === 'wallet');
   document.getElementById('panelFriends').classList.toggle('visible',  tab === 'friends');
+  var bossPanel = document.getElementById('panelBoss');
+  if (bossPanel) bossPanel.classList.toggle('visible', tab === 'boss');
   var hudEl = document.getElementById('skillsHud');
   if (hudEl) hudEl.classList.toggle('visible', tab === 'game' && !!G_CHAR);
   var isGame = tab === 'game' && !!G_CHAR;
@@ -975,6 +977,7 @@ function switchTab(tab) {
   if (tab === 'rating')   renderRating();
   if (tab === 'wallet')   renderWallet();
   if (tab === 'friends')  renderFriends();
+  if (tab === 'boss')     renderBossTab();
 }
 
 // ═══════════════════════════════
@@ -1588,4 +1591,75 @@ function _taskToast(msg) {
   sub.textContent = '';
   fu.classList.remove('show'); void fu.offsetWidth; fu.classList.add('show');
   setTimeout(function() { fu.classList.remove('show'); }, 2500);
+}
+// ═══════════════════════════════
+//  ВКЛАДКА БОССОВ
+// ═══════════════════════════════
+function renderBossTab() {
+  var body = document.getElementById('bossBody');
+  if (!body) return;
+  var cp       = calcCP();
+  var boss     = G.boss || { floor: 1, lastFightTime: 0 };
+  var canFight = typeof bossCanFight === 'function' ? bossCanFight() : true;
+  var nextIn   = typeof bossNextFightIn === 'function' ? bossNextFightIn() : null;
+  var html     = '';
+
+  html += '<div style="font-size:11px;color:#778;margin-bottom:12px;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid #2a2a5a;display:flex;justify-content:space-between;align-items:center;">';
+  html += '<span>CP: <strong style="color:#fa0">' + cp + '</strong></span>';
+  if (canFight) {
+    html += '<span style="color:#2ecc71;font-size:10px;">✅ Можно вызвать</span>';
+  } else {
+    html += '<span style="color:#e74c3c;font-size:10px;">⏳ ' + nextIn + '</span>';
+  }
+  html += '</div>';
+
+  BOSS_DEFS.forEach(function(b) {
+    var isUnlocked = cp >= b.cpReq;
+    var isCurrent  = boss.floor === b.id;
+    var isPast     = boss.floor > b.id;
+    var pixr  = Math.floor(Math.pow(2, b.id - 1));
+    var gold  = Math.floor(1000 * Math.pow(2, b.id - 1));
+    var rarNames = ['Обычный','Необычный','Редкий','Эпический','Легендарный'];
+    var rarName  = rarNames[Math.min(b.id - 1, 4)];
+
+    var borderColor = '#2a2a5a', extraStyle = '';
+    if (isCurrent && isUnlocked) { borderColor = '#e74c3c'; extraStyle = 'box-shadow:0 0 12px rgba(231,76,60,0.2);'; }
+    else if (isPast)             { borderColor = '#2a4a3a'; }
+    else if (!isUnlocked)        { extraStyle = 'opacity:0.5;'; }
+
+    html += '<div style="margin-bottom:12px;border-radius:10px;border:1.5px solid ' + borderColor + ';' + extraStyle + 'overflow:hidden;">';
+    // Заголовок
+    html += '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.04);border-bottom:1px solid #1a1a35;">';
+    html += '<span style="font-size:26px;line-height:1;">' + b.emoji + '</span>';
+    html += '<div style="flex:1;"><div style="font-size:13px;font-weight:bold;color:' + (isCurrent ? '#e74c3c' : '#ccc') + ';">Босс ' + b.id + ': ' + b.name;
+    if (isCurrent) html += ' <span style="font-size:9px;color:#e74c3c;border:1px solid #e74c3c44;padding:1px 4px;border-radius:3px;margin-left:4px;">ТЕКУЩИЙ</span>';
+    html += '</div><div style="font-size:10px;color:#778;margin-top:2px;">HP: ' + b.hp.toLocaleString() + ' · ATK: ' + b.atk + ' · CP: ' + b.cpReq.toLocaleString() + '</div></div>';
+    if (!isUnlocked) html += '<div style="font-size:9px;color:#f88;text-align:right;min-width:44px;">🔒<br>+' + (b.cpReq - cp) + ' CP</div>';
+    html += '</div>';
+    // Награды
+    html += '<div style="padding:8px 12px 10px;background:rgba(0,0,0,0.15);">';
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:8px;">';
+    html += '<div style="background:rgba(255,68,204,0.07);border:1px solid #4a2a5a;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">PIXR</div><div style="font-size:13px;font-weight:bold;color:#ff44cc;">' + pixr + '</div></div>';
+    html += '<div style="background:rgba(245,197,66,0.07);border:1px solid #4a3a10;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">Золото</div><div style="font-size:11px;font-weight:bold;color:#f5c542;">' + (gold >= 1000 ? (gold/1000).toFixed(0)+'K' : gold) + '</div></div>';
+    html += '<div style="background:rgba(167,139,250,0.07);border:1px solid #3a2a6a;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">Предмет</div><div style="font-size:9px;font-weight:bold;color:#a78bfa;">' + rarName + '</div></div>';
+    html += '</div>';
+    // Кнопка
+    if (!isUnlocked) {
+      html += '<div style="padding:9px;font-size:11px;border-radius:8px;border:1px solid #333;background:rgba(255,255,255,0.02);color:#446;text-align:center;">🔒 Нужно ' + b.cpReq.toLocaleString() + ' CP</div>';
+    } else if (canFight) {
+      html += '<button onclick="callBoss(' + b.id + ')" style="width:100%;padding:10px;font-size:13px;font-family:Courier New,monospace;border-radius:8px;border:1.5px solid #e74c3c;background:rgba(231,76,60,0.15);color:#e74c3c;cursor:pointer;font-weight:bold;">⚔️ Вызвать босса</button>';
+    } else {
+      html += '<div style="padding:9px;font-size:11px;border-radius:8px;border:1px solid #e74c3c44;background:rgba(231,76,60,0.05);color:#e74c3c;text-align:center;">⏳ Следующий бой через ' + nextIn + '</div>';
+    }
+    html += '</div></div>';
+  });
+
+  body.innerHTML = html;
+}
+
+function callBoss(bossId) {
+  if (typeof spawnBoss === 'function') {
+    switchTab('game');
+    setTimeout(function() { spawnBoss(bossId); }, 100);
+  }
 }

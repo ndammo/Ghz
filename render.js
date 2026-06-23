@@ -84,6 +84,12 @@ const MONSTER_SPRITES = {
     oy: 0, oh: 100,
   },
   orcdemon:  {
+    run:  { img: spriteMonster,     frames: 6, fw: 96, fh: 96 },
+    atk:  { img: spriteMonsterAtk,  frames: 4, fw: 96, fh: 96 },
+    idle: { img: spriteMonsterIdle, frames: 5, fw: 96, fh: 96 },
+    oy: 0, oh: 90,
+  },
+  orcdemon:  {
     run:  { img: spriteMonster,     frames: 6,  fw: 96, fh: 96 },
     atk:  { img: spriteMonsterAtk,  frames: 4,  fw: 96, fh: 96 },
     idle: { img: spriteMonsterIdle, frames: 5,  fw: 96, fh: 96 },
@@ -949,29 +955,39 @@ function drawMonster(m) {
     }
   }
 
-  // drawY: низ кадра на GROUND, но сдвигаем вверх на oy (пустые px сверху)
-  // Итог: визуальный объект стоит ногами на GROUND
-  const drawY = (GROUND - fh + oy) | 0;
+  const scale = m.isBoss ? 2.0 : 1.0;
+  const drawW = Math.floor(fw * scale);
+  const drawH = Math.floor(fh * scale);
+  const drawY = (GROUND - drawH + Math.floor(oy * scale)) | 0;
 
   ctx.save();
   ctx.translate(mx | 0, 0);
   ctx.scale(-1, 1);
   if (sprite && sprite.complete && sprite.naturalWidth > 0) {
-    ctx.drawImage(sprite, frame * fw, 0, fw, fh, (-fw / 2) | 0, drawY, fw, fh);
+    ctx.drawImage(sprite, frame * fw, 0, fw, fh, (-drawW / 2) | 0, drawY, drawW, drawH);
   }
   ctx.restore();
 
-  // HP-бар над визуальным объектом
-  const barW = 50;
-  const bx = mx - barW / 2;
-  const oh = (m.sk && MONSTER_SPRITES[m.sk]) ? (MONSTER_SPRITES[m.sk].oh || fh) : fh;
-  const by = (GROUND - oh) - 5;
-  pixelRect(bx, by, barW, 5, '#400');
-  pixelRect(bx, by, Math.floor(barW * m.hp / m.maxHp), 5, '#f44');
-  // Имя только для спрайтовых монстров
-  if (m.sk && MONSTER_SPRITES[m.sk]) {
-    ctx.font = '11px Courier New'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
-    ctx.fillText(m.name, mx, by - 3);
+  const ohVal = (m.sk && MONSTER_SPRITES[m.sk]) ? (MONSTER_SPRITES[m.sk].oh || fh) : fh;
+  if (m.isBoss) {
+    const barW = 130, bx = mx - 65;
+    const by   = (GROUND - ohVal * 2) - 24;
+    ctx.font = 'bold 13px Courier New'; ctx.fillStyle = '#ffd700'; ctx.textAlign = 'center';
+    ctx.fillText('⚔ ' + m.name, mx, by - 4);
+    pixelRect(bx - 1, by - 1, barW + 2, 11, '#500');
+    pixelRect(bx, by, barW, 9, '#300');
+    pixelRect(bx, by, Math.floor(barW * m.hp / m.maxHp), 9, '#e74c3c');
+    ctx.font = '9px Courier New'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+    ctx.fillText(m.hp.toLocaleString() + ' / ' + m.maxHp.toLocaleString(), mx, by + 8);
+  } else {
+    const barW = 50, bx = mx - 25;
+    const by   = (GROUND - ohVal) - 5;
+    pixelRect(bx, by, barW, 5, '#400');
+    pixelRect(bx, by, Math.floor(barW * m.hp / m.maxHp), 5, '#f44');
+    if (m.sk && MONSTER_SPRITES[m.sk]) {
+      ctx.font = '11px Courier New'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+      ctx.fillText(m.name, mx, by - 3);
+    }
   }
   ctx.globalAlpha = 1;
 }

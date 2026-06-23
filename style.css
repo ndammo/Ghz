@@ -1325,11 +1325,11 @@ html, body {
 .task-locked-lbl { font-size: 10px; color: #445; white-space: nowrap; }
 .task-timer-lbl  { font-size: 11px; color: #f5c542; white-space: nowrap; font-family: 'Courier New', monospace; }
 /* ═══════════════════════════════
-   BOSS — кнопка HUD
+   BOSS — кнопка HUD (под TASK)
    ═══════════════════════════════ */
 .boss-hud-btn {
   position: absolute; z-index: 52;
-  right: 8px; top: 182px;
+  right: 8px; top: 184px;
   width: 44px; height: 36px;
   border-radius: 8px;
   background: rgba(20,5,5,0.88);
@@ -1342,31 +1342,21 @@ html, body {
 .boss-hud-label { font-size: 7px; font-weight: bold; color: #e74c3c; letter-spacing: 0.5px; line-height: 1; font-family: 'Courier New', monospace; }
 
 /* ═══════════════════════════════
-   BOSS — модалка
+   BOSS — модалка победы
    ═══════════════════════════════ */
-.boss-modal {
-  position: fixed; inset: 0; z-index: 300;
-  background: rgba(0,0,0,0.85);
+.boss-victory-modal {
+  position: fixed; inset: 0; z-index: 400;
+  background: rgba(0,0,0,0.88);
   display: flex; align-items: center; justify-content: center;
-  padding: 16px;
+  padding: 20px;
 }
-.boss-modal.hidden { display: none; }
-.boss-modal-box {
+.boss-victory-modal.hidden { display: none; }
+.boss-victory-box {
   background: #0d0d1f;
-  border: 1.5px solid #e74c3c55;
+  border: 2px solid #ffd700;
   border-radius: 16px;
-  width: 100%; max-width: 360px;
-  max-height: 85vh;
-  overflow-y: auto;
-  box-shadow: 0 0 30px rgba(231,76,60,0.2);
+  width: 100%; max-width: 340px;
+  max-height: 80vh; overflow-y: auto;
+  padding: 20px;
+  box-shadow: 0 0 40px rgba(255,215,0,0.25);
 }
-.boss-modal-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 16px 10px;
-  border-bottom: 1px solid #2a2a5a;
-}
-.boss-modal-title {
-  font-size: 14px; font-weight: bold; color: #e74c3c;
-  font-family: 'Courier New', monospace; letter-spacing: 1px;
-}
-.boss-modal-body { padding: 16px; }

@@ -41,7 +41,7 @@ const G = {
   inventory: [],
   equipped: { weapon: null, armor: null, ring: null, boots: null, helmet: null },
   invFilter: 'all',
-  boss: { floor: 1, lastDate: '' }, // floor = текущий этаж босса (1-10), lastDate = дата последней попытки
+  boss: { floor: 1, lastFightTime: 0 }, // lastFightTime = timestamp победы (ms)
 };
 
 // Базовые статы — отдельно, чтобы пересчитывать после снятия предметов
