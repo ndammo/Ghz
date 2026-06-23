@@ -42,7 +42,8 @@
     lastServerTs: 0,
     serverConfirmed: false,
     currentTgId: null,
-    
+    rlBackoffUntil: 0,
+
     lastHp: 0,
     lastGold: 0,
     lastXp: 0,
@@ -52,6 +53,40 @@
 
   function num(v, d) { v = Number(v); return isFinite(v) ? v : d; }
   function clone(o) { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return Object.assign({}, o); } }
+
+  // ═══════════════════════════════
+  //  LOCALSTORAGE — резервная копия
+  //  Используется ТОЛЬКО если сервер недоступен при загрузке.
+  //  Сервер всегда имеет приоритет над localStorage.
+  // ═══════════════════════════════
+  var LS_KEY = 'pixrpg_save_v2';
+
+  function saveLocal() {
+    // Сохраняем при любом активном сеансе — и онлайн, и офлайн.
+    // saveLocal никогда не отправляет данные на сервер — только localStorage.
+    if (!SYNC.started) return;
+    try {
+      var snap = serializeState();
+      snap._savedAt = Date.now();
+      snap._offlineOnly = !SYNC.serverConfirmed; // маркер: данные не подтверждены сервером
+      localStorage.setItem(LS_KEY, JSON.stringify(snap));
+    } catch (e) {}
+  }
+
+  function loadLocal() {
+    try {
+      var raw = localStorage.getItem(LS_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      // Игнорируем снапшоты старше 30 дней
+      if (parsed && parsed._savedAt && (Date.now() - parsed._savedAt) > 30 * 24 * 3600 * 1000) return null;
+      return parsed;
+    } catch (e) { return null; }
+  }
+
+  function clearLocal() {
+    try { localStorage.removeItem(LS_KEY); } catch (e) {}
+  }
 
   function getTgId() {
     try {
@@ -317,6 +352,11 @@
     if (!SYNC.online || !SYNC.serverConfirmed || SYNC.pushing) {
       return;
     }
+
+    // Пауза при rate limit (429)
+    if (SYNC.rlBackoffUntil && Date.now() < SYNC.rlBackoffUntil) {
+      return;
+    }
     
     var currentHp = G.hp;
     var currentGold = G.gold;
@@ -356,6 +396,12 @@
           SYNC.lastKillCount = currentKillCount;
           SYNC.lastPotions = currentPotions;
           SYNC.lastServerTs = r.updatedAt || snap.updatedAt;
+          SYNC.rlBackoffUntil = 0;
+          saveLocal();
+        } else if (r && r.error === 'rate_limit') {
+          // Пауза 6 секунд при rate limit
+          SYNC.rlBackoffUntil = Date.now() + 6000;
+          console.warn('⚠️ [save] rate limit, пауза 6s');
         }
       })
       .catch(function () {})
@@ -364,6 +410,7 @@
 
   function saveInstant(data) {
     if (!SYNC.started || !SYNC.online) return;
+    saveLocal();
     serverSaveInstant(data).catch(function() {});
   }
 
@@ -375,7 +422,20 @@
 
   function flush() {
     if (!SYNC.started) return;
-    serverSaveBatch();
+    // Сначала сохраняем в localStorage (синхронно, всегда успевает)
+    saveLocal();
+    // Затем пробуем отправить на сервер с keepalive
+    if (!SYNC.online || !SYNC.serverConfirmed) return;
+    var snap = serializeState();
+    snap.updatedAt = Date.now();
+    try {
+      fetch(API + '/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData: TG_INIT, data: snap }),
+        keepalive: true,
+      });
+    } catch (e) {}
   }
 
   // ═══════════════════════════════
@@ -418,8 +478,11 @@
   // ═══════════════════════════════
 
   function startSyncLoops() {
-    // ⚡ КАЖДЫЕ 3 СЕКУНДЫ (вместо 5)
+    // ⚡ КАЖДЫЕ 3 СЕКУНДЫ — серверный батч-сейв
     SYNC.batchTimer = setInterval(serverSaveBatch, 3000);
+
+    // ⚡ КАЖДЫЕ 10 СЕКУНД — локальный бекап (работает и в офлайн-режиме)
+    setInterval(saveLocal, 10000);
 
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) flush();
@@ -502,6 +565,8 @@
 
       if (!r || !r.ok) {
         console.warn('⚠️ [serverLoad] ответ не ok:', r);
+        // Пробуем localStorage как запасной вариант
+        _tryBootFromLocal();
         return;
       }
 
@@ -510,6 +575,7 @@
 
       if (server && server.data && server.data.tgId && currentTgId && server.data.tgId !== currentTgId) {
         console.warn('⚠️ Сервер вернул данные другого пользователя, игнорируем');
+        _tryBootFromLocal();
         return;
       }
 
@@ -517,7 +583,7 @@
           typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
         SYNC.serverConfirmed = true;
         lsSetStatus('Применение данных', 85);
-        
+
         if (!SYNC.started) {
           bootFromSnapshot(server.data);
         } else {
@@ -529,10 +595,15 @@
           SYNC.serverConfirmed = false;
           resetToCharSelect();
         }
+        // Нет данных на сервере — localStorage тоже не используем,
+        // пользователь новый, показываем выбор персонажа
+        clearLocal();
       }
     }).catch(function (err) {
       clearTimeout(lsTimeout);
       console.error('❌ [boot] serverLoad ошибка:', err.message);
+      // Сервер недоступен — грузим из localStorage если есть
+      _tryBootFromLocal();
     }).then(function () {
       SYNC.booted = true;
       startSyncLoops();
@@ -541,6 +612,25 @@
       }
       lsHide();
     });
+  }
+
+  // Загрузка из localStorage когда сервер недоступен.
+  // НЕ устанавливает serverConfirmed — сохранение на сервер заблокировано.
+  function _tryBootFromLocal() {
+    if (SYNC.started) return; // уже загружено
+    var local = loadLocal();
+    if (!local || !local.charId) return;
+    // Проверяем что локальные данные принадлежат текущему пользователю
+    var currentTgId = getTgId();
+    if (local.tgId && currentTgId && local.tgId !== currentTgId) return;
+    console.warn('⚠️ [boot] Сервер недоступен, загружаем из localStorage');
+    lsSetStatus('Офлайн режим', 85);
+    if (applySnapshot(local)) {
+      hideCharSelect();
+      SYNC.started = true;
+      // serverConfirmed остаётся false — сейвы на сервер не пойдут
+      if (typeof startGame === 'function') startGame();
+    }
   }
 
   // ═══════════════════════════════
@@ -600,7 +690,7 @@
     var instantActions = [
       'equipItem', 'unequipItem', 'destroyItem', 'refineItem',
       'useSkillBook', 'buyBattlePass', 'claimBpReward', 'buyPrem',
-      'upgPotion', 'goToFloor'
+      'upgPotion', 'goToFloor', 'buyPotions'
     ];
     
     instantActions.forEach(function (name) {
@@ -682,15 +772,17 @@
   }
 
   window.GameSync = {
-    save:      serverSaveBatch,
-    flush:     flush,
-    touch:     touch,
-    serialize: serializeState,
-    apply:     applySnapshot,
-    state:     SYNC,
-    getTgId:   getTgId,
+    save:        serverSaveBatch,
+    flush:       flush,
+    touch:       touch,
+    serialize:   serializeState,
+    apply:       applySnapshot,
+    state:       SYNC,
+    getTgId:     getTgId,
     saveInstant: saveInstant,
-    _API:      API,
+    saveLocal:   saveLocal,
+    clearLocal:  clearLocal,
+    _API:        API,
     get _INIT() { return TG_INIT; },
   };
 })();

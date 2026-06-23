@@ -365,6 +365,7 @@ function gainXP(amount) {
     showDmgPop('LV UP!', W * 0.4, GROUND * 0.5, '#fa0');
     updateHUD();
   }
+  if (typeof window.onLevelUp === 'function') window.onLevelUp();
 }
 
 // ── Проверка открытия следующего этажа ──
@@ -379,6 +380,7 @@ function checkFloorUnlock() {
     document.getElementById('fuText').textContent = 'Этаж ' + next.n + ': ' + next.name + ' · Зайди через Этажи';
     fu.classList.remove('show'); void fu.offsetWidth; fu.classList.add('show');
     setTimeout(function() { fu.classList.remove('show'); }, 3500);
+    if (typeof window.onFloorChange === 'function') window.onFloorChange(G.maxFloor);
   }
 }
 
@@ -386,6 +388,7 @@ function checkFloorUnlock() {
 function gameOverSequence() {
   var penalty = Math.floor(G.gold * 0.05);
   G.gold = Math.max(0, G.gold - penalty);
+  updateHUD();   // триггерит debounced-сейв с актуальным gold
   var modal = document.getElementById('deathModal');
   var txt   = document.getElementById('deathPenaltyText');
   if (txt) {
@@ -507,7 +510,10 @@ function buyPotions(n) {
 }
 function savePotionThreshold(val) {
   var v = parseInt(val);
-  if (v >= 1 && v <= 99) G.potionThreshold = v;
+  if (v >= 1 && v <= 99) {
+    G.potionThreshold = v;
+    if (window.GameSync) window.GameSync.saveInstant({ potionThreshold: G.potionThreshold });
+  }
 }
 
 // ═══════════════════════════════

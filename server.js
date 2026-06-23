@@ -690,28 +690,29 @@ app.post('/api/wallet/exchange', async (req, res) => {
   }
   
   try {
-    const user = await Save.findOne({ tgId: tg.id });
-    if (!user) {
-      return res.status(404).json({ ok: false, error: 'user_not_found' });
-    }
-    
-    if (!user.data) user.data = { tgId: tg.id };
-    
-    const pixr = user.data.pixr || 0;
-    if (pixr < amount) {
+    const gramEarned = amount / 1000;
+
+    // Атомарно списываем PIXR и начисляем GRAM через $inc
+    // Условие 'data.pixr': { $gte: amount } гарантирует атомарную проверку баланса
+    const result = await Save.findOneAndUpdate(
+      { tgId: tg.id, 'data.pixr': { $gte: amount } },
+      {
+        $inc: {
+          'data.pixr': -amount,
+          'data.gram': gramEarned,
+        }
+      },
+      { new: true }
+    );
+
+    if (!result) {
       return res.status(400).json({ ok: false, error: 'Недостаточно PIXR' });
     }
-    
-    const gramEarned = amount / 1000;
-    
-    user.data.pixr = pixr - amount;
-    user.data.gram = (user.data.gram || 0) + gramEarned;
-    await user.save();
-    
-    res.json({ 
-      ok: true, 
-      pixr: user.data.pixr,
-      gram: user.data.gram,
+
+    res.json({
+      ok: true,
+      pixr: result.data.pixr,
+      gram: result.data.gram,
       earned: gramEarned
     });
   } catch (e) {
@@ -728,7 +729,7 @@ app.post('/api/wallet/exchange', async (req, res) => {
 // ── Конфиг админов ──
 const ADMIN_CREDENTIALS = {
   admin: {
-    password: 'pixel2024',
+    password: process.env.ADMIN_PASSWORD || 'pixel2024',
     role: 'superadmin'
   }
 };
@@ -801,13 +802,13 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
     if (action === 'approve') {
       tx.status = 'approved';
       tx.approvedAt = Date.now();
-      
-      const user = await Save.findOne({ tgId: tx.userId });
-      if (user) {
-        if (!user.data) user.data = { tgId: tx.userId };
-        user.data.gram = (user.data.gram || 0) + (tx.type === 'deposit' ? tx.amount : -tx.amount);
-        await user.save();
-      }
+
+      // Атомарно начисляем/списываем GRAM через $inc — не перезаписываем весь data
+      const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
+      await Save.findOneAndUpdate(
+        { tgId: tx.userId },
+        { $inc: { 'data.gram': gramDelta } }
+      );
     } else {
       tx.status = 'rejected';
       tx.rejectedAt = Date.now();
