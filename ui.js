@@ -713,6 +713,7 @@ function openDepositModal() {
 }
 
 function createDepositModal() {
+  const WALLET_ADDR = 'UQD5hiR-ziWL1r2jggCKxzhE7K7yNvH3FqnckOdXosVKYEfb';
   const html = `
     <div id="depositModal" class="wallet-modal hidden" onclick="closeWalletModal(event)">
       <div class="wallet-modal-content" onclick="event.stopPropagation()">
@@ -722,26 +723,37 @@ function createDepositModal() {
         </div>
         <div class="wallet-modal-body">
           <div class="wallet-info">
-            <div style="font-size:12px;color:#778;margin-bottom:4px;">Минимальная сумма: <b style="color:#40d0ff;">1 <img src="images/gram.png" style="width:12px;height:12px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"></b></div>
-            <div style="font-size:12px;color:#778;margin-bottom:12px;">Максимальная сумма: <b style="color:#40d0ff;">100 <img src="images/gram.png" style="width:12px;height:12px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"></b></div>
+            <div style="font-size:12px;color:#778;margin-bottom:12px;">Минимальная сумма: <b style="color:#40d0ff;">1 <img src="images/gram.png" style="width:12px;height:12px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"></b></div>
           </div>
-          
+
           <div style="margin-bottom:12px;">
             <label style="font-size:11px;color:#778;">Сумма (<img src="images/gram.png" style="width:11px;height:11px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">)</label>
-            <input id="depositAmount" type="number" min="1" max="100" value="1" 
+            <input id="depositAmount" type="number" min="1" value="1"
               style="width:100%;padding:10px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:8px;color:#fff;font-size:16px;font-family:'Courier New',monospace;margin-top:4px;">
           </div>
-          
+
           <div style="background:rgba(64,208,255,0.06);border:1px solid #2a4a6a;border-radius:8px;padding:12px;margin-bottom:12px;">
-            <div style="font-size:10px;color:#556;margin-bottom:4px;">РЕКВИЗИТЫ ДЛЯ ПЕРЕВОДА</div>
-            <div style="font-size:11px;color:#ddd;word-break:break-all;background:#0a0a1a;padding:8px;border-radius:4px;font-family:monospace;">
-              UQD5hiR-ziWL1r2jggCKxzhE7K7yNvH3FqnckOdXosVKYEfb
+            <div style="font-size:10px;color:#556;margin-bottom:8px;letter-spacing:1px;">РЕКВИЗИТЫ ДЛЯ ПЕРЕВОДА</div>
+
+            <div style="font-size:10px;color:#778;margin-bottom:4px;">Адрес кошелька</div>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">
+              <div id="depositWalletAddr" style="flex:1;font-size:11px;color:#ddd;word-break:break-all;background:#0a0a1a;padding:8px;border-radius:6px;font-family:monospace;">${WALLET_ADDR}</div>
+              <button onclick="_copyDepositField('depositWalletAddr','addrCopyBtn')" id="addrCopyBtn"
+                style="flex-shrink:0;padding:8px 10px;background:rgba(64,208,255,0.12);border:1.5px solid #2a4a6a;border-radius:6px;color:#40d0ff;font-size:11px;font-family:'Courier New',monospace;cursor:pointer;white-space:nowrap;">
+                📋 Копировать
+              </button>
             </div>
-            <div style="margin-top:6px;font-size:10px;color:#556;">
-              📌 <b>Мемо:</b> <span id="depositMemo" style="color:#40d0ff;">загружается...</span>
+
+            <div style="font-size:10px;color:#778;margin-bottom:4px;">Мемо (обязательно!)</div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <div id="depositMemo" style="flex:1;font-size:11px;color:#40d0ff;background:#0a0a1a;padding:8px;border-radius:6px;font-family:monospace;">загружается...</div>
+              <button onclick="_copyDepositField('depositMemo','memoCopyBtn')" id="memoCopyBtn"
+                style="flex-shrink:0;padding:8px 10px;background:rgba(64,208,255,0.12);border:1.5px solid #2a4a6a;border-radius:6px;color:#40d0ff;font-size:11px;font-family:'Courier New',monospace;cursor:pointer;white-space:nowrap;">
+                📋 Копировать
+              </button>
             </div>
           </div>
-          
+
           <button onclick="submitDeposit()" style="width:100%;padding:12px;background:linear-gradient(90deg,#1a5a3a,#2a8a4a);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
             ✅ Я оплатил
           </button>
@@ -750,14 +762,51 @@ function createDepositModal() {
       </div>
     </div>
   `;
-  
+
   const div = document.createElement('div');
   div.innerHTML = html;
   document.getElementById('app').appendChild(div.firstElementChild);
-  
-  // Генерируем мемо
+
   var tgId = window.GameSync ? window.GameSync.getTgId() : 'user';
   document.getElementById('depositMemo').textContent = tgId + '_' + Date.now().toString(36);
+}
+
+// ── Копирование поля реквизитов ──
+function _copyDepositField(fieldId, btnId) {
+  var el  = document.getElementById(fieldId);
+  var btn = document.getElementById(btnId);
+  if (!el || !btn) return;
+  var text = el.textContent.trim();
+  var done = function() {
+    btn.textContent = '✅ Скопировано';
+    btn.style.color = '#2ecc71';
+    btn.style.borderColor = '#2ecc71';
+    btn.style.background = 'rgba(46,204,113,0.12)';
+    setTimeout(function() {
+      btn.textContent = '📋 Копировать';
+      btn.style.color = '#40d0ff';
+      btn.style.borderColor = '#2a4a6a';
+      btn.style.background = 'rgba(64,208,255,0.12)';
+    }, 2000);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(function() { _copyFallback(text, done); });
+  } else {
+    _copyFallback(text, done);
+  }
+}
+
+function _copyFallback(text, cb) {
+  try {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (cb) cb();
+  } catch(e) {}
 }
 
 function openWithdrawModal() {

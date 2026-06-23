@@ -131,7 +131,6 @@ const SpecialTask = mongoose.model('SpecialTask', SpecialTaskSchema);
 const WALLET_CONFIG = {
   address: 'UQD5hiR-ziWL1r2jggCKxzhE7K7yNvH3FqnckOdXosVKYEfb',
   minAmount: 1,
-  maxAmount: 100
 };
 
 // ═══════════════════════════════
@@ -690,10 +689,10 @@ app.post('/api/wallet/deposit', async (req, res) => {
   
   const { amount } = req.body;
   
-  if (!amount || amount < WALLET_CONFIG.minAmount || amount > WALLET_CONFIG.maxAmount) {
+  if (!amount || amount < WALLET_CONFIG.minAmount) {
     return res.status(400).json({ 
       ok: false, 
-      error: `Сумма должна быть от ${WALLET_CONFIG.minAmount} до ${WALLET_CONFIG.maxAmount} GRAM` 
+      error: `Минимальная сумма ${WALLET_CONFIG.minAmount} GRAM` 
     });
   }
   
@@ -770,10 +769,10 @@ app.post('/api/wallet/withdraw', async (req, res) => {
   
   const { amount, wallet } = req.body;
   
-  if (!amount || amount < WALLET_CONFIG.minAmount || amount > WALLET_CONFIG.maxAmount) {
+  if (!amount || amount < WALLET_CONFIG.minAmount) {
     return res.status(400).json({ 
       ok: false, 
-      error: `Сумма должна быть от ${WALLET_CONFIG.minAmount} до ${WALLET_CONFIG.maxAmount} GRAM` 
+      error: `Минимальная сумма ${WALLET_CONFIG.minAmount} GRAM` 
     });
   }
   
