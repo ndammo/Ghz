@@ -1216,3 +1216,19 @@ html, body {
     max-width: 420px;
   }
 }
+/* ═══════════════════════════════
+   TASK — кнопка HUD (под VIP)
+   ═══════════════════════════════ */
+.task-hud-btn {
+  position: absolute; z-index: 52;
+  right: 8px; top: 140px;
+  width: 44px; height: 36px;
+  border-radius: 8px;
+  background: rgba(5,20,10,0.88);
+  border: 1.5px solid rgba(46,204,113,0.5);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; cursor: pointer;
+  box-shadow: 0 0 10px rgba(46,204,113,0.2);
+}
+.task-hud-btn:active { transform: scale(0.9); }
+.task-hud-label { font-size: 7px; font-weight: bold; color: #2ecc71; letter-spacing: 0.5px; line-height: 1; font-family: 'Courier New', monospace; }
