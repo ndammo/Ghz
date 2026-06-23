@@ -705,4 +705,280 @@ body {
       .then(function(r) {
         var list = document.getElementById('referralsList');
         if (!r.ok || !r.referrals || r.referrals.length === 0) {
-          list.innerHTML = '<span
+          list.innerHTML = '<span style="color:#445;">Нет рефералов</span>';
+          return;
+        }
+        
+        var html = '';
+        r.referrals.forEach(function(ref) {
+          html += '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #0a0a1a;font-size:10px;">' +
+            '<span style="color:#ddd;">' + ref.username + '</span>' +
+            '<span style="color:#f5c542;">Lv.' + ref.level + '</span>' +
+            '<span style="color:#7ab8ff;">' + ref.cp + ' CP</span>' +
+            '</div>';
+        });
+        list.innerHTML = html;
+      })
+      .catch(function() {
+        document.getElementById('referralsList').innerHTML = '<span style="color:#e74c3c;">Ошибка загрузки</span>';
+      });
+  }
+
+  // ── ЗАГРУЗКА СПИСКА ПРЕДМЕТОВ ──
+  function loadItemsList() {
+    if (!SESSION) return;
+    
+    fetch(API + '/admin/api/items/list?session=' + SESSION)
+      .then(function(r) { return r.json(); })
+      .then(function(r) {
+        var select = document.getElementById('itemSelect');
+        if (!r.ok || !r.items) {
+          select.innerHTML = '<option value="">Нет предметов</option>';
+          return;
+        }
+        
+        var html = '<option value="">Выберите предмет...</option>';
+        r.items.forEach(function(item) {
+          var label = item.name + ' (' + item.slot + ')';
+          if (item.forClass) label += ' [' + item.classLabel + ']';
+          html += '<option value="' + JSON.stringify(item).replace(/"/g, '&quot;') + '">' + label + '</option>';
+        });
+        select.innerHTML = html;
+      });
+  }
+
+  // ── ВЫДАЧА ПРЕДМЕТА ──
+  function giveItem() {
+    if (!SESSION || !currentUserTgId) return;
+    
+    var select = document.getElementById('itemSelect');
+    var rarity = document.getElementById('itemRarity').value;
+    var level = parseInt(document.getElementById('itemLevel').value) || 1;
+    var result = document.getElementById('giveResult');
+    
+    if (!select.value) {
+      result.innerHTML = '<span style="color:#e74c3c;">Выберите предмет</span>';
+      return;
+    }
+    
+    var itemData = JSON.parse(select.value);
+    
+    var stats = {};
+    if (itemData.stats) {
+      itemData.stats.forEach(function(s) {
+        var base = level * 2.5;
+        var mult = 1 + ['common','uncommon','rare','epic','legend'].indexOf(rarity) * 0.55;
+        var isPrimary = (s === itemData.primary);
+        stats[s] = Math.floor(base * mult * (isPrimary ? 1.0 : 0.45) * (0.85 + Math.random() * 0.3));
+        if (stats[s] < 1) stats[s] = 1;
+      });
+    }
+    
+    var payload = {
+      slot: itemData.slot,
+      name: itemData.name,
+      rarity: rarity,
+      level: level,
+      stats: stats,
+      icon: 'images/ac.png'
+    };
+    
+    if (itemData.forClass) payload.forClass = itemData.forClass;
+    
+    result.innerHTML = '<span style="color:#f5c542;">Отправка...</span>';
+    
+    fetch(API + '/admin/api/user/' + currentUserTgId + '/give-item?session=' + SESSION, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (r.ok) {
+        result.innerHTML = '<span style="color:#2ecc71;">✅ Выдано: ' + itemData.name + '</span>';
+        // Обновляем модалку
+        openUser(currentUserTgId);
+      } else {
+        result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (r.error || 'Ошибка') + '</span>';
+      }
+    })
+    .catch(function() {
+      result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка соединения</span>';
+    });
+  }
+
+  window.giveItem = giveItem;
+
+  // ── Обновление пользователя ──
+  function updateUser(field) {
+    if (!SESSION || !currentUserTgId) return;
+    
+    var inputMap = {
+      gold: 'editGold',
+      pixr: 'editPixr',
+      gram: 'editGram',
+      level: 'editLevel',
+      floor: 'editFloor'
+    };
+    
+    var el = document.getElementById(inputMap[field]);
+    if (!el) return;
+    
+    var value = parseFloat(el.value);
+    if (isNaN(value) || value < 0) return;
+    
+    var updates = {};
+    updates[field] = value;
+    
+    fetch(API + '/admin/api/user/' + currentUserTgId + '/update?session=' + SESSION, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (r.ok) {
+        el.value = '';
+        openUser(currentUserTgId);
+        loadUsers(currentPage);
+      }
+    });
+  }
+
+  window.updateUser = updateUser;
+
+  // ═══════════════════════════════
+  //  ЭКОНОМИКА
+  // ═══════════════════════════════
+
+  function loadEconomy() {
+    if (!SESSION) return;
+    
+    fetch(API + '/admin/api/users?session=' + SESSION + '&limit=50')
+      .then(function(r) { return r.json(); })
+      .then(function(r) {
+        if (!r.ok) return;
+        
+        var users = r.users || [];
+        
+        // Топ по золоту
+        var goldSorted = users.slice().sort(function(a, b) {
+          return (b.data && b.data.gold || 0) - (a.data && a.data.gold || 0);
+        }).slice(0, 10);
+        
+        var goldHtml = '';
+        goldSorted.forEach(function(u, i) {
+          goldHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #0a0a1a;font-size:12px;">' +
+            '<span>' + (i+1) + '. ' + (u.firstName || u.username || 'Игрок') + '</span>' +
+            '<span style="color:#f5c542;">' + (u.data && u.data.gold || 0) + ' 💰</span>' +
+            '</div>';
+        });
+        document.getElementById('topGold').innerHTML = goldHtml || '<div style="color:#445;padding:10px 0;">Нет данных</div>';
+        
+        // Топ по PIXR
+        var pixrSorted = users.slice().sort(function(a, b) {
+          return (b.data && b.data.pixr || 0) - (a.data && a.data.pixr || 0);
+        }).slice(0, 10);
+        
+        var pixrHtml = '';
+        pixrSorted.forEach(function(u, i) {
+          pixrHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #0a0a1a;font-size:12px;">' +
+            '<span>' + (i+1) + '. ' + (u.firstName || u.username || 'Игрок') + '</span>' +
+            '<span style="color:#ff44cc;">' + (u.data && u.data.pixr || 0) + ' 💎</span>' +
+            '</div>';
+        });
+        document.getElementById('topPixr').innerHTML = pixrHtml || '<div style="color:#445;padding:10px 0;">Нет данных</div>';
+        
+        // Топ по GRAM
+        var gramSorted = users.slice().sort(function(a, b) {
+          return (b.data && b.data.gram || 0) - (a.data && a.data.gram || 0);
+        }).slice(0, 10);
+        
+        var gramHtml = '';
+        gramSorted.forEach(function(u, i) {
+          gramHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #0a0a1a;font-size:12px;">' +
+            '<span>' + (i+1) + '. ' + (u.firstName || u.username || 'Игрок') + '</span>' +
+            '<span style="color:#40d0ff;">' + (u.data && u.data.gram || 0) + ' ⭐</span>' +
+            '</div>';
+        });
+        document.getElementById('topGram').innerHTML = gramHtml || '<div style="color:#445;padding:10px 0;">Нет данных</div>';
+      });
+  }
+
+  // ═══════════════════════════════
+  //  РАССЫЛКА
+  // ═══════════════════════════════
+
+  function sendBroadcast() {
+    if (!SESSION) return;
+    
+    var message = document.getElementById('broadcastMessage').value.trim();
+    var target = document.getElementById('broadcastTarget').value;
+    var result = document.getElementById('broadcastResult');
+    
+    if (!message) {
+      result.innerHTML = '<div style="color:#e74c3c;margin-top:8px;">Введите сообщение</div>';
+      return;
+    }
+    
+    result.innerHTML = '<div style="color:#f5c542;margin-top:8px;">Отправка...</div>';
+    
+    fetch(API + '/admin/api/broadcast?session=' + SESSION, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, target })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (r.ok) {
+        result.innerHTML = '<div style="color:#2ecc71;margin-top:8px;">✅ Отправлено ' + (r.sent || 0) + ' пользователям</div>';
+        document.getElementById('broadcastMessage').value = '';
+      } else {
+        result.innerHTML = '<div style="color:#e74c3c;margin-top:8px;">❌ Ошибка: ' + (r.error || '') + '</div>';
+      }
+    })
+    .catch(function() {
+      result.innerHTML = '<div style="color:#e74c3c;margin-top:8px;">❌ Ошибка соединения</div>';
+    });
+  }
+
+  window.sendBroadcast = sendBroadcast;
+
+  // ═══════════════════════════════
+  //  ЛОГИ
+  // ═══════════════════════════════
+
+  function loadLogs() {
+    if (!SESSION) return;
+    
+    fetch(API + '/admin/api/logs?session=' + SESSION)
+      .then(function(r) { return r.json(); })
+      .then(function(r) {
+        if (!r.ok) return;
+        
+        var html = '';
+        (r.logs || []).forEach(function(log) {
+          var time = new Date(log.timestamp).toLocaleString();
+          html += '<div class="log-row">' +
+            '<span class="log-time">' + time + '</span> ' +
+            '<span class="log-admin">' + log.admin + '</span> ' +
+            '<span class="log-action">' + log.action + '</span> ' +
+            (log.target ? '<span class="log-target">→ ' + log.target + '</span>' : '') +
+            '</div>';
+        });
+        
+        document.getElementById('logsList').innerHTML = html || '<div style="color:#445;padding:20px 0;text-align:center;">Логов пока нет</div>';
+      });
+  }
+
+  // ═══════════════════════════════
+  //  ЗАПУСК
+  // ═══════════════════════════════
+
+  checkSession();
+
+})();
+</script>
+
+</body>
+</html>
