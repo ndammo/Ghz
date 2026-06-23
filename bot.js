@@ -240,20 +240,35 @@ greeting + '\n\n' +
           .then(function(r) { return r.json(); })
           .then(function(result) {
             if (result.ok) {
-              var statusText = action === 'approve' ? '✅ Подтверждено' : '❌ Отклонено';
-              // Редактируем сообщение — убираем кнопки, добавляем статус
+              var isApprove = action === 'approve';
+              var statusLine = isApprove
+                ? '✅ *Подтверждено*'
+                : '❌ *Отклонено*';
+
+              // Редактируем текст + меняем кнопки: показываем статус вместо действий
               bot.editMessageText(
-                query.message.text + '\n\n📌 *Статус:* ' + statusText,
+                query.message.text + '\n\n📌 Статус: ' + statusLine,
                 {
                   chat_id: query.message.chat.id,
                   message_id: query.message.message_id,
-                  parse_mode: 'Markdown'
+                  parse_mode: 'Markdown',
+                  reply_markup: {
+                    inline_keyboard: [
+                      [
+                        {
+                          text: isApprove ? '✅ Подтверждено' : '❌ Отклонено',
+                          callback_data: 'done_' + txId
+                        }
+                      ]
+                    ]
+                  }
                 }
               ).catch(function() {});
 
               bot.answerCallbackQuery(query.id, {
-                text: '✅ Транзакция ' + (action === 'approve' ? 'подтверждена' : 'отклонена')
+                text: isApprove ? '✅ Транзакция подтверждена' : '❌ Транзакция отклонена'
               }).catch(function(){});
+
             } else {
               var errText = result.error === 'already_processed'
                 ? '⚠️ Уже обработана'
@@ -265,6 +280,13 @@ greeting + '\n\n' +
             console.error('❌ [bot] Ошибка обработки транзакции:', err.message);
             bot.answerCallbackQuery(query.id, { text: '❌ Ошибка сервера' }).catch(function(){});
           });
+          return;
+        }
+
+        // ── Нажатие на кнопку статуса (done_) — ничего не делаем ──
+        if (data.startsWith('done_')) {
+          bot.answerCallbackQuery(query.id, { text: 'Транзакция уже обработана' }).catch(function(){});
+          return;
         }
       } catch (e) {
         console.error('❌ [bot] Callback error:', e.message);
