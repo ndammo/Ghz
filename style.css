@@ -1324,3 +1324,49 @@ html, body {
 .task-done-lbl   { font-size: 14px; color: #2ecc71; }
 .task-locked-lbl { font-size: 10px; color: #445; white-space: nowrap; }
 .task-timer-lbl  { font-size: 11px; color: #f5c542; white-space: nowrap; font-family: 'Courier New', monospace; }
+/* ═══════════════════════════════
+   BOSS — кнопка HUD
+   ═══════════════════════════════ */
+.boss-hud-btn {
+  position: absolute; z-index: 52;
+  right: 8px; top: 182px;
+  width: 44px; height: 36px;
+  border-radius: 8px;
+  background: rgba(20,5,5,0.88);
+  border: 1.5px solid rgba(231,76,60,0.6);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; cursor: pointer;
+  box-shadow: 0 0 10px rgba(231,76,60,0.3);
+}
+.boss-hud-btn:active { transform: scale(0.9); }
+.boss-hud-label { font-size: 7px; font-weight: bold; color: #e74c3c; letter-spacing: 0.5px; line-height: 1; font-family: 'Courier New', monospace; }
+
+/* ═══════════════════════════════
+   BOSS — модалка
+   ═══════════════════════════════ */
+.boss-modal {
+  position: fixed; inset: 0; z-index: 300;
+  background: rgba(0,0,0,0.85);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+.boss-modal.hidden { display: none; }
+.boss-modal-box {
+  background: #0d0d1f;
+  border: 1.5px solid #e74c3c55;
+  border-radius: 16px;
+  width: 100%; max-width: 360px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 0 30px rgba(231,76,60,0.2);
+}
+.boss-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid #2a2a5a;
+}
+.boss-modal-title {
+  font-size: 14px; font-weight: bold; color: #e74c3c;
+  font-family: 'Courier New', monospace; letter-spacing: 1px;
+}
+.boss-modal-body { padding: 16px; }

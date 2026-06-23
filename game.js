@@ -390,7 +390,22 @@ function checkFloorUnlock() {
 function gameOverSequence() {
   var penalty = Math.floor(G.gold * 0.05);
   G.gold = Math.max(0, G.gold - penalty);
-  updateHUD();   // триггерит debounced-сейв с актуальным gold
+  updateHUD();
+
+  // Если умер во время боя с боссом — откат на предыдущий этаж босса
+  if (window._bossActive) {
+    window._bossActive = false;
+    if (G.boss.floor > 1) {
+      G.boss.floor--;
+      if (window.GameSync) window.GameSync.saveInstant({ boss: G.boss });
+    }
+    var modal = document.getElementById('deathModal');
+    var txt   = document.getElementById('deathPenaltyText');
+    if (txt) txt.textContent = 'Босс победил! Откат на этаж ' + G.boss.floor;
+    if (modal) modal.classList.remove('hidden');
+    return;
+  }
+
   var modal = document.getElementById('deathModal');
   var txt   = document.getElementById('deathPenaltyText');
   if (txt) {
@@ -399,6 +414,307 @@ function gameOverSequence() {
       : 'Вы погибли в бою';
   }
   if (modal) modal.classList.remove('hidden');
+}
+
+// ═══════════════════════════════
+//  СИСТЕМА БОССОВ
+// ═══════════════════════════════
+const BOSS_DEFS = [
+  { id: 1,  name: 'Король гоблинов',  emoji: '👺', cpReq: 0,    color: '#3a3' },
+  { id: 2,  name: 'Ледяной титан',    emoji: '🧊', cpReq: 500,  color: '#4af' },
+  { id: 3,  name: 'Демон огня',       emoji: '😈', cpReq: 1200, color: '#f44' },
+  { id: 4,  name: 'Повелитель теней', emoji: '👻', cpReq: 2500, color: '#a4f' },
+  { id: 5,  name: 'Дракон хаоса',     emoji: '🐉', cpReq: 4500, color: '#f80' },
+  { id: 6,  name: 'Архилич',          emoji: '☠️', cpReq: 8000, color: '#88f' },
+  { id: 7,  name: 'Зомби-лорд',       emoji: '🧟', cpReq: 14000,color: '#5a3' },
+  { id: 8,  name: 'Адский страж',     emoji: '😈', cpReq: 25000,color: '#f22' },
+  { id: 9,  name: 'Бог разрушения',   emoji: '👹', cpReq: 45000,color: '#ff4' },
+  { id: 10, name: 'Тёмный властелин', emoji: '👑', cpReq: 80000,color: '#ffd700' },
+];
+
+// Статы босса: каждый следующий в 2 раза сильнее
+function getBossStats(bossId) {
+  var base = { hp: 1000, atk: 30 };
+  var mult = Math.pow(2, bossId - 1);
+  return {
+    hp:  Math.floor(base.hp  * mult),
+    atk: Math.floor(base.atk * mult),
+  };
+}
+
+// Награды с босса
+function getBossReward(bossId) {
+  var pixr  = Math.min(5, 1 + Math.floor((bossId - 1) / 2)); // 1→1, 3→2, 5→3, 7→4, 9→5
+  pixr = Math.max(1, pixr) * Math.pow(2, bossId - 1);        // каждый босс х2
+  pixr = Math.min(Math.floor(pixr), 160);                     // cap
+  var gold  = 1000 * Math.pow(2, bossId - 1);
+  var xp    = 500  * Math.pow(2, bossId - 1);
+  // Случайный предмет (оружие или броня) на уровне boss*2
+  var slots = ['weapon','body','helmet','ring','boots'];
+  var slot  = slots[Math.floor(Math.random() * slots.length)];
+  var rarities = ['common','uncommon','rare','epic','legend'];
+  var rarIdx = Math.min(bossId - 1, rarities.length - 1);
+  var rarity = rarities[rarIdx];
+  var itemLv = bossId * 2;
+  var mult   = 1 + rarIdx * 0.55;
+  var base   = itemLv * 2.5;
+  var stats  = {};
+  if (slot === 'weapon') {
+    stats.atk  = Math.floor(base * mult * 1.0);
+    stats.crit = Math.floor(base * mult * 0.45);
+  } else if (slot === 'body' || slot === 'helmet') {
+    stats.def = Math.floor(base * mult * 1.0);
+    stats.hp  = Math.floor(base * mult * 0.45);
+  } else if (slot === 'ring') {
+    stats.crit = Math.floor(base * mult * 1.0);
+    stats.atk  = Math.floor(base * mult * 0.45);
+  } else {
+    stats.spd   = Math.floor(base * mult * 1.0);
+    stats.dodge = Math.floor(base * mult * 0.45);
+  }
+  var item = {
+    id: ++_invIdCounter, slot: slot,
+    name: 'Трофей босса ' + bossId,
+    icon: itemIcon(slot, rarity, null),
+    rarity: rarity, level: itemLv, stats: stats,
+    forClass: null, classLabel: null, classColor: null,
+  };
+  return { pixr: Math.floor(pixr), gold: Math.floor(gold), xp: Math.floor(xp), item: item };
+}
+
+// Состояние симуляции боя с боссом
+var _bossActive  = false;
+var _bossCurrent = null; // { ...BOSS_DEF, hp, maxHp, atk }
+var _bossFightTimer = 0;
+var _bossFightInterval = null;
+
+function startBossFight(bossId) {
+  var def = BOSS_DEFS[bossId - 1];
+  var st  = getBossStats(bossId);
+  _bossCurrent = Object.assign({}, def, { hp: st.hp, maxHp: st.hp, atk: st.atk });
+  _bossActive  = true;
+  _bossFightTimer = 0;
+
+  // Обновляем UI
+  _bossUpdateFightUI();
+
+  // Тик боя каждые 1 сек
+  if (_bossFightInterval) clearInterval(_bossFightInterval);
+  _bossFightInterval = setInterval(_bossFightTick, 1000);
+}
+
+function _bossFightTick() {
+  if (!_bossActive || !_bossCurrent) { clearInterval(_bossFightInterval); return; }
+
+  var playerAtk = Math.max(1, Math.floor(G.stats.atk * (0.9 + Math.random() * 0.2)));
+  var bossAtk   = Math.max(1, Math.floor(_bossCurrent.atk * (0.8 + Math.random() * 0.4)));
+  var dodge     = Math.random() * 100 < G.stats.dodge;
+
+  // Игрок атакует босса
+  _bossCurrent.hp = Math.max(0, _bossCurrent.hp - playerAtk);
+
+  // Босс атакует игрока (если не уклонился)
+  if (!dodge) {
+    var def = Math.floor(G.stats.def * 0.4);
+    var dmg = Math.max(1, bossAtk - def);
+    G.hp = Math.max(0, G.hp - dmg);
+    updateHUD();
+  }
+
+  _bossUpdateFightUI();
+
+  // Победа
+  if (_bossCurrent.hp <= 0) {
+    clearInterval(_bossFightInterval);
+    _bossActive = false;
+    _bossFightEnd(true);
+    return;
+  }
+
+  // Поражение
+  if (G.hp <= 0) {
+    clearInterval(_bossFightInterval);
+    _bossActive = true; // флаг для gameOverSequence
+    player.state = 'dead';
+    gameOverSequence();
+    return;
+  }
+}
+
+function _bossUpdateFightUI() {
+  var hpPct = _bossCurrent ? Math.max(0, _bossCurrent.hp / _bossCurrent.maxHp * 100) : 0;
+  var el = document.getElementById('bossHpBar');
+  if (el) el.style.width = hpPct + '%';
+  var el2 = document.getElementById('bossHpText');
+  if (el2) el2.textContent = (_bossCurrent ? _bossCurrent.hp : 0) + ' / ' + (_bossCurrent ? _bossCurrent.maxHp : 0);
+  var el3 = document.getElementById('bossPlayerHp');
+  if (el3) el3.textContent = G.hp + ' / ' + G.maxHp;
+}
+
+function _bossFightEnd(win) {
+  if (win) {
+    var reward = getBossReward(_bossCurrent.id);
+    // Начисляем награды
+    G.pixr  = (G.pixr  || 0) + reward.pixr;
+    G.gold  = (G.gold  || 0) + reward.gold;
+    gainXP(reward.xp);
+    if (G.inventory.length < 40) G.inventory.push(reward.item);
+
+    // Повышаем этаж босса
+    if (G.boss.floor < 10) G.boss.floor++;
+    G.boss.lastDate = new Date().toISOString().slice(0, 10);
+    if (window.GameSync) window.GameSync.saveInstant({ boss: G.boss, pixr: G.pixr, gold: G.gold });
+    updateHUD();
+
+    // Показываем модалку победы
+    _bossShowVictory(reward);
+  }
+}
+
+function _bossShowVictory(reward) {
+  var modal = document.getElementById('bossVictoryModal');
+  if (!modal) return;
+  var r = RARITIES.find(function(x) { return x.id === reward.item.rarity; }) || { color: '#aaa', name: 'Обычный' };
+  document.getElementById('bossVictoryContent').innerHTML =
+    '<div style="font-size:36px;margin-bottom:8px;">🏆</div>' +
+    '<div style="font-size:20px;font-weight:bold;color:#ffd700;margin-bottom:4px;">ПОБЕДА!</div>' +
+    '<div style="font-size:13px;color:#aaa;margin-bottom:16px;">Босс ' + _bossCurrent.id + ': ' + _bossCurrent.name + '</div>' +
+    '<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:14px;margin-bottom:14px;">' +
+      '<div style="font-size:11px;color:#778;letter-spacing:1px;margin-bottom:10px;">НАГРАДЫ</div>' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+        '<img src="images/pixr.png" style="width:20px;height:20px;image-rendering:pixelated"> ' +
+        '<span style="color:#ff44cc;font-size:15px;font-weight:bold;">+' + reward.pixr + ' PIXR</span>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+        '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>' +
+        '<span style="color:#f5c542;font-size:15px;font-weight:bold;">+' + reward.gold.toLocaleString() + ' золота</span>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+        '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="4" y="0" width="2" height="3" fill="#9b59b6"/><rect x="0" y="3" width="10" height="2" fill="#9b59b6"/><rect x="1" y="2" width="2" height="2" fill="#9b59b6"/><rect x="7" y="2" width="2" height="2" fill="#9b59b6"/><rect x="2" y="5" width="2" height="4" fill="#9b59b6"/><rect x="6" y="5" width="2" height="4" fill="#9b59b6"/><rect x="4" y="6" width="2" height="2" fill="#9b59b6"/></svg>' +
+        '<span style="color:#a78bfa;font-size:15px;font-weight:bold;">+' + reward.xp.toLocaleString() + ' XP</span>' +
+      '</div>' +
+      '<div style="margin-top:10px;border-top:1px solid #2a2a5a;padding-top:10px;display:flex;align-items:center;gap:10px;">' +
+        '<img src="' + reward.item.icon + '" style="width:36px;height:36px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.3">' +
+        '<div>' +
+          '<div style="font-size:13px;font-weight:bold;color:' + r.color + ';">' + reward.item.name + '</div>' +
+          '<div style="font-size:10px;color:#778;">Lv.' + reward.item.level + ' · ' + r.name + '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<button onclick="closeBossVictoryModal()" style="width:100%;padding:12px;background:linear-gradient(90deg,#1a3a6a,#2a5aaa);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;font-family:\'Courier New\',monospace;">Забрать</button>';
+  modal.classList.remove('hidden');
+}
+
+function closeBossVictoryModal() {
+  var modal = document.getElementById('bossVictoryModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function openBossModal() {
+  renderBossModal();
+  document.getElementById('bossModal').classList.remove('hidden');
+}
+
+function closeBossModal() {
+  document.getElementById('bossModal').classList.add('hidden');
+}
+
+function renderBossModal() {
+  var cp      = calcCP();
+  var today   = new Date().toISOString().slice(0, 10);
+  var boss    = G.boss || { floor: 1, lastDate: '' };
+  var canFight = boss.lastDate !== today;
+  var bossId  = Math.max(1, Math.min(boss.floor, 10));
+  var def     = BOSS_DEFS[bossId - 1];
+  var st      = getBossStats(bossId);
+  var reward  = getBossReward(bossId);
+  var hasCP   = cp >= def.cpReq;
+
+  // Следующий босс для прогресса
+  var nextDef = bossId < 10 ? BOSS_DEFS[bossId] : null;
+
+  var html =
+    '<div style="text-align:center;padding:8px 0 16px;">' +
+      '<div style="font-size:48px;line-height:1;margin-bottom:6px;">' + def.emoji + '</div>' +
+      '<div style="font-size:18px;font-weight:bold;color:' + def.color + ';">' + def.name + '</div>' +
+      '<div style="font-size:11px;color:#778;margin-top:2px;">Босс ' + bossId + ' / 10</div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">' +
+      '<div style="padding:10px;background:rgba(255,255,255,0.04);border:1px solid #2a2a5a;border-radius:8px;text-align:center;">' +
+        '<div style="font-size:9px;color:#778;margin-bottom:4px;">HP БОССА</div>' +
+        '<div style="font-size:16px;font-weight:bold;color:#e74c3c;">' + st.hp.toLocaleString() + '</div>' +
+      '</div>' +
+      '<div style="padding:10px;background:rgba(255,255,255,0.04);border:1px solid #2a2a5a;border-radius:8px;text-align:center;">' +
+        '<div style="font-size:9px;color:#778;margin-bottom:4px;">УРОН</div>' +
+        '<div style="font-size:16px;font-weight:bold;color:#e74c3c;">' + st.atk + '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div style="background:rgba(255,68,204,0.06);border:1px solid #4a2a5a;border-radius:8px;padding:10px;margin-bottom:12px;">' +
+      '<div style="font-size:9px;color:#778;letter-spacing:1px;margin-bottom:6px;">НАГРАДЫ ЗА ПОБЕДУ</div>' +
+      '<div style="font-size:12px;color:#ff44cc;">📦 ' + reward.pixr + ' PIXR · ' +
+        '<span style="color:#f5c542;">' + reward.gold.toLocaleString() + ' золота</span> · ' +
+        '<span style="color:#a78bfa;">' + reward.xp.toLocaleString() + ' XP</span></div>' +
+      '<div style="font-size:10px;color:#778;margin-top:4px;">+ случайный предмет (' + ['Обычный','Необычный','Редкий','Эпический','Легендарный'][Math.min(bossId-1,4)] + ')</div>' +
+    '</div>';
+
+  if (!hasCP) {
+    html += '<div style="padding:10px;background:rgba(231,76,60,0.08);border:1px solid #e74c3c44;border-radius:8px;margin-bottom:12px;font-size:11px;color:#e74c3c;text-align:center;">' +
+      '⚠️ Нужно CP: ' + def.cpReq.toLocaleString() + ' (у тебя ' + cp + ')' +
+      '</div>';
+  }
+
+  if (!canFight) {
+    html += '<div style="padding:10px;background:rgba(255,255,255,0.04);border:1px solid #2a2a5a;border-radius:8px;margin-bottom:12px;font-size:11px;color:#778;text-align:center;">' +
+      '⏳ Следующий вызов — завтра' +
+      '</div>';
+  }
+
+  html += '<button onclick="' + (hasCP && canFight ? 'startBossFightUI()' : '') + '" ' +
+    (!hasCP || !canFight ? 'disabled' : '') +
+    ' style="width:100%;padding:14px;background:' +
+    (hasCP && canFight ? 'linear-gradient(90deg,#6a1a1a,#aa2a2a)' : 'rgba(255,255,255,0.05)') +
+    ';border:none;border-radius:10px;color:' +
+    (hasCP && canFight ? '#fff' : '#445') +
+    ';font-size:15px;font-weight:bold;cursor:' +
+    (hasCP && canFight ? 'pointer' : 'not-allowed') +
+    ';font-family:\'Courier New\',monospace;">' +
+    (canFight ? (hasCP ? '⚔️ Вызвать босса' : '🔒 Нужно больше CP') : '⏳ Уже сражался сегодня') +
+    '</button>';
+
+  if (nextDef) {
+    html += '<div style="margin-top:12px;font-size:10px;color:#556;text-align:center;">Следующий: ' + nextDef.emoji + ' ' + nextDef.name + ' · CP ' + nextDef.cpReq.toLocaleString() + '</div>';
+  }
+
+  document.getElementById('bossModalBody').innerHTML = html;
+}
+
+function startBossFightUI() {
+  // Запускаем бой — показываем экран боя
+  var bossId = Math.max(1, Math.min(G.boss.floor, 10));
+  G.boss.lastDate = new Date().toISOString().slice(0, 10);
+  if (window.GameSync) window.GameSync.saveInstant({ boss: G.boss });
+
+  var def = BOSS_DEFS[bossId - 1];
+  var fightHtml =
+    '<div style="text-align:center;padding:8px 0 14px;">' +
+      '<div style="font-size:42px;">' + def.emoji + '</div>' +
+      '<div style="font-size:16px;font-weight:bold;color:' + def.color + ';">' + def.name + '</div>' +
+    '</div>' +
+    '<div style="margin-bottom:10px;">' +
+      '<div style="font-size:10px;color:#e74c3c;margin-bottom:4px;">HP Босса</div>' +
+      '<div style="background:#1a0a0a;border-radius:6px;height:14px;overflow:hidden;">' +
+        '<div id="bossHpBar" style="height:100%;background:linear-gradient(90deg,#e74c3c,#ff6060);border-radius:6px;width:100%;transition:width 0.5s;"></div>' +
+      '</div>' +
+      '<div id="bossHpText" style="font-size:10px;color:#e74c3c;text-align:right;margin-top:2px;"></div>' +
+    '</div>' +
+    '<div style="margin-bottom:16px;">' +
+      '<div style="font-size:10px;color:#2ecc71;margin-bottom:4px;">Ваш HP</div>' +
+      '<div id="bossPlayerHp" style="font-size:13px;font-weight:bold;color:#2ecc71;"></div>' +
+    '</div>' +
+    '<div style="text-align:center;font-size:12px;color:#556;padding:20px 0;">⚔️ Бой идёт...</div>';
+
+  document.getElementById('bossModalBody').innerHTML = fightHtml;
+  startBossFight(bossId);
 }
 
 function revivePlayer() {

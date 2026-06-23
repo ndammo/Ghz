@@ -963,9 +963,11 @@ function switchTab(tab) {
   var bpBtn   = document.getElementById('bpHudBtn');
   var premBtn = document.querySelector('.prem-hud-btn');
   var taskBtn = document.getElementById('taskHudBtn');
+  var bossBtn = document.getElementById('bossHudBtn');
   if (bpBtn)   bpBtn.style.display   = isGame ? 'flex' : 'none';
   if (premBtn) premBtn.style.display = isGame ? 'flex' : 'none';
   if (taskBtn) taskBtn.style.display = isGame ? 'flex' : 'none';
+  if (bossBtn) bossBtn.style.display = isGame ? 'flex' : 'none';
 
   if (tab === 'inv')      { _invSelectMode = false; _invSelected = {}; renderInventory(); }
   if (tab === 'upgrades') renderUpgrades();

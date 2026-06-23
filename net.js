@@ -183,6 +183,7 @@
       gram: G.gram,
       bp: clone(G.bp || { active: false, claimed: [] }),
       prem: clone(G.prem || { tier: null, expiresAt: 0 }),
+      boss: clone(G.boss || { floor: 1, lastDate: '' }),
 
       // === ОТЛОЖЕННЫЕ ПОЛЯ (3 сек) ===
       hp: G.hp,
@@ -219,6 +220,7 @@
       gram: full.gram,
       bp: full.bp,
       prem: full.prem,
+      boss: full.boss,
       hp: full.hp,
       gold: full.gold,
       xp: full.xp,
@@ -302,6 +304,7 @@
     G.bp = s.bp || { active: false, claimed: [] };
     if (!G.bp.claimed) G.bp.claimed = [];
     G.prem = s.prem || { tier: null, expiresAt: 0 };
+    G.boss = s.boss || { floor: 1, lastDate: '' };
     G.invFilter = s.invFilter || 'all';
     G.dailyTasks          = s.dailyTasks          || { date: '', seconds: 0, claimed: [] };
     G.specialTasksClaimed = s.specialTasksClaimed || {};
