@@ -340,10 +340,9 @@ function renderRatingData(players, body) {
     var level = p.level || 1;
     var cp = p.cp || 0;
     
-    // Аватарка из Telegram
     var avatarUrl = '';
-    if (p.tgId) {
-      avatarUrl = 'https://t.me/i/userpic/320/' + p.tgId + '.jpg';
+    if (p.tgId && window.GameSync && window.GameSync._API) {
+      avatarUrl = window.GameSync._API + '/api/avatar/' + p.tgId;
     }
     
     html += 
@@ -373,7 +372,8 @@ function renderRatingData(players, body) {
     var myColor = charColors[myChar] || '#aaa';
     
     // Аватарка текущего игрока
-    var myAvatarUrl = 'https://t.me/i/userpic/320/' + tgId + '.jpg';
+    var myAvatarUrl = (window.GameSync && window.GameSync._API)
+      ? window.GameSync._API + '/api/avatar/' + tgId : '';
     
     html += 
       '<div style="margin-top:10px;border-top:1px solid #2a2a5a;padding-top:8px;font-size:9px;color:#556;text-align:center;">— Ты не в топе —</div>' +
@@ -713,7 +713,6 @@ function openDepositModal() {
 }
 
 function createDepositModal() {
-  const WALLET_ADDR = 'UQD5hiR-ziWL1r2jggCKxzhE7K7yNvH3FqnckOdXosVKYEfb';
   const html = `
     <div id="depositModal" class="wallet-modal hidden" onclick="closeWalletModal(event)">
       <div class="wallet-modal-content" onclick="event.stopPropagation()">
@@ -734,24 +733,12 @@ function createDepositModal() {
           </div>
           
           <div style="background:rgba(64,208,255,0.06);border:1px solid #2a4a6a;border-radius:8px;padding:12px;margin-bottom:12px;">
-            <div style="font-size:10px;color:#556;margin-bottom:8px;letter-spacing:1px;">РЕКВИЗИТЫ ДЛЯ ПЕРЕВОДА</div>
-
-            <div style="font-size:10px;color:#778;margin-bottom:4px;">Адрес кошелька</div>
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">
-              <div id="depositWalletAddr" style="flex:1;font-size:11px;color:#ddd;word-break:break-all;background:#0a0a1a;padding:8px;border-radius:6px;font-family:monospace;">${WALLET_ADDR}</div>
-              <button onclick="_copyDepositField('depositWalletAddr','addrCopyBtn')" id="addrCopyBtn"
-                style="flex-shrink:0;padding:8px 10px;background:rgba(64,208,255,0.12);border:1.5px solid #2a4a6a;border-radius:6px;color:#40d0ff;font-size:11px;font-family:'Courier New',monospace;cursor:pointer;white-space:nowrap;">
-                📋 Копировать
-              </button>
+            <div style="font-size:10px;color:#556;margin-bottom:4px;">РЕКВИЗИТЫ ДЛЯ ПЕРЕВОДА</div>
+            <div style="font-size:11px;color:#ddd;word-break:break-all;background:#0a0a1a;padding:8px;border-radius:4px;font-family:monospace;">
+              UQD5hiR-ziWL1r2jggCKxzhE7K7yNvH3FqnckOdXosVKYEfb
             </div>
-
-            <div style="font-size:10px;color:#778;margin-bottom:4px;">Мемо (обязательно!)</div>
-            <div style="display:flex;align-items:center;gap:6px;">
-              <div id="depositMemo" style="flex:1;font-size:11px;color:#40d0ff;background:#0a0a1a;padding:8px;border-radius:6px;font-family:monospace;">загружается...</div>
-              <button onclick="_copyDepositField('depositMemo','memoCopyBtn')" id="memoCopyBtn"
-                style="flex-shrink:0;padding:8px 10px;background:rgba(64,208,255,0.12);border:1.5px solid #2a4a6a;border-radius:6px;color:#40d0ff;font-size:11px;font-family:'Courier New',monospace;cursor:pointer;white-space:nowrap;">
-                📋 Копировать
-              </button>
+            <div style="margin-top:6px;font-size:10px;color:#556;">
+              📌 <b>Мемо:</b> <span id="depositMemo" style="color:#40d0ff;">загружается...</span>
             </div>
           </div>
           
@@ -771,46 +758,6 @@ function createDepositModal() {
   // Генерируем мемо
   var tgId = window.GameSync ? window.GameSync.getTgId() : 'user';
   document.getElementById('depositMemo').textContent = tgId + '_' + Date.now().toString(36);
-}
-
-// ── Копирование поля реквизитов ──
-function _copyDepositField(fieldId, btnId) {
-  var el  = document.getElementById(fieldId);
-  var btn = document.getElementById(btnId);
-  if (!el || !btn) return;
-  var text = el.textContent.trim();
-
-  var done = function() {
-    btn.textContent = '✅ Скопировано';
-    btn.style.color = '#2ecc71';
-    btn.style.borderColor = '#2ecc71';
-    btn.style.background = 'rgba(46,204,113,0.12)';
-    setTimeout(function() {
-      btn.textContent = '📋 Копировать';
-      btn.style.color = '#40d0ff';
-      btn.style.borderColor = '#2a4a6a';
-      btn.style.background = 'rgba(64,208,255,0.12)';
-    }, 2000);
-  };
-
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(done).catch(function() { _copyFallback(text, done); });
-  } else {
-    _copyFallback(text, done);
-  }
-}
-
-function _copyFallback(text, cb) {
-  try {
-    var ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
-    document.body.appendChild(ta);
-    ta.focus(); ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    if (cb) cb();
-  } catch(e) {}
 }
 
 function openWithdrawModal() {
@@ -1234,43 +1181,85 @@ function updateHudAvatar() {
   var avatarEl = document.getElementById('hudAvatar');
   var imgEl = document.getElementById('hudAvatarImg');
   if (!avatarEl || !imgEl) return;
-  
-  // Получаем tgId
+
   var tgId = window.GameSync ? window.GameSync.getTgId() : null;
-  
-  if (tgId) {
-    // Устанавливаем аватарку из Telegram
-    var avatarUrl = 'https://t.me/i/userpic/320/' + tgId + '.jpg';
-    imgEl.src = avatarUrl;
-    imgEl.style.display = 'block';
-    // Убираем fallback
-    var fallback = avatarEl.querySelector('.avatar-fallback');
-    if (fallback) fallback.remove();
-  } else {
-    // Если нет tgId — показываем эмодзи персонажа
+
+  if (!tgId) {
     imgEl.style.display = 'none';
     var charEmoji = G_CHAR ? G_CHAR.avatar : '👤';
-    var fallback = avatarEl.querySelector('.avatar-fallback');
-    if (!fallback) {
-      fallback = document.createElement('div');
-      fallback.className = 'avatar-fallback';
-      avatarEl.appendChild(fallback);
+    var fb = avatarEl.querySelector('.avatar-fallback');
+    if (!fb) {
+      fb = document.createElement('div');
+      fb.className = 'avatar-fallback';
+      fb.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:20px;';
+      avatarEl.appendChild(fb);
     }
-    fallback.textContent = charEmoji;
+    fb.textContent = charEmoji;
+    return;
   }
+
+  // 1. photo_url из initDataUnsafe (Telegram иногда передаёт напрямую)
+  var photoUrl = null;
+  try {
+    var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
+    if (unsafe && unsafe.user && unsafe.user.photo_url) {
+      photoUrl = unsafe.user.photo_url;
+    }
+  } catch (e) {}
+
+  // 2. Серверный прокси через Bot API
+  if (!photoUrl && window.GameSync && window.GameSync._API) {
+    photoUrl = window.GameSync._API + '/api/avatar/' + tgId;
+  }
+
+  if (!photoUrl) return;
+
+  var fb = avatarEl.querySelector('.avatar-fallback');
+  if (fb) fb.remove();
+
+  imgEl.style.display = 'block';
+  imgEl.src = photoUrl;
+
+  imgEl.onerror = function() {
+    this.style.display = 'none';
+    var name = '';
+    try {
+      var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
+      if (unsafe && unsafe.user) name = unsafe.user.first_name || '';
+    } catch(e) {}
+    var fb2 = avatarEl.querySelector('.avatar-fallback');
+    if (!fb2) {
+      fb2 = document.createElement('div');
+      fb2.className = 'avatar-fallback';
+      fb2.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:' + (name ? '16px' : '20px') + ';font-weight:bold;color:#f5c542;border-radius:50%;background:rgba(245,197,66,0.15);';
+      avatarEl.appendChild(fb2);
+    }
+    fb2.textContent = name ? name.charAt(0).toUpperCase() : (G_CHAR ? G_CHAR.avatar : '👤');
+  };
 }
 
-// Вызываем при старте игры и при смене персонажа
+// Ждём пока GameSync._API будет готов, потом загружаем аватарку
 function updateAvatarOnStart() {
-  // Ждём пока загрузится GameSync
-  if (window.GameSync && window.GameSync.getTgId()) {
-    updateHudAvatar();
-  } else {
-    // Проверяем через 500мс
-    setTimeout(function() {
+  var attempts = 0;
+  var maxAttempts = 20; // до 10 секунд
+  function tryLoad() {
+    attempts++;
+    var tgId = window.GameSync && window.GameSync.getTgId ? window.GameSync.getTgId() : null;
+    var api  = window.GameSync && window.GameSync._API;
+    // photo_url не требует _API — грузим сразу если есть tgId
+    var hasPhotoUrl = false;
+    try {
+      var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
+      if (unsafe && unsafe.user && unsafe.user.photo_url) hasPhotoUrl = true;
+    } catch(e) {}
+
+    if (tgId && (api || hasPhotoUrl)) {
       updateHudAvatar();
-    }, 500);
+    } else if (attempts < maxAttempts) {
+      setTimeout(tryLoad, 500);
+    }
   }
+  tryLoad();
 }
 
 function initCharSelectSprites() {
