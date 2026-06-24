@@ -316,6 +316,10 @@ app.post('/api/load', async (req, res) => {
 });
 
 // ── Сохранение ──
+// ═══════════════════════════════════════════════════════
+//  СОХРАНЕНИЕ — ИСПРАВЛЕННАЯ ВЕРСИЯ
+//  Обновляет ТОЛЬКО конкретные поля, не затирая остальные
+// ═══════════════════════════════════════════════════════
 app.post('/api/save', async (req, res) => {
   const startTime = Date.now();
   
@@ -338,23 +342,63 @@ app.post('/api/save', async (req, res) => {
       return res.status(403).json({ ok: false, error: 'user_mismatch' });
     }
 
-    data.tgId = tg.id;
-    data.updatedAt = Date.now();
+    // 🔥 ОСНОВНЫЕ ПОЛЯ (всегда обновляются)
+    const updateData = {
+      username: tg.username, 
+      firstName: tg.firstName,
+      charId: data.charId || null,
+      level: Number(data.level) || 1,
+      cp: Number(data.cp) || 0,
+      floor: Number(data.floor) || 1,
+      updatedAt: Date.now(),
+    };
 
-    await Save.findOneAndUpdate(
+    // 🔥 ДИНАМИЧЕСКИЕ ПОЛЯ — обновляем ТОЛЬКО те, что пришли
+    const dataFields = {};
+    const allowedFields = [
+      // Игровые ресурсы
+      'gold', 'hp', 'xp', 'xpNeeded', 'killCount', 'potions',
+      'pixr', 'gram',
+      
+      // Инвентарь и экипировка
+      'inventory', 'equipped', 'upg', 'skills',
+      
+      // Прогресс
+      'potionLv', 'potionThreshold', 'bp', 'prem', 'boss',
+      
+      // Задания
+      'dailyTasks', 'specialTasksClaimed',
+      
+      // Служебные
+      'invIdCounter', 'invFilter'
+    ];
+    
+    allowedFields.forEach(field => {
+      if (data[field] !== undefined) {
+        dataFields[`data.${field}`] = data[field];
+      }
+    });
+
+    // Если data содержит поля, которых нет в списке — логируем, но не обновляем
+    const unknownFields = Object.keys(data).filter(f => 
+      !allowedFields.includes(f) && 
+      !['tgId', 'charId', 'level', 'cp', 'floor', 'v', 'updatedAt', 'baseStats', 'stats', 'maxHp'].includes(f)
+    );
+    if (unknownFields.length) {
+      console.warn(`⚠️ [save] Неизвестные поля от ${tg.id}:`, unknownFields);
+    }
+
+    // Финальный объект обновления
+    const finalUpdate = {
+      $set: {
+        ...updateData,
+        ...dataFields,
+      }
+    };
+
+    const result = await Save.findOneAndUpdate(
       { tgId: tg.id },
-      { 
-        $set: {
-          username: tg.username, 
-          firstName: tg.firstName,
-          charId: data.charId || null, 
-          data: data,
-          level: Number(data.level) || 1,
-          cp:    Number(data.cp)    || 0,
-          floor: Number(data.floor) || 1,
-          updatedAt: data.updatedAt,
-        }
-      },
+      finalUpdate,
       { 
         upsert: true,
         new: false,
@@ -364,12 +408,12 @@ app.post('/api/save', async (req, res) => {
 
     const duration = Date.now() - startTime;
     console.log(`✅ [save] Сохранено для ${tg.id} (${duration}ms)`);
-    res.json({ ok: true, updatedAt: data.updatedAt });
+    res.json({ ok: true, updatedAt: Date.now() });
 
   } catch (e) {
     const duration = Date.now() - startTime;
     console.error(`❌ [save] ОШИБКА (${duration}ms):`, e.message);
-    
+    console.error(e.stack);
     res.status(500).json({ 
       ok: false, 
       error: 'server_error',
@@ -1022,7 +1066,10 @@ async function logAdminAction(admin, action, target, details) {
   }
 }
 
-// ── Админ: подтвердить/отклонить транзакцию ──
+// ═══════════════════════════════════════════════════════
+//  ПОДТВЕРЖДЕНИЕ ТРАНЗАКЦИИ — ИСПРАВЛЕННАЯ ВЕРСИЯ
+//  Использует $inc для атомарного изменения баланса
+// ═══════════════════════════════════════════════════════
 app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) => {
   try {
     const { txId, action } = req.params;
@@ -1044,12 +1091,19 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
       tx.status = 'approved';
       tx.approvedAt = Date.now();
 
-      // Атомарно начисляем/списываем GRAM через $inc — не перезаписываем весь data
+      // 🔥 ИСПРАВЛЕНО: используем $inc, а не $set
       const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
+      
       await Save.findOneAndUpdate(
         { tgId: tx.userId },
-        { $inc: { 'data.gram': gramDelta } }
+        { 
+          $inc: { 'data.gram': gramDelta },
+          $set: { updatedAt: Date.now() }
+        }
       );
+      
+      console.log(`✅ [admin] Начислено ${gramDelta} GRAM пользователю ${tx.userId}`);
+      
     } else {
       tx.status = 'rejected';
       tx.rejectedAt = Date.now();
@@ -1058,19 +1112,22 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
     await tx.save();
     await logAdminAction(req.admin.login, action + '_transaction', tx.userId, { txId, amount: tx.amount });
     
+    // Уведомляем пользователя
     if (bot) {
       const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
       const msg = `
-💰 **Транзакция ${statusText}**
+💰 *Транзакция ${statusText}*
 
-**Тип:** ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}
-**Сумма:** ${tx.amount} GRAM
-**Статус:** ${statusText}
+*Тип:* ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}
+*Сумма:* ${tx.amount} GRAM
+*Статус:* ${statusText}
 ${action === 'approve' ? '✅ Баланс обновлен!' : '❌ Средства не были зачислены.'}
       `;
       try {
         await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' });
-      } catch (e) {}
+      } catch (e) {
+        console.error('❌ [admin] Ошибка уведомления пользователя:', e.message);
+      }
     }
     
     res.json({ ok: true });
