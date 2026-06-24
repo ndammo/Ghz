@@ -1421,10 +1421,11 @@ function renderTaskModal() {
 
   body.innerHTML = html;
 
-  if (!window.GameSync || !window.GameSync.state.online) {
+  // Проверяем наличие GameSync
+  if (!window.GameSync || !window.GameSync._INIT) {
     document.getElementById('specialTasksSection').innerHTML =
       '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">СПЕЦИАЛЬНЫЕ</div>' +
-      '<div style="text-align:center;padding:16px;color:#445;font-size:11px;">Доступно только онлайн</div>';
+      '<div style="text-align:center;padding:16px;color:#445;font-size:11px;">Доступно только в Telegram</div>';
     return;
   }
 
@@ -1521,7 +1522,7 @@ function startSpecialTask(taskId, link) {
 }
 
 function claimDailyTask(milestoneId) {
-  if (!window.GameSync || !window.GameSync.state.online) return;
+  if (!window.GameSync || !window.GameSync._INIT) return;
   fetch(window.GameSync._API + '/api/tasks/daily/claim', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1545,7 +1546,7 @@ function claimDailyTask(milestoneId) {
 }
 
 function claimSpecialTask(taskId) {
-  if (!window.GameSync || !window.GameSync.state.online) return;
+  if (!window.GameSync || !window.GameSync._INIT) return;
   fetch(window.GameSync._API + '/api/tasks/special/claim', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1652,4 +1653,144 @@ function callBoss(bossId) {
   }
 }
 
+// ═══════════════════════════════
+//  ИСПРАВЛЕННАЯ ВКЛАДКА РЕЙТИНГА
+// ═══════════════════════════════
+
+// Переопределяем renderRating для корректной работы
+var _originalRenderRating = renderRating;
+renderRating = function() {
+  var body = document.getElementById('ratingBody');
+  if (!body) return;
+  
+  // Проверяем наличие GameSync и INIT
+  if (!window.GameSync || !window.GameSync._INIT) {
+    body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">📱 Рейтинг доступен только в Telegram</div>';
+    return;
+  }
+  
+  if (_ratingCache && Date.now() - _ratingCacheTime < 30000) {
+    renderRatingData(_ratingCache, body);
+    return;
+  }
+  
+  body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">⏳ Загрузка рейтинга...</div>';
+  
+  if (_ratingLoading) return;
+  _ratingLoading = true;
+  
+  var tgId = window.GameSync.getTgId();
+  var api = window.GameSync._API;
+  
+  fetch(api + '/api/leaderboard?tgId=' + encodeURIComponent(tgId))
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      _ratingLoading = false;
+      if (!r.ok || !r.top) {
+        body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#e74c3c;font-size:12px;">❌ Ошибка загрузки</div>';
+        return;
+      }
+      
+      _ratingCache = r.top;
+      _ratingCacheTime = Date.now();
+      renderRatingData(r.top, body);
+    })
+    .catch(function() {
+      _ratingLoading = false;
+      body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#e74c3c;font-size:12px;">❌ Нет соединения</div>';
+    });
+};
+
+// ═══════════════════════════════
+//  ИСПРАВЛЕННАЯ ВКЛАДКА ДРУЗЕЙ
+// ═══════════════════════════════
+
+// Переопределяем renderFriends для корректной работы
+var _originalRenderFriends = renderFriends;
+renderFriends = function() {
+  var body = document.getElementById('friendsBody');
+  if (!body) return;
+
+  if (!window.GameSync || !window.GameSync._INIT) {
+    body.innerHTML = '<div style="text-align:center;padding:40px 16px;color:#556;font-size:12px;">' +
+      '<div style="font-size:32px;margin-bottom:12px;">📱</div>' +
+      'Реферальная программа<br>доступна только в Telegram</div>';
+    return;
+  }
+
+  if (_friendsLoading) return;
+  _friendsLoading = true;
+  body.innerHTML = '<div style="text-align:center;padding:40px 0;color:#445;font-size:12px;">Загрузка...</div>';
+
+  var _flTimeout = setTimeout(function () {
+    if (_friendsLoading) {
+      _friendsLoading = false;
+      body.innerHTML = '<div style="color:#f44;text-align:center;padding:30px 0;font-size:12px;">Нет соединения</div>';
+    }
+  }, 10000);
+
+  fetch(window.GameSync._API + '/api/ref/friends', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: window.GameSync._INIT }),
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(r) {
+    clearTimeout(_flTimeout);
+    _friendsLoading = false;
+    if (!r.ok) { body.innerHTML = '<div style="color:#f44;text-align:center;padding:30px 0;font-size:12px;">Ошибка загрузки</div>'; return; }
+    renderFriendsData(r, body);
+  })
+  .catch(function() {
+    clearTimeout(_flTimeout);
+    _friendsLoading = false;
+    body.innerHTML = '<div style="color:#f44;text-align:center;padding:30px 0;font-size:12px;">Нет соединения</div>';
+  });
+};
+
+// ═══════════════════════════════
+//  ИСПРАВЛЕННАЯ ВКЛАДКА БОССОВ (добавляем в switchTab)
+// ═══════════════════════════════
+
+// Исправляем switchTab - добавляем boss в массив
+var _originalSwitchTab = switchTab;
+switchTab = function(tab) {
+  activeTab = tab;
+  ['game','inv','upgrades','floors','rating','wallet','friends','boss'].forEach(function(t) {
+    var btn = document.getElementById('nav' + t.charAt(0).toUpperCase() + t.slice(1));
+    if (btn) btn.classList.toggle('active', t === tab);
+  });
+  document.getElementById('panelInv').classList.toggle('visible', tab === 'inv');
+  document.getElementById('panelUpgrades').classList.toggle('visible', tab === 'upgrades');
+  document.getElementById('panelFloors').classList.toggle('visible', tab === 'floors');
+  document.getElementById('panelRating').classList.toggle('visible', tab === 'rating');
+  document.getElementById('panelWallet').classList.toggle('visible', tab === 'wallet');
+  document.getElementById('panelFriends').classList.toggle('visible', tab === 'friends');
+  var bossPanel = document.getElementById('panelBoss');
+  if (bossPanel) bossPanel.classList.toggle('visible', tab === 'boss');
+  var hudEl = document.getElementById('skillsHud');
+  if (hudEl) hudEl.classList.toggle('visible', tab === 'game' && !!G_CHAR);
+  var isGame = tab === 'game' && !!G_CHAR;
+  var bpBtn   = document.getElementById('bpHudBtn');
+  var premBtn = document.querySelector('.prem-hud-btn');
+  var taskBtn = document.getElementById('taskHudBtn');
+  var bossBtn = document.getElementById('bossHudBtn');
+  if (bpBtn)   bpBtn.style.display   = isGame ? 'flex' : 'none';
+  if (premBtn) premBtn.style.display = isGame ? 'flex' : 'none';
+  if (taskBtn) taskBtn.style.display = isGame ? 'flex' : 'none';
+  if (bossBtn) bossBtn.style.display = isGame ? 'flex' : 'none';
+
+  if (tab === 'inv')      { _invSelectMode = false; _invSelected = {}; renderInventory(); }
+  if (tab === 'upgrades') renderUpgrades();
+  if (tab === 'floors')   renderFloors();
+  if (tab === 'rating')   renderRating();
+  if (tab === 'wallet')   renderWallet();
+  if (tab === 'friends')  renderFriends();
+  if (tab === 'boss')     renderBossTab();
+  
+  // ✅ При переключении на игру — загружаем свежие данные
+  if (tab === 'game' && window.GameSync) {
+    GameSync.load();
+  }
+};
 window.addEventListener('resize', resize);
