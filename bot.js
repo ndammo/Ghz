@@ -227,23 +227,13 @@ greeting + '\n\n' +
             { chat_id: chatId, message_id: msgId }
           ).catch(function() {});
 
-          var _fetch = typeof fetch !== 'undefined' ? fetch : null;
-          try { if (!_fetch) _fetch = require('node-fetch'); } catch(e) {}
+          var apiUrl = process.env.API_URL || 'https://ghz-production.up.railway.app';
 
-          if (!_fetch) {
-            bot.editMessageReplyMarkup(
-              { inline_keyboard: [[{ text: '✅ Подтвердить', callback_data: 'approve_' + txId }, { text: '❌ Отклонить', callback_data: 'reject_' + txId }]] },
-              { chat_id: chatId, message_id: msgId }
-            ).catch(function() {});
-            bot.answerCallbackQuery(query.id, { text: '❌ Ошибка: fetch недоступен' }).catch(function(){});
-            return;
-          }
-
-          _fetch(API_URL + '/bot/transaction/' + txId + '/' + action, {
+          fetch(apiUrl + '/bot/transaction/' + txId + '/' + action, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'x-bot-secret': BOT_TOKEN
+              'x-bot-secret': process.env.BOT_TOKEN
             },
             body: JSON.stringify({})
           })

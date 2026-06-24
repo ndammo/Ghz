@@ -1446,6 +1446,79 @@ app.patch('/admin/api/tasks/:taskId/toggle', requireAdmin, async (req, res) => {
 });
 
 // ═══════════════════════════════
+//  БОТ — ОБРАБОТКА ТРАНЗАКЦИЙ
+// ═══════════════════════════════
+
+app.post('/bot/transaction/:txId/:action', async (req, res) => {
+  try {
+    const { txId, action } = req.params;
+    const botSecret = req.headers['x-bot-secret'];
+    
+    // Проверяем секрет
+    if (botSecret !== process.env.BOT_TOKEN) {
+      return res.status(401).json({ ok: false, error: 'unauthorized' });
+    }
+    
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ ok: false, error: 'invalid_action' });
+    }
+    
+    const tx = await Transaction.findOne({ id: txId });
+    if (!tx) {
+      return res.status(404).json({ ok: false, error: 'transaction_not_found' });
+    }
+    
+    if (tx.status !== 'pending') {
+      return res.status(400).json({ ok: false, error: 'already_processed' });
+    }
+    
+    if (action === 'approve') {
+      tx.status = 'approved';
+      tx.approvedAt = Date.now();
+      
+      // Начисляем GRAM (для депозита) или списываем (для вывода)
+      const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
+      await Save.findOneAndUpdate(
+        { tgId: tx.userId },
+        { $inc: { 'data.gram': gramDelta } }
+      );
+      
+      // Отправляем обновление через WebSocket
+      pushUpdate(tx.userId, { gram: tx.amount });
+      
+    } else {
+      tx.status = 'rejected';
+      tx.rejectedAt = Date.now();
+    }
+    
+    await tx.save();
+    
+    // Уведомляем пользователя в Telegram
+    if (bot) {
+      const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
+      const msg = `
+💰 **Транзакция ${statusText}**
+
+**Тип:** ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}
+**Сумма:** ${tx.amount} GRAM
+**Статус:** ${statusText}
+${action === 'approve' ? '✅ Баланс обновлен!' : '❌ Средства не были зачислены.'}
+      `;
+      try {
+        await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' });
+      } catch (e) {
+        console.error('❌ [bot] Ошибка уведомления пользователя:', e.message);
+      }
+    }
+    
+    res.json({ ok: true });
+    
+  } catch (e) {
+    console.error('❌ [bot] Ошибка обработки транзакции:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+// ═══════════════════════════════
 //  БОТ
 // ═══════════════════════════════
 let bot = null;
