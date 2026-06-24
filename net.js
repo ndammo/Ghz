@@ -1,16 +1,8 @@
 /*
   ══════════════════════════════════════════════════════
-  net.js — Сетевой слой: Telegram-авторизация,
-  сохранение прогресса на сервер (MongoDB)
-
-  СТРАТЕГИЯ СОХРАНЕНИЯ:
-  ✅ МГНОВЕННО: inventory, equipped, upg, skills, potionLv,
-     potionThreshold, floor, level, pixr, gram, bp, prem
-  ⏱️ 3 СЕКУНДЫ: hp, gold, xp, killCount, potions
-
-  ⚡ ОПТИМИЗАЦИИ:
-  - Сжатие данных перед отправкой
-  - Интервал 3 секунды (вместо 5)
+  net.js — Сетевой слой (исправленная версия)
+  Исправления: дельта-обновления, приоритет сервера,
+  валидация, отказ от localStorage как источника истины
   ══════════════════════════════════════════════════════
 */
 (function () {
@@ -25,12 +17,6 @@
 
   var EQUIP_SLOTS = ['weapon', 'armor', 'ring', 'boots', 'helmet'];
   
-  var INSTANT_FIELDS = [
-    'inventory', 'equipped', 'upg', 'skills', 
-    'potionLv', 'potionThreshold', 'floor', 'level',
-    'pixr', 'gram', 'bp', 'prem'
-  ];
-
   var TG_INIT = '';
   var SYNC = {
     booted: false,
@@ -44,31 +30,29 @@
     currentTgId: null,
     rlBackoffUntil: 0,
 
+    // Последние сохранённые значения для вычисления дельт
     lastHp: 0,
     lastGold: 0,
     lastXp: 0,
     lastKillCount: 0,
     lastPotions: 0,
+    lastPixr: 0,
+    lastGram: 0,
   };
 
   function num(v, d) { v = Number(v); return isFinite(v) ? v : d; }
   function clone(o) { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return Object.assign({}, o); } }
 
   // ═══════════════════════════════
-  //  LOCALSTORAGE — резервная копия
-  //  Используется ТОЛЬКО если сервер недоступен при загрузке.
-  //  Сервер всегда имеет приоритет над localStorage.
+  //  LOCALSTORAGE — ТОЛЬКО КЭШ для офлайн-режима
   // ═══════════════════════════════
   var LS_KEY = 'pixrpg_save_v2';
 
   function saveLocal() {
-    // Сохраняем при любом активном сеансе — и онлайн, и офлайн.
-    // saveLocal никогда не отправляет данные на сервер — только localStorage.
     if (!SYNC.started) return;
     try {
       var snap = serializeState();
       snap._savedAt = Date.now();
-      snap._offlineOnly = !SYNC.serverConfirmed; // маркер: данные не подтверждены сервером
       localStorage.setItem(LS_KEY, JSON.stringify(snap));
     } catch (e) {}
   }
@@ -78,7 +62,6 @@
       var raw = localStorage.getItem(LS_KEY);
       if (!raw) return null;
       var parsed = JSON.parse(raw);
-      // Игнорируем снапшоты старше 30 дней
       if (parsed && parsed._savedAt && (Date.now() - parsed._savedAt) > 30 * 24 * 3600 * 1000) return null;
       return parsed;
     } catch (e) { return null; }
@@ -117,7 +100,6 @@
   function lsHide() {
     var el = document.getElementById('loadingScreen');
     if (!el || el.classList.contains('fade-out')) return;
-    // Немедленно отключаем перехват тапов — пользователь может тапать на charSelect
     el.style.pointerEvents = 'none';
     var elapsed = Date.now() - _lsShownAt;
     var delay = Math.max(0, LS_MIN_MS - elapsed);
@@ -149,7 +131,7 @@
   }
 
   // ═══════════════════════════════
-  //  СЕРИАЛИЗАЦИЯ И СЖАТИЕ
+  //  СЕРИАЛИЗАЦИЯ И ДЕЛЬТЫ
   // ═══════════════════════════════
 
   function serializeState() {
@@ -170,7 +152,7 @@
       tgId: getTgId(),
       charId: (typeof G_CHAR !== 'undefined' && G_CHAR) ? G_CHAR.id : (G.charId || null),
 
-      // === МГНОВЕННЫЕ ПОЛЯ ===
+      // Мгновенные поля
       inventory: inv,
       equipped: eq,
       upg: clone(G.upg),
@@ -185,7 +167,7 @@
       prem: clone(G.prem || { tier: null, expiresAt: 0 }),
       boss: clone(G.boss || { floor: 1, lastFightTime: 0 }),
 
-      // === ОТЛОЖЕННЫЕ ПОЛЯ (3 сек) ===
+      // Отложенные поля
       hp: G.hp,
       gold: G.gold,
       xp: G.xp,
@@ -193,49 +175,92 @@
       killCount: G.killCount,
       potions: G.potions,
 
-      // === ПРОЧИЕ (не отправляем тяжелые) ===
+      // Прочие
       invIdCounter: (typeof _invIdCounter === 'number') ? _invIdCounter : 0,
       dailyTasks:          clone(G.dailyTasks          || { date: '', seconds: 0, claimed: [] }),
       specialTasksClaimed: clone(G.specialTasksClaimed || {}),
       invFilter: G.invFilter || 'all',
       cp: (typeof calcCP === 'function') ? calcCP() : 0,
       updatedAt: Date.now(),
+      maxFloor: G.maxFloor || 1,
     };
 
-    // ⚡ СЖАТИЕ: удаляем тяжелые поля, которые не нужны на сервере
-    // (stats, baseStats, maxHp, xpNeeded, maxFloor — вычисляются на клиенте)
-    var compressed = {
-      v: full.v,
-      tgId: full.tgId,
-      charId: full.charId,
-      inventory: full.inventory,
-      equipped: full.equipped,
-      upg: full.upg,
-      skills: full.skills,
-      potionLv: full.potionLv,
-      potionThreshold: full.potionThreshold,
-      floor: full.floor,
-      level: full.level,
-      pixr: full.pixr,
-      gram: full.gram,
-      bp: full.bp,
-      prem: full.prem,
-      boss: full.boss,
-      hp: full.hp,
-      gold: full.gold,
-      xp: full.xp,
-      xpNeeded: full.xpNeeded,
-      killCount: full.killCount,
-      potions: full.potions,
-      invIdCounter: full.invIdCounter,
-      invFilter: full.invFilter,
-      dailyTasks:          full.dailyTasks,
-      specialTasksClaimed: full.specialTasksClaimed,
-      cp: full.cp,
-      updatedAt: full.updatedAt,
+    return full;
+  }
+
+  // ── ВЫЧИСЛЕНИЕ ДЕЛЬТ ДЛЯ АТОМАРНОГО СОХРАНЕНИЯ ──
+  function getDelta() {
+    var delta = {
+      tgId: getTgId(),
+      updatedAt: Date.now(),
     };
 
-    return compressed;
+    // Изменяемые поля с дельтами
+    var currentGold = G.gold || 0;
+    var currentPixr = G.pixr || 0;
+    var currentGram = G.gram || 0;
+    var currentXp = G.xp || 0;
+    var currentKillCount = G.killCount || 0;
+    var currentPotions = G.potions || 0;
+
+    if (currentGold !== SYNC.lastGold) {
+      delta.goldDelta = currentGold - SYNC.lastGold;
+      SYNC.lastGold = currentGold;
+    }
+    if (currentPixr !== SYNC.lastPixr) {
+      delta.pixrDelta = currentPixr - SYNC.lastPixr;
+      SYNC.lastPixr = currentPixr;
+    }
+    if (currentGram !== SYNC.lastGram) {
+      delta.gramDelta = currentGram - SYNC.lastGram;
+      SYNC.lastGram = currentGram;
+    }
+    if (currentXp !== SYNC.lastXp) {
+      delta.xpDelta = currentXp - SYNC.lastXp;
+      SYNC.lastXp = currentXp;
+    }
+    if (currentKillCount !== SYNC.lastKillCount) {
+      delta.killCountDelta = currentKillCount - SYNC.lastKillCount;
+      SYNC.lastKillCount = currentKillCount;
+    }
+    if (currentPotions !== SYNC.lastPotions) {
+      delta.potionsDelta = currentPotions - SYNC.lastPotions;
+      SYNC.lastPotions = currentPotions;
+    }
+
+    // Мгновенные поля — отправляем целиком для $set
+    var inv = (G.inventory || []).map(function (it) {
+      var c = clone(it);
+      delete c._equipped;
+      return c;
+    });
+    delta.inventory = inv;
+    delta.equipped = {};
+    EQUIP_SLOTS.forEach(function (slot) {
+      var it = G.equipped && G.equipped[slot];
+      delta.equipped[slot] = it ? it.id : null;
+    });
+    delta.upg = clone(G.upg);
+    delta.skills = clone(G.skills || {});
+    delta.potionLv = G.potionLv;
+    delta.potionThreshold = G.potionThreshold;
+    delta.floor = G.floor;
+    delta.level = G.level;
+    delta.bp = clone(G.bp || { active: false, claimed: [] });
+    delta.prem = clone(G.prem || { tier: null, expiresAt: 0 });
+    delta.boss = clone(G.boss || { floor: 1, lastFightTime: 0 });
+    delta.xpNeeded = G.xpNeeded;
+    delta.maxFloor = G.maxFloor || 1;
+    delta.invFilter = G.invFilter || 'all';
+    delta.dailyTasks = clone(G.dailyTasks || { date: '', seconds: 0, claimed: [] });
+    delta.specialTasksClaimed = clone(G.specialTasksClaimed || {});
+    delta.charId = (typeof G_CHAR !== 'undefined' && G_CHAR) ? G_CHAR.id : (G.charId || null);
+
+    // CP и HP — для информации, но не сохраняются
+    delta.cp = (typeof calcCP === 'function') ? calcCP() : 0;
+    delta.hp = G.hp;
+
+    return delta;
   }
 
   // ═══════════════════════════════
@@ -262,14 +287,9 @@
       s.upg || {}
     );
 
-    // Восстанавливаем baseStats из трёх источников:
-    //   1) базовые статы персонажа
-    //   2) бонусы от апгрейдов (G.upg * bonus за уровень)
-    //   3) бонусы от уровней (levelUp: +2 atk, +1 def, +10 hp, +0.02 atkSpd за каждый уровень выше 1)
-    // Если снапшот содержит baseStats — используем его как fallback (старые сейвы).
+    // Восстанавливаем baseStats
     if (G_CHAR && typeof UPG_DEFS !== 'undefined') {
       G.baseStats = Object.assign({}, G_CHAR.baseStats);
-      // Бонусы от апгрейдов
       UPG_DEFS.forEach(function(u) {
         var lv = G.upg[u.id] || 0;
         if (lv > 0) {
@@ -278,7 +298,6 @@
           );
         }
       });
-      // Бонусы от уровней (каждый уровень выше 1 даёт +2 atk, +1 def, +10 hp, +0.02 atkSpd)
       var lvBonuses = num(s.level, 1) - 1;
       if (lvBonuses > 0) {
         G.baseStats.atk    = (G.baseStats.atk    || 0) + lvBonuses * 2;
@@ -289,7 +308,6 @@
         );
       }
     } else if (s.baseStats) {
-      // Fallback для старых сейвов или если CHARS/UPG_DEFS ещё не загружены
       G.baseStats = Object.assign({}, s.baseStats);
     }
 
@@ -337,7 +355,6 @@
     
     G.maxHp = num(s.maxHp, G.maxHp);
     G.xpNeeded = num(s.xpNeeded, 0);
-    // Если xpNeeded не сохранён (старые сейвы) — пересчитываем из уровня
     if (!G.xpNeeded || G.xpNeeded < 100) {
       var _xp = 100;
       for (var _lv = 1; _lv < G.level; _lv++) {
@@ -350,11 +367,17 @@
     if (hp <= 0) hp = Math.floor(G.maxHp * 0.3);
     G.hp = Math.max(1, Math.min(hp, G.maxHp));
 
+    // Обновляем последние значения для дельт
     SYNC.lastHp = G.hp;
     SYNC.lastGold = G.gold;
     SYNC.lastXp = G.xp;
     SYNC.lastKillCount = G.killCount;
     SYNC.lastPotions = G.potions;
+    SYNC.lastPixr = G.pixr || 0;
+    SYNC.lastGram = G.gram || 0;
+
+    // Сохраняем в localStorage как кэш
+    saveLocal();
 
     return true;
   }
@@ -389,16 +412,16 @@
   function serverSaveInstant(data) {
     if (!SYNC.online || !SYNC.serverConfirmed) return Promise.resolve({ ok: false });
     
-    var snap = serializeState();
+    var delta = getDelta();
     Object.keys(data).forEach(function(key) {
-      snap[key] = data[key];
+      delta[key] = data[key];
     });
-    snap.updatedAt = Date.now();
+    delta.updatedAt = Date.now();
     
     return fetch(API + '/api/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData: TG_INIT, data: snap }),
+      body: JSON.stringify({ initData: TG_INIT, data: delta }),
     }).then(function (r) { return r.json(); });
   }
 
@@ -408,53 +431,36 @@
       return;
     }
 
-    // Пауза при rate limit (429)
     if (SYNC.rlBackoffUntil && Date.now() < SYNC.rlBackoffUntil) {
       return;
     }
     
-    var currentHp = G.hp;
-    var currentGold = G.gold;
-    var currentXp = G.xp;
-    var currentKillCount = G.killCount;
-    var currentPotions = G.potions;
+    var delta = getDelta();
     
-    var hasChanges = 
-      currentHp !== SYNC.lastHp ||
-      currentGold !== SYNC.lastGold ||
-      currentXp !== SYNC.lastXp ||
-      currentKillCount !== SYNC.lastKillCount ||
-      currentPotions !== SYNC.lastPotions;
-
+    // Проверяем, есть ли реальные изменения
+    var hasChanges = false;
+    for (var key in delta) {
+      if (key !== 'tgId' && key !== 'updatedAt' && key !== 'cp' && key !== 'hp') {
+        hasChanges = true;
+        break;
+      }
+    }
     if (!hasChanges) return;
 
     SYNC.pushing = true;
-    
-    var snap = serializeState();
-    snap.hp = currentHp;
-    snap.gold = currentGold;
-    snap.xp = currentXp;
-    snap.killCount = currentKillCount;
-    snap.potions = currentPotions;
-    snap.updatedAt = Date.now();
+    delta.updatedAt = Date.now();
     
     fetch(API + '/api/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData: TG_INIT, data: snap }),
+      body: JSON.stringify({ initData: TG_INIT, data: delta }),
     }).then(function (r) { return r.json(); })
       .then(function (r) {
         if (r && r.ok) {
-          SYNC.lastHp = currentHp;
-          SYNC.lastGold = currentGold;
-          SYNC.lastXp = currentXp;
-          SYNC.lastKillCount = currentKillCount;
-          SYNC.lastPotions = currentPotions;
-          SYNC.lastServerTs = r.updatedAt || snap.updatedAt;
+          SYNC.lastServerTs = r.updatedAt || delta.updatedAt;
           SYNC.rlBackoffUntil = 0;
           saveLocal();
         } else if (r && r.error === 'rate_limit') {
-          // Пауза 6 секунд при rate limit
           SYNC.rlBackoffUntil = Date.now() + 6000;
           console.warn('⚠️ [save] rate limit, пауза 6s');
         }
@@ -477,17 +483,15 @@
 
   function flush() {
     if (!SYNC.started) return;
-    // Сначала сохраняем в localStorage (синхронно, всегда успевает)
     saveLocal();
-    // Затем пробуем отправить на сервер с keepalive
     if (!SYNC.online || !SYNC.serverConfirmed) return;
-    var snap = serializeState();
-    snap.updatedAt = Date.now();
+    var delta = getDelta();
+    delta.updatedAt = Date.now();
     try {
       fetch(API + '/api/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData: TG_INIT, data: snap }),
+        body: JSON.stringify({ initData: TG_INIT, data: delta }),
         keepalive: true,
       });
     } catch (e) {}
@@ -533,10 +537,7 @@
   // ═══════════════════════════════
 
   function startSyncLoops() {
-    // ⚡ КАЖДЫЕ 3 СЕКУНДЫ — серверный батч-сейв
     SYNC.batchTimer = setInterval(serverSaveBatch, 3000);
-
-    // ⚡ КАЖДЫЕ 10 СЕКУНД — локальный бекап (работает и в офлайн-режиме)
     setInterval(saveLocal, 10000);
 
     document.addEventListener('visibilitychange', function () {
@@ -583,7 +584,7 @@
   }
 
   // ═══════════════════════════════
-  //  BOOT
+  //  BOOT (исправленный)
   // ═══════════════════════════════
 
   function initTelegram() {
@@ -609,13 +610,30 @@
     console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online);
   }
 
+  // ── Загрузка из localStorage ТОЛЬКО как фолбэк ──
+  function _tryBootFromLocal() {
+    if (SYNC.started) return false;
+    var local = loadLocal();
+    if (!local || !local.charId) return false;
+    var currentTgId = getTgId();
+    if (local.tgId && currentTgId && local.tgId !== currentTgId) return false;
+    console.warn('⚠️ [boot] Сервер недоступен, загружаем из localStorage');
+    lsSetStatus('Офлайн режим', 85);
+    if (applySnapshot(local)) {
+      hideCharSelect();
+      SYNC.started = true;
+      // serverConfirmed остаётся false — сохранения на сервер не пойдут
+      if (typeof startGame === 'function') startGame();
+      return true;
+    }
+    return false;
+  }
+
   function boot() {
     lsInitStars();
     lsSetStatus('Подключение', 10);
     initTelegram();
 
-    // Аварийный таймер: экран загрузки ВСЕГДА скроется через 8 секунд,
-    // даже если в промис-цепочке произошла ошибка.
     var _emergencyTimer = setTimeout(function () {
       console.warn('⚠️ [boot] emergency hide');
       lsHide();
@@ -638,63 +656,43 @@
     lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
 
     serverLoad().then(function (r) {
-      if (!r || !r.ok) {
-        console.warn('⚠️ [serverLoad] ответ не ok:', r);
-        _tryBootFromLocal();
-        return;
-      }
+      // СЕРВЕР ВСЕГДА ПРИОРИТЕТНЕЕ
+      if (r && r.ok && r.save && r.save.data) {
+        var serverData = r.save.data;
+        var currentTgId = getTgId();
+        
+        if (serverData.tgId && currentTgId && serverData.tgId !== currentTgId) {
+          console.warn('⚠️ Сервер вернул данные другого пользователя, игнорируем');
+          if (!_tryBootFromLocal()) resetToCharSelect();
+          return;
+        }
 
-      var server = r.save;
-      var currentTgId = getTgId();
-
-      if (server && server.data && server.data.tgId && currentTgId && server.data.tgId !== currentTgId) {
-        console.warn('⚠️ Сервер вернул данные другого пользователя, игнорируем');
-        _tryBootFromLocal();
-        return;
-      }
-
-      if (server && server.data && server.data.charId &&
-          typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
+        // Применяем данные с сервера
         SYNC.serverConfirmed = true;
         lsSetStatus('Применение данных', 85);
+        
         if (!SYNC.started) {
-          bootFromSnapshot(server.data);
+          bootFromSnapshot(serverData);
         } else {
-          hotApply(server.data);
+          hotApply(serverData);
         }
-      } else if (!server || !server.data) {
-        if (SYNC.started) {
-          SYNC.started = false;
-          SYNC.serverConfirmed = false;
+        // Перезаписываем локальный кэш данными с сервера
+        saveLocal();
+      } else {
+        // Если на сервере нет данных — пробуем локальный сейв
+        if (!_tryBootFromLocal()) {
           resetToCharSelect();
         }
-        clearLocal();
       }
     }).catch(function (err) {
       console.error('❌ [boot] serverLoad ошибка:', err.message);
-      _tryBootFromLocal();
+      // Сервер недоступен — пробуем локальный сейв
+      if (!_tryBootFromLocal()) {
+        resetToCharSelect();
+      }
     }).then(function () {
       _bootFinalize();
     });
-  }
-
-  // Загрузка из localStorage когда сервер недоступен.
-  // НЕ устанавливает serverConfirmed — сохранение на сервер заблокировано.
-  function _tryBootFromLocal() {
-    if (SYNC.started) return; // уже загружено
-    var local = loadLocal();
-    if (!local || !local.charId) return;
-    // Проверяем что локальные данные принадлежат текущему пользователю
-    var currentTgId = getTgId();
-    if (local.tgId && currentTgId && local.tgId !== currentTgId) return;
-    console.warn('⚠️ [boot] Сервер недоступен, загружаем из localStorage');
-    lsSetStatus('Офлайн режим', 85);
-    if (applySnapshot(local)) {
-      hideCharSelect();
-      SYNC.started = true;
-      // serverConfirmed остаётся false — сейвы на сервер не пойдут
-      if (typeof startGame === 'function') startGame();
-    }
   }
 
   // ═══════════════════════════════
@@ -720,7 +718,7 @@
             body: JSON.stringify({ initData: TG_INIT, charId: G.charId }),
           });
         } catch (e) {}
-        var snap = serializeState();
+        var snap = getDelta();
         serverSaveInstant({
           charId: G.charId,
           inventory: snap.inventory,
@@ -763,12 +761,7 @@
       window[name] = function () {
         var r = fn.apply(this, arguments);
         try {
-          var snap = serializeState();
-          var data = {};
-          INSTANT_FIELDS.forEach(function(field) {
-            if (snap[field] !== undefined) data[field] = snap[field];
-          });
-          saveInstant(data);
+          saveInstant({});
         } catch (e) {}
         return r;
       };
@@ -790,7 +783,7 @@
 
   window.onPixrDrop = function(amount) {
     G.pixr = (G.pixr || 0) + amount;
-    saveInstant({ pixr: G.pixr });
+    saveInstant({ pixrDelta: amount });
   };
 
   window.onExchangePixr = function() {
@@ -839,7 +832,7 @@
     save:        serverSaveBatch,
     flush:       flush,
     touch:       touch,
-    serialize:   serializeState,
+    serialize:   getDelta,
     apply:       applySnapshot,
     state:       SYNC,
     getTgId:     getTgId,
