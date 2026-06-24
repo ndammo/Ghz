@@ -27,7 +27,10 @@ function buyUpgrade(u) {
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
-  if (window.GameSync) window.GameSync.saveInstant();
+
+  if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+    window.GameSync.saveInstant();
+  }
 }
 
 function renderUpgrades() {

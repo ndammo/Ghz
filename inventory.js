@@ -116,7 +116,11 @@ function tryDropItem(floor) {
   var item = generateItem(floor);
   G.inventory.push(item);
   showDropNotif(item);
-  if (window.GameSync) window.GameSync.saveInstant();
+  
+  // ✅ СТАЛО (обернули в if):
+  if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+    window.GameSync.saveInstant();
+  }
 }
 
 // ── Уведомление о новом дропе ──

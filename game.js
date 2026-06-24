@@ -470,7 +470,11 @@ function _onBossKilled(m) {
   G.boss.lastFightTime = Date.now();
   // Прогрессируем на следующего босса (если не последний)
   if (G.boss.floor < 10) G.boss.floor = bossId + 1;
-  if (window.GameSync) window.GameSync.saveInstant();
+  
+// ✅ СТАЛО (проверка на существование GameSync):
+if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+  window.GameSync.saveInstant();
+}
   updateHUD();
 
   _showBossVictory(m.name, bossId, pixr, gold, xp, item);

@@ -385,40 +385,56 @@
     isOnline: function() { return !!TG_INIT; }
   };
 
-  // Хуки для игровых событий
+  // Хуки для игровых событий (вызываются из других файлов)
   window.onPixrDrop = function(amount) {
     G.pixr = (G.pixr || 0) + amount;
-    saveInstant();
+    if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+      window.GameSync.saveInstant();
+    }
   };
 
   window.onExchangePixr = function() {
-    saveInstant();
+    if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+      window.GameSync.saveInstant();
+    }
   };
 
   window.onItemDrop = function(item) {
     if (!G.inventory) G.inventory = [];
     G.inventory.push(item);
-    saveInstant();
+    if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+      window.GameSync.saveInstant();
+    }
   };
 
   window.onEquip = function(item) {
-    saveInstant();
+    if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+      window.GameSync.saveInstant();
+    }
   };
 
   window.onUpgrade = function(upgId, newLevel) {
-    saveInstant();
+    if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+      window.GameSync.saveInstant();
+    }
   };
 
   window.onSkillUpgrade = function(skillId, newLevel) {
-    saveInstant();
+    if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+      window.GameSync.saveInstant();
+    }
   };
 
   window.onLevelUp = function() {
-    saveInstant();
+    if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+      window.GameSync.saveInstant();
+    }
   };
 
   window.onFloorChange = function(newFloor) {
-    saveInstant();
+    if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+      window.GameSync.saveInstant();
+    }
   };
 
   // Запускаем инициализацию
