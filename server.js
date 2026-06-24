@@ -30,7 +30,7 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '1mb', type: ['application/json', 'text/plain'] }));
 
 // ═══════════════════════════════
-//  MongoDB
+//  MongoDB — надёжное подключение
 // ═══════════════════════════════
 const MONGODB_URI = process.env.MONGODB_URI;
 if (!MONGODB_URI) {
@@ -40,25 +40,67 @@ if (!MONGODB_URI) {
 
 console.log('🔗 [MongoDB] Подключение...');
 
-mongoose.connect(MONGODB_URI, {
-  serverSelectionTimeoutMS: 15000,
-  socketTimeoutMS: 45000,
-  maxPoolSize: 50,
-  minPoolSize: 10,
+const mongooseOptions = {
+  serverSelectionTimeoutMS: 30000,
+  socketTimeoutMS: 60000,
+  maxPoolSize: 10,
+  minPoolSize: 1,
   maxIdleTimeMS: 10000,
-})
-.then(() => {
-  console.log('✅ MongoDB подключена');
-  console.log(`📊 База данных: ${mongoose.connection.db.databaseName}`);
-})
-.catch(err => {
-  console.error('❌ MongoDB error:', err.message);
-  process.exit(1);
+  family: 4,
+};
+
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+
+function connectMongo() {
+  mongoose.connect(MONGODB_URI, mongooseOptions)
+    .then(() => {
+      console.log('✅ MongoDB подключена');
+      console.log(`📊 База данных: ${mongoose.connection.db.databaseName}`);
+      reconnectAttempts = 0;
+    })
+    .catch(err => {
+      reconnectAttempts++;
+      console.error(`❌ MongoDB error (попытка ${reconnectAttempts}):`, err.message);
+      
+      if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+        const delay = Math.min(5000 * reconnectAttempts, 30000);
+        console.log(`🔄 Переподключение через ${delay/1000} секунд...`);
+        setTimeout(connectMongo, delay);
+      } else {
+        console.error('❌ Не удалось подключиться к MongoDB после 10 попыток');
+        process.exit(1);
+      }
+    });
+}
+
+mongoose.connection.on('error', err => {
+  console.error('❌ MongoDB connection error:', err.message);
 });
 
+mongoose.connection.on('disconnected', () => {
+  console.warn('⚠️ MongoDB отключена. Переподключение...');
+  setTimeout(connectMongo, 5000);
+});
+
+connectMongo();
+
+// 🔥 Keep-alive пинг каждые 30 секунд
+setInterval(async () => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      await mongoose.connection.db.admin().ping();
+    }
+  } catch (e) {
+    // тихо логируем
+  }
+}, 30000);
+
 // ═══════════════════════════════
-//  СХЕМЫ
+//  СХЕМЫ — ИСПРАВЛЕНЫ (tgId, charId)
 // ═══════════════════════════════
+
+// ── Пользователи ──
 const SaveSchema = new mongoose.Schema({
   tgId:      { type: String, required: true, unique: true },
   username:  { type: String, default: '' },
@@ -75,7 +117,8 @@ const SaveSchema = new mongoose.Schema({
   version:   { type: Number, default: 0 },
 }, { minimize: false });
 
-// Индексы (без дублирования tgId, т.к. unique: true уже создаёт индекс)
+// Индексы (только один индекс на tgId)
+SaveSchema.index({ tgId: 1 }, { unique: true });
 SaveSchema.index({ cp: -1, level: -1 });
 SaveSchema.index({ refBy: 1 });
 SaveSchema.index({ updatedAt: -1 });
@@ -315,10 +358,9 @@ app.post('/api/load', async (req, res) => {
   }
 });
 
-// ═══════════════════════════════════════════════════════
-//  СОХРАНЕНИЕ — ИСПРАВЛЕННАЯ ВЕРСИЯ
-//  Обновляет ТОЛЬКО конкретные поля, не затирая остальные
-// ═══════════════════════════════════════════════════════
+// ═══════════════════════════════
+//  СОХРАНЕНИЕ — ИСПРАВЛЕННАЯ ВЕРСИЯ (атомарные обновления)
+// ═══════════════════════════════
 app.post('/api/save', async (req, res) => {
   const startTime = Date.now();
   
@@ -341,7 +383,7 @@ app.post('/api/save', async (req, res) => {
       return res.status(403).json({ ok: false, error: 'user_mismatch' });
     }
 
-    // 🔥 ОСНОВНЫЕ ПОЛЯ (всегда обновляются)
+    // ОСНОВНЫЕ ПОЛЯ (всегда обновляются)
     const updateData = {
       username: tg.username, 
       firstName: tg.firstName,
@@ -352,24 +394,13 @@ app.post('/api/save', async (req, res) => {
       updatedAt: Date.now(),
     };
 
-    // 🔥 ДИНАМИЧЕСКИЕ ПОЛЯ — обновляем ТОЛЬКО те, что пришли
+    // ДИНАМИЧЕСКИЕ ПОЛЯ — обновляем ТОЛЬКО те, что пришли
     const dataFields = {};
     const allowedFields = [
-      // Игровые ресурсы
       'gold', 'hp', 'xp', 'xpNeeded', 'killCount', 'potions',
-      'pixr', 'gram',
-      
-      // Инвентарь и экипировка
-      'inventory', 'equipped', 'upg', 'skills',
-      
-      // Прогресс
+      'pixr', 'gram', 'inventory', 'equipped', 'upg', 'skills',
       'potionLv', 'potionThreshold', 'bp', 'prem', 'boss',
-      
-      // Задания
-      'dailyTasks', 'specialTasksClaimed',
-      
-      // Служебные
-      'invIdCounter', 'invFilter'
+      'dailyTasks', 'specialTasksClaimed', 'invIdCounter', 'invFilter'
     ];
     
     allowedFields.forEach(field => {
@@ -378,29 +409,19 @@ app.post('/api/save', async (req, res) => {
       }
     });
 
-    // Если data содержит поля, которых нет в списке — логируем, но не обновляем
-    const unknownFields = Object.keys(data).filter(f => 
-      !allowedFields.includes(f) && 
-      !['tgId', 'charId', 'level', 'cp', 'floor', 'v', 'updatedAt', 'baseStats', 'stats', 'maxHp', 'version'].includes(f)
-    );
-    if (unknownFields.length) {
-      console.warn(`⚠️ [save] Неизвестные поля от ${tg.id}:`, unknownFields);
-    }
-
-    // 🔥 Проверяем версию (если клиент её прислал)
+    // Проверка версии (защита от конфликтов)
     const clientVersion = data.version !== undefined ? Number(data.version) : null;
     const query = { tgId: tg.id };
     if (clientVersion !== null && !isNaN(clientVersion)) {
       query.version = clientVersion;
     }
 
-    // Финальный объект обновления
     const updateOperation = {
       $set: {
         ...updateData,
         ...dataFields,
       },
-      $inc: { version: 1 }  // 🔥 всегда увеличиваем версию
+      $inc: { version: 1 }
     };
 
     const result = await Save.findOneAndUpdate(
@@ -410,11 +431,11 @@ app.post('/api/save', async (req, res) => {
         upsert: true,
         new: true,
         lean: true,
+        maxTimeMS: 10000,
       }
     );
 
     if (!result) {
-      // Конфликт версий
       const fresh = await Save.findOne({ tgId: tg.id }).lean();
       return res.status(409).json({ 
         ok: false, 
@@ -431,7 +452,15 @@ app.post('/api/save', async (req, res) => {
   } catch (e) {
     const duration = Date.now() - startTime;
     console.error(`❌ [save] ОШИБКА (${duration}ms):`, e.message);
-    console.error(e.stack);
+    
+    if (e.name === 'MongoNetworkError' || e.message.includes('timed out')) {
+      return res.status(503).json({ 
+        ok: false, 
+        error: 'db_timeout',
+        message: 'База данных временно недоступна'
+      });
+    }
+    
     res.status(500).json({ 
       ok: false, 
       error: 'server_error',
@@ -1092,10 +1121,7 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
     if (action === 'approve') {
       tx.status = 'approved';
       tx.approvedAt = Date.now();
-
-      // 🔥 ИСПРАВЛЕНО: используем $inc, а не $set
       const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
-      
       await Save.findOneAndUpdate(
         { tgId: tx.userId },
         { 
@@ -1103,9 +1129,6 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
           $set: { updatedAt: Date.now() }
         }
       );
-      
-      console.log(`✅ [admin] Начислено ${gramDelta} GRAM пользователю ${tx.userId}`);
-      
     } else {
       tx.status = 'rejected';
       tx.rejectedAt = Date.now();
@@ -1246,7 +1269,6 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     const updates = req.body;
     
     const updateData = {};
-    const incData = {};
     
     if (updates.gold !== undefined) updateData['data.gold'] = updates.gold;
     if (updates.pixr !== undefined) updateData['data.pixr'] = updates.pixr;
@@ -1257,11 +1279,13 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     if (updates.charId !== undefined) updateData.charId = updates.charId;
     
     updateData.updatedAt = Date.now();
-    incData.version = 1;
     
-    await Save.updateOne(
+    await Save.findOneAndUpdate(
       { tgId: tgId },
-      { $set: updateData, $inc: incData }
+      { 
+        $set: updateData,
+        $inc: { version: 1 }
+      }
     );
     
     await logAdminAction(req.admin.login, 'update_user', tgId, updates);
@@ -1469,7 +1493,6 @@ app.post('/admin/api/broadcast', requireAdmin, async (req, res) => {
   }
 });
 
-// ── Админ: список заданий ──
 app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
   try {
     const tasks = await SpecialTask.find().sort({ createdAt: -1 }).lean();
@@ -1477,7 +1500,6 @@ app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-// ── Админ: создать задание ──
 app.post('/admin/api/tasks', requireAdmin, async (req, res) => {
   try {
     const { title, description, link, linkText, rewardType, rewardAmount } = req.body;
@@ -1499,7 +1521,6 @@ app.post('/admin/api/tasks', requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-// ── Админ: удалить задание ──
 app.delete('/admin/api/tasks/:taskId', requireAdmin, async (req, res) => {
   try {
     await SpecialTask.deleteOne({ taskId: req.params.taskId });
@@ -1508,7 +1529,6 @@ app.delete('/admin/api/tasks/:taskId', requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-// ── Админ: вкл/выкл задание ──
 app.patch('/admin/api/tasks/:taskId/toggle', requireAdmin, async (req, res) => {
   try {
     const task = await SpecialTask.findOne({ taskId: req.params.taskId });
@@ -1582,5 +1602,5 @@ try {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server on :${PORT}`);
-  console.log(`📊 MongoDB: 5GB, Pool: 50`);
+  console.log(`📊 MongoDB: 10 pool, keep-alive включён`);
 });
