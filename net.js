@@ -267,18 +267,15 @@
     if (SAVE_INTERVAL > 0) {
       saveTimer = setTimeout(function() {
         saveToServer(false);
-        // Перезапускаем цикл
-        if (SAVE_INTERVAL > 0) {
-          saveTimer = setTimeout(arguments.callee, SAVE_INTERVAL);
-        }
+        startPeriodicSave();
       }, SAVE_INTERVAL);
     }
   }
 
   // ═══════════════════════════════
-  //  ЗАПУСК ЦИКЛА СОХРАНЕНИЯ
+  //  ЗАПУСК ПЕРИОДИЧЕСКОГО СОХРАНЕНИЯ
   // ═══════════════════════════════
-  function startSaveLoop() {
+  function startPeriodicSave() {
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
@@ -294,6 +291,18 @@
         }, SAVE_INTERVAL);
       }
     }, SAVE_INTERVAL);
+  }
+
+  // ═══════════════════════════════
+  //  ЗАПУСК ЦИКЛА СОХРАНЕНИЯ
+  // ═══════════════════════════════
+  function startSaveLoop() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+
+    startPeriodicSave();
 
     // Сохраняем при сворачивании
     document.addEventListener('visibilitychange', function() {
@@ -372,6 +381,7 @@
     getTgId: getTgId,
     loadFromServer: loadFromServer,
     API: API,
+    _INIT: TG_INIT,
     isOnline: function() { return !!TG_INIT; }
   };
 
