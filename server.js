@@ -383,7 +383,7 @@ app.post('/api/save', async (req, res) => {
       return res.status(403).json({ ok: false, error: 'user_mismatch' });
     }
 
-    // ОСНОВНЫЕ ПОЛЯ (всегда обновляются)
+    // ОСНОВНЫЕ ПОЛЯ
     const updateData = {
       username: tg.username, 
       firstName: tg.firstName,
@@ -394,7 +394,7 @@ app.post('/api/save', async (req, res) => {
       updatedAt: Date.now(),
     };
 
-    // ДИНАМИЧЕСКИЕ ПОЛЯ — обновляем ТОЛЬКО те, что пришли
+    // ДИНАМИЧЕСКИЕ ПОЛЯ
     const dataFields = {};
     const allowedFields = [
       'gold', 'hp', 'xp', 'xpNeeded', 'killCount', 'potions',
@@ -409,23 +409,17 @@ app.post('/api/save', async (req, res) => {
       }
     });
 
-    // Проверка версии (защита от конфликтов)
-    const clientVersion = data.version !== undefined ? Number(data.version) : null;
-    const query = { tgId: tg.id };
-    if (clientVersion !== null && !isNaN(clientVersion)) {
-      query.version = clientVersion;
-    }
-
+    // 🔥 ИСПРАВЛЕНО: убираем проверку version — всегда обновляем по tgId
     const updateOperation = {
       $set: {
         ...updateData,
         ...dataFields,
       },
-      $inc: { version: 1 }
+      $inc: { version: 1 }  // ← всегда увеличиваем
     };
 
     const result = await Save.findOneAndUpdate(
-      query,
+      { tgId: tg.id },  // ← ТОЛЬКО tgId
       updateOperation,
       { 
         upsert: true,
@@ -434,16 +428,6 @@ app.post('/api/save', async (req, res) => {
         maxTimeMS: 10000,
       }
     );
-
-    if (!result) {
-      const fresh = await Save.findOne({ tgId: tg.id }).lean();
-      return res.status(409).json({ 
-        ok: false, 
-        error: 'conflict',
-        serverVersion: fresh ? fresh.version : 0,
-        message: 'Данные устарели, обновите страницу'
-      });
-    }
 
     const duration = Date.now() - startTime;
     console.log(`✅ [save] Сохранено для ${tg.id} (${duration}ms), версия: ${result.version}`);
