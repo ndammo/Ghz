@@ -173,7 +173,7 @@ function verifyTelegram(initData) {
 }
 
 // ═══════════════════════════════
-//  ADMINS — оставляем как есть
+//  ADMINS
 // ═══════════════════════════════
 const ADMIN_CREDENTIALS = {
   admin: {
@@ -227,7 +227,7 @@ async function logAdminAction(admin, action, target, details) {
 }
 
 // ═══════════════════════════════
-//  АДМИН-РОУТЫ (оставляем REST)
+//  АДМИН-РОУТЫ
 // ═══════════════════════════════
 
 app.post('/admin/login', express.json(), (req, res) => {
@@ -614,7 +614,7 @@ try {
 }
 
 // ═══════════════════════════════
-//  SOCKET.IO — НОВАЯ СИСТЕМА СОХРАНЕНИЯ
+//  SOCKET.IO
 // ═══════════════════════════════
 
 const server = http.createServer(app);
@@ -628,7 +628,6 @@ const io = new Server(server, {
   transports: ['websocket', 'polling']
 });
 
-// Хранилище активных пользователей
 const onlineUsers = new Map();
 
 io.use(async (socket, next) => {
@@ -657,6 +656,7 @@ io.on('connection', (socket) => {
 
   // ── ЗАГРУЗКА ──
   socket.on('load', async (callback) => {
+    console.log(`📥 [socket] Загрузка для ${tgId}`);
     try {
       const doc = await Save.findOne({ tgId: tgId }).lean();
       if (!doc) {
@@ -666,8 +666,10 @@ io.on('connection', (socket) => {
           firstName: socket.userData.firstName || '',
           data: { tgId: tgId }
         });
+        console.log(`✅ [socket] Новый игрок ${tgId}`);
         return callback({ ok: true, save: { charId: null, data: null } });
       }
+      console.log(`✅ [socket] Игрок ${tgId} загружен`);
       callback({
         ok: true,
         save: {
@@ -682,8 +684,9 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ── СОХРАНЕНИЕ (каждую секунду) ──
+  // ── СОХРАНЕНИЕ ──
   socket.on('save', async (data, callback) => {
+    console.log(`💾 [socket] Сохранение для ${tgId}`);
     try {
       if (!data || typeof data !== 'object') {
         return callback({ ok: false, error: 'bad_data' });
@@ -716,8 +719,9 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ── МГНОВЕННОЕ СОХРАНЕНИЕ (для важных вещей) ──
+  // ── МГНОВЕННОЕ СОХРАНЕНИЕ ──
   socket.on('save_instant', async (data, callback) => {
+    console.log(`⚡ [socket] Мгновенное сохранение ${Object.keys(data).join(',')} для ${tgId}`);
     try {
       const key = Object.keys(data)[0];
       if (!key) return callback({ ok: false, error: 'no_key' });
@@ -740,6 +744,7 @@ io.on('connection', (socket) => {
 
   // ── ВЫБОР ПЕРСОНАЖА ──
   socket.on('select_character', async (charId, callback) => {
+    console.log(`🎭 [socket] Выбор персонажа ${charId} для ${tgId}`);
     try {
       await Save.findOneAndUpdate(
         { tgId: tgId },
@@ -758,6 +763,7 @@ io.on('connection', (socket) => {
 
   // ── ЛИДЕРБОРД ──
   socket.on('leaderboard', async (callback) => {
+    console.log(`🏆 [socket] Лидерборд для ${tgId}`);
     try {
       const top = await Save.find({ charId: { $ne: null } })
         .sort({ cp: -1, level: -1 })
@@ -772,6 +778,7 @@ io.on('connection', (socket) => {
 
   // ── РЕФЕРАЛЫ ──
   socket.on('ref_friends', async (callback) => {
+    console.log(`👥 [socket] Рефералы для ${tgId}`);
     try {
       const doc = await Save.findOne({ tgId: tgId })
         .select('refMilestones -_id').lean();
@@ -782,7 +789,6 @@ io.on('connection', (socket) => {
 
       const refLink = `https://t.me/${BOT_USERNAME}?startapp=${tgId}`;
 
-      // Рассчёт pendingGold
       let pendingGold = 0;
       const newMilestones = { ...milestones };
       friends.forEach(f => {
@@ -815,6 +821,7 @@ io.on('connection', (socket) => {
 
   // ── ЗАБРАТЬ НАГРАДУ ЗА РЕФЕРАЛОВ ──
   socket.on('ref_claim', async (callback) => {
+    console.log(`💰 [socket] Реферальный клейм для ${tgId}`);
     try {
       const doc = await Save.findOne({ tgId: tgId });
       if (!doc) return callback({ ok: false, error: 'no_save' });
@@ -863,6 +870,7 @@ io.on('connection', (socket) => {
 
   // ── ТРАНЗАКЦИИ: ПОПОЛНЕНИЕ ──
   socket.on('deposit', async (amount, callback) => {
+    console.log(`📥 [socket] Пополнение ${amount} GRAM от ${tgId}`);
     try {
       if (!amount || amount < 1) {
         return callback({ ok: false, error: 'Минимальная сумма 1 GRAM' });
@@ -931,6 +939,7 @@ io.on('connection', (socket) => {
 
   // ── ТРАНЗАКЦИИ: ВЫВОД ──
   socket.on('withdraw', async (data, callback) => {
+    console.log(`📤 [socket] Вывод ${data.amount} GRAM от ${tgId}`);
     try {
       const { amount, wallet } = data;
       
@@ -1009,6 +1018,7 @@ io.on('connection', (socket) => {
 
   // ── ПОЛУЧИТЬ ТРАНЗАКЦИИ ──
   socket.on('get_transactions', async (callback) => {
+    console.log(`📋 [socket] Получение транзакций для ${tgId}`);
     try {
       const txs = await Transaction.find({ userId: tgId })
         .sort({ createdAt: -1 })
@@ -1023,6 +1033,7 @@ io.on('connection', (socket) => {
 
   // ── ЗАДАНИЯ ──
   socket.on('get_tasks', async (callback) => {
+    console.log(`📋 [socket] Получение заданий для ${tgId}`);
     try {
       const [tasks, user] = await Promise.all([
         SpecialTask.find({ active: true }).sort({ createdAt: -1 }).lean(),
@@ -1042,6 +1053,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('claim_daily_task', async (milestoneId, callback) => {
+    console.log(`📋 [socket] Клейм дейли задания ${milestoneId} для ${tgId}`);
     const DAILY_MILESTONES = [
       { id: 0, minutes: 10, rewardType: 'potions', amount: 50 },
       { id: 1, minutes: 20, rewardType: 'gold', amount: 1000 },
@@ -1088,6 +1100,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('claim_special_task', async (taskId, callback) => {
+    console.log(`📋 [socket] Клейм спец задания ${taskId} для ${tgId}`);
     try {
       const [task, user] = await Promise.all([
         SpecialTask.findOne({ taskId, active: true }).lean(),
@@ -1120,6 +1133,7 @@ io.on('connection', (socket) => {
 
   // ── ОБМЕН PIXR → GRAM ──
   socket.on('exchange_pixr', async (amount, callback) => {
+    console.log(`🔄 [socket] Обмен ${amount} PIXR → GRAM для ${tgId}`);
     try {
       if (!amount || amount < 1000 || amount % 1000 !== 0) {
         return callback({ ok: false, error: 'Сумма должна быть кратна 1000 PIXR' });
