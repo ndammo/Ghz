@@ -1,14 +1,17 @@
 /*
   ══════════════════════════════════════════════════════
-  net.js — Сетевой слой (МАКСИМАЛЬНО УПРОЩЁННЫЙ)
+  net.js — Сетевой слой (УПРОЩЁННЫЙ, НО РАБОЧИЙ)
   - Нет localStorage
-  - Мгновенное сохранение для важных действий
+  - Мгновенное сохранение
   - Полное сохранение каждые 5 секунд
   ══════════════════════════════════════════════════════
 */
 (function () {
   'use strict';
 
+  // ═══════════════════════════════
+  //  КОНФИГ
+  // ═══════════════════════════════
   var API = (function() {
     var url = new URLSearchParams(window.location.search).get('api') || 
               window.ENV_API_URL || 
@@ -39,24 +42,29 @@
     return null;
   }
 
-  // ── Полный слепок состояния ──
+  // ═══════════════════════════════
+  //  ПОЛНЫЙ СНАПШОТ
+  // ═══════════════════════════════
   function getFullSnapshot() {
     var eq = {};
     var EQUIP_SLOTS = ['weapon', 'armor', 'ring', 'boots', 'helmet'];
     EQUIP_SLOTS.forEach(function (slot) {
-      var it = G.equipped && G.equipped[slot];
+      var it = window.G && window.G.equipped && window.G.equipped[slot];
       eq[slot] = it ? it.id : null;
     });
 
-    var inv = (G.inventory || []).map(function (it) {
+    var inv = (window.G && window.G.inventory || []).map(function (it) {
       var c = JSON.parse(JSON.stringify(it));
       delete c._equipped;
       return c;
     });
 
+    var G = window.G || {};
+    var G_CHAR = window.G_CHAR || null;
+
     return {
       tgId: getTgId(),
-      charId: (typeof G_CHAR !== 'undefined' && G_CHAR) ? G_CHAR.id : (G.charId || null),
+      charId: G_CHAR ? G_CHAR.id : (G.charId || null),
       inventory: inv,
       equipped: eq,
       upg: JSON.parse(JSON.stringify(G.upg || {})),
@@ -76,23 +84,24 @@
       xpNeeded: G.xpNeeded || 100,
       killCount: G.killCount || 0,
       potions: G.potions || 0,
-      invIdCounter: (typeof _invIdCounter === 'number') ? _invIdCounter : 0,
+      invIdCounter: (typeof window._invIdCounter === 'number') ? window._invIdCounter : 0,
       dailyTasks: JSON.parse(JSON.stringify(G.dailyTasks || { date: '', seconds: 0, claimed: [] })),
       specialTasksClaimed: JSON.parse(JSON.stringify(G.specialTasksClaimed || {})),
       invFilter: G.invFilter || 'all',
       maxFloor: G.maxFloor || 1,
-      cp: (typeof calcCP === 'function') ? calcCP() : 0,
+      cp: (typeof window.calcCP === 'function') ? window.calcCP() : 0,
       updatedAt: Date.now(),
     };
   }
 
-  // ── СОХРАНЕНИЕ НА СЕРВЕР ──
+  // ═══════════════════════════════
+  //  СОХРАНЕНИЕ
+  // ═══════════════════════════════
   function saveToServer(instant) {
     if (!SYNC.online || !SYNC.serverConfirmed || SYNC.pushing) {
       return;
     }
 
-    // Если это не мгновенное сохранение — проверяем интервал 5 секунд
     if (!instant) {
       var now = Date.now();
       if (now - SYNC.lastFullSave < 5000) return;
@@ -120,13 +129,11 @@
     });
   }
 
-  // ── МГНОВЕННОЕ СОХРАНЕНИЕ ──
   function saveInstant() {
     if (!SYNC.started || !SYNC.online || !SYNC.serverConfirmed) return;
     saveToServer(true);
   }
 
-  // ── ПЕРИОДИЧЕСКОЕ СОХРАНЕНИЕ (каждые 5 секунд) ──
   function startPeriodicSave() {
     if (SYNC.saveTimer) return;
     SYNC.saveTimer = setInterval(function() {
@@ -136,7 +143,9 @@
     }, 5000);
   }
 
-  // ── ПРИМЕНЕНИЕ СНАПШОТА ──
+  // ═══════════════════════════════
+  //  ПРИМЕНЕНИЕ СНАПШОТА
+  // ═══════════════════════════════
   function applySnapshot(s) {
     if (!s || typeof s !== 'object') return false;
 
@@ -146,11 +155,19 @@
       return false;
     }
 
+    var G = window.G;
+    if (!G) {
+      console.error('❌ G не определён!');
+      return false;
+    }
+
     // Персонаж
-    if (s.charId && typeof CHARS !== 'undefined' && CHARS[s.charId]) {
-      G_CHAR = CHARS[s.charId];
+    if (s.charId && typeof window.CHARS !== 'undefined' && window.CHARS[s.charId]) {
+      window.G_CHAR = window.CHARS[s.charId];
       G.charId = s.charId;
-      if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
+      if (typeof window.applyCharacterSprites === 'function') {
+        window.applyCharacterSprites(window.G_CHAR);
+      }
     }
 
     // Базовые статы
@@ -159,9 +176,10 @@
       s.upg || {}
     );
 
-    if (G_CHAR && typeof UPG_DEFS !== 'undefined') {
+    var G_CHAR = window.G_CHAR;
+    if (G_CHAR && typeof window.UPG_DEFS !== 'undefined') {
       G.baseStats = Object.assign({}, G_CHAR.baseStats);
-      UPG_DEFS.forEach(function(u) {
+      window.UPG_DEFS.forEach(function(u) {
         var lv = G.upg[u.id] || 0;
         if (lv > 0) {
           G.baseStats[u.stat] = parseFloat(
@@ -200,7 +218,7 @@
     G.dailyTasks = s.dailyTasks || { date: '', seconds: 0, claimed: [] };
     G.specialTasksClaimed = s.specialTasksClaimed || {};
     G.xpNeeded = s.xpNeeded || 100;
-    if (typeof s.invIdCounter === 'number') _invIdCounter = s.invIdCounter;
+    if (typeof s.invIdCounter === 'number') window._invIdCounter = s.invIdCounter;
 
     // Инвентарь
     G.inventory = (s.inventory || []).map(function (it) {
@@ -210,7 +228,9 @@
     });
 
     G.inventory.forEach(function (i) {
-      if (typeof i.id === 'number' && i.id > _invIdCounter) _invIdCounter = i.id;
+      if (typeof i.id === 'number' && i.id > (window._invIdCounter || 0)) {
+        window._invIdCounter = i.id;
+      }
     });
 
     // Экипировка
@@ -228,7 +248,7 @@
     });
 
     // Пересчёт статов
-    if (typeof recalcStats === 'function') recalcStats();
+    if (typeof window.recalcStats === 'function') window.recalcStats();
     
     G.maxHp = s.maxHp || G.baseStats.hp || 100;
     G.hp = s.hp || G.maxHp;
@@ -238,7 +258,9 @@
     return true;
   }
 
-  // ── ЗАГРУЗКА С СЕРВЕРА ──
+  // ═══════════════════════════════
+  //  ЗАГРУЗКА С СЕРВЕРА
+  // ═══════════════════════════════
   function serverLoad() {
     if (!SYNC.online) return Promise.resolve(null);
     
@@ -254,7 +276,9 @@
     });
   }
 
-  // ── ЭКРАН ЗАГРУЗКИ ──
+  // ═══════════════════════════════
+  //  ЭКРАН ЗАГРУЗКИ
+  // ═══════════════════════════════
   function lsSetStatus(text, pct) {
     var el = document.getElementById('lsStatus');
     if (el) el.innerHTML = '<span class="ls-dots">' + text + '</span>';
@@ -291,8 +315,18 @@
   }
 
   function stopCharSelectAnims() {
-    try { if (typeof _csSpriteTimers !== 'undefined') Object.keys(_csSpriteTimers).forEach(function (k) { clearInterval(_csSpriteTimers[k]); }); } catch (e) {}
-    try { if (typeof _csParticleTimer !== 'undefined' && _csParticleTimer) cancelAnimationFrame(_csParticleTimer); } catch (e) {}
+    try {
+      if (typeof window._csSpriteTimers !== 'undefined') {
+        Object.keys(window._csSpriteTimers).forEach(function (k) {
+          clearInterval(window._csSpriteTimers[k]);
+        });
+      }
+    } catch (e) {}
+    try {
+      if (typeof window._csParticleTimer !== 'undefined' && window._csParticleTimer) {
+        cancelAnimationFrame(window._csParticleTimer);
+      }
+    } catch (e) {}
   }
 
   function hideCharSelect() {
@@ -306,28 +340,31 @@
     if (!applySnapshot(snap)) return;
     hideCharSelect();
     SYNC.started = true;
-    if (typeof startGame === 'function') startGame();
+    if (typeof window.startGame === 'function') window.startGame();
     startPeriodicSave();
   }
 
   function resetToCharSelect() {
-    if (typeof gameActive !== 'undefined') window.gameActive = false;
-    if (typeof G_CHAR !== 'undefined') window.G_CHAR = null;
-    try { if (typeof G !== 'undefined') {
-      G.charId = null;
-      G.gold = 0; G.pixr = 0; G.gram = 0;
-      G.level = 1; G.xp = 0; G.floor = 1; G.maxFloor = 1; G.killCount = 0;
-      G.inventory = []; G.equipped = {};
-      G.upg = { atk:0, def:0, hp:0, spd:0, crit:0, dodge:0, atkSpd:0 };
-      G.bp = { active: false, claimed: [] };
-      G.prem = { tier: null, expiresAt: 0 };
-      G.skills = {};
-      G.potions = 0;
-      G.potionLv = 0;
-      G.dailyTasks = { date: '', seconds: 0, claimed: [] };
-      G.specialTasksClaimed = {};
-    }} catch(e) {}
-    if (typeof _invIdCounter !== 'undefined') window._invIdCounter = 0;
+    if (typeof window.gameActive !== 'undefined') window.gameActive = false;
+    if (typeof window.G_CHAR !== 'undefined') window.G_CHAR = null;
+    try {
+      var G = window.G;
+      if (G) {
+        G.charId = null;
+        G.gold = 0; G.pixr = 0; G.gram = 0;
+        G.level = 1; G.xp = 0; G.floor = 1; G.maxFloor = 1; G.killCount = 0;
+        G.inventory = []; G.equipped = {};
+        G.upg = { atk:0, def:0, hp:0, spd:0, crit:0, dodge:0, atkSpd:0 };
+        G.bp = { active: false, claimed: [] };
+        G.prem = { tier: null, expiresAt: 0 };
+        G.skills = {};
+        G.potions = 0;
+        G.potionLv = 0;
+        G.dailyTasks = { date: '', seconds: 0, claimed: [] };
+        G.specialTasksClaimed = {};
+      }
+    } catch(e) {}
+    if (typeof window._invIdCounter !== 'undefined') window._invIdCounter = 0;
     
     var cs = document.getElementById('charSelect');
     if (cs) cs.classList.remove('hidden');
@@ -350,7 +387,9 @@
     console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online);
   }
 
-  // ── ЗАГРУЗКА ИГРЫ ──
+  // ═══════════════════════════════
+  //  ЗАГРУЗКА ИГРЫ
+  // ═══════════════════════════════
   function boot() {
     lsInitStars();
     lsSetStatus('Подключение', 10);
@@ -390,7 +429,9 @@
       });
   }
 
-  // ── ХУКИ ДЛЯ МГНОВЕННОГО СОХРАНЕНИЯ ──
+  // ═══════════════════════════════
+  //  ХУКИ ДЛЯ МГНОВЕННОГО СОХРАНЕНИЯ
+  // ═══════════════════════════════
   function hookActions() {
     var instantActions = [
       'equipItem', 'unequipItem', 'destroyItem', 'refineItem',
@@ -409,10 +450,14 @@
     });
   }
 
-  // ── ЭКСПОРТ ──
+  // ═══════════════════════════════
+  //  ЭКСПОРТ ДЛЯ ИГРЫ
+  // ═══════════════════════════════
   window.onPixrDrop = function(amount) {
-    G.pixr = (G.pixr || 0) + amount;
-    saveInstant();
+    if (window.G) {
+      window.G.pixr = (window.G.pixr || 0) + amount;
+      saveInstant();
+    }
   };
 
   window.onExchangePixr = function() {
@@ -420,8 +465,10 @@
   };
 
   window.onItemDrop = function(item) {
-    G.inventory.push(item);
-    saveInstant();
+    if (window.G) {
+      window.G.inventory.push(item);
+      saveInstant();
+    }
   };
 
   window.onEquip = function(item) {
@@ -444,7 +491,9 @@
     saveInstant();
   };
 
-  // ── ПРИНУДИТЕЛЬНОЕ СОХРАНЕНИЕ ПРИ ЗАКРЫТИИ ──
+  // ═══════════════════════════════
+  //  ПРИНУДИТЕЛЬНОЕ СОХРАНЕНИЕ
+  // ═══════════════════════════════
   function flushOnClose() {
     if (!SYNC.started || !SYNC.online || !SYNC.serverConfirmed) return;
     var snapshot = getFullSnapshot();
@@ -470,7 +519,9 @@
   window.addEventListener('pagehide', flushOnClose);
   window.addEventListener('beforeunload', flushOnClose);
 
-  // ── ЗАПУСК ──
+  // ═══════════════════════════════
+  //  ЗАПУСК
+  // ═══════════════════════════════
   hookActions();
 
   if (document.readyState === 'complete') {
@@ -488,4 +539,5 @@
     _API: API,
     get _INIT() { return TG_INIT; },
   };
+
 })();
