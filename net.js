@@ -402,66 +402,98 @@
     }).then(function (r) { return r.json(); });
   }
 
-  // ⚡ ОТЛОЖЕННОЕ СОХРАНЕНИЕ — КАЖДЫЕ 3 СЕКУНДЫ
-  function serverSaveBatch() {
-    if (!SYNC.online || !SYNC.serverConfirmed || SYNC.pushing) {
-      return;
-    }
-
-    // Пауза при rate limit (429)
-    if (SYNC.rlBackoffUntil && Date.now() < SYNC.rlBackoffUntil) {
-      return;
-    }
-    
-    var currentHp = G.hp;
-    var currentGold = G.gold;
-    var currentXp = G.xp;
-    var currentKillCount = G.killCount;
-    var currentPotions = G.potions;
-    
-    var hasChanges = 
-      currentHp !== SYNC.lastHp ||
-      currentGold !== SYNC.lastGold ||
-      currentXp !== SYNC.lastXp ||
-      currentKillCount !== SYNC.lastKillCount ||
-      currentPotions !== SYNC.lastPotions;
-
-    if (!hasChanges) return;
-
-    SYNC.pushing = true;
-    
-    var snap = serializeState();
-    snap.hp = currentHp;
-    snap.gold = currentGold;
-    snap.xp = currentXp;
-    snap.killCount = currentKillCount;
-    snap.potions = currentPotions;
-    snap.updatedAt = Date.now();
-    
-    fetch(API + '/api/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData: TG_INIT, data: snap }),
-    }).then(function (r) { return r.json(); })
-      .then(function (r) {
-        if (r && r.ok) {
-          SYNC.lastHp = currentHp;
-          SYNC.lastGold = currentGold;
-          SYNC.lastXp = currentXp;
-          SYNC.lastKillCount = currentKillCount;
-          SYNC.lastPotions = currentPotions;
-          SYNC.lastServerTs = r.updatedAt || snap.updatedAt;
-          SYNC.rlBackoffUntil = 0;
-          saveLocal();
-        } else if (r && r.error === 'rate_limit') {
-          // Пауза 6 секунд при rate limit
-          SYNC.rlBackoffUntil = Date.now() + 6000;
-          console.warn('⚠️ [save] rate limit, пауза 6s');
-        }
-      })
-      .catch(function () {})
-      .then(function () { SYNC.pushing = false; });
+  // ═══════════════════════════════════════════════════════
+//  ОТЛОЖЕННОЕ СОХРАНЕНИЕ — С ОБРАБОТКОЙ КОНФЛИКТОВ
+// ═══════════════════════════════════════════════════════
+function serverSaveBatch() {
+  if (!SYNC.online || !SYNC.serverConfirmed || SYNC.pushing) {
+    return;
   }
+
+  // Пауза при rate limit (429)
+  if (SYNC.rlBackoffUntil && Date.now() < SYNC.rlBackoffUntil) {
+    return;
+  }
+  
+  var currentHp = G.hp;
+  var currentGold = G.gold;
+  var currentXp = G.xp;
+  var currentKillCount = G.killCount;
+  var currentPotions = G.potions;
+  
+  var hasChanges = 
+    currentHp !== SYNC.lastHp ||
+    currentGold !== SYNC.lastGold ||
+    currentXp !== SYNC.lastXp ||
+    currentKillCount !== SYNC.lastKillCount ||
+    currentPotions !== SYNC.lastPotions;
+
+  if (!hasChanges) return;
+
+  SYNC.pushing = true;
+  
+  var snap = serializeState();
+  snap.hp = currentHp;
+  snap.gold = currentGold;
+  snap.xp = currentXp;
+  snap.killCount = currentKillCount;
+  snap.potions = currentPotions;
+  snap.updatedAt = Date.now();
+  
+  // 🔥 Добавляем версию (если есть)
+  if (SYNC.version !== undefined) {
+    snap.version = SYNC.version;
+  }
+  
+  fetch(API + '/api/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: TG_INIT, data: snap }),
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(r) {
+    if (r && r.ok) {
+      SYNC.lastHp = currentHp;
+      SYNC.lastGold = currentGold;
+      SYNC.lastXp = currentXp;
+      SYNC.lastKillCount = currentKillCount;
+      SYNC.lastPotions = currentPotions;
+      SYNC.lastServerTs = r.updatedAt || snap.updatedAt;
+      
+      // 🔥 Обновляем версию
+      if (r.version !== undefined) {
+        SYNC.version = r.version;
+      }
+      
+      SYNC.rlBackoffUntil = 0;
+      saveLocal();
+    } else if (r && r.error === 'conflict') {
+      // 🔥 КОНФЛИКТ! Загружаем свежие данные
+      console.warn('⚠️ [save] Конфликт версий, загружаем свежие данные...');
+      serverLoad()
+        .then(function(r2) {
+          if (r2.ok && r2.save && r2.save.data) {
+            applySnapshot(r2.save.data);
+            if (r2.save.version !== undefined) {
+              SYNC.version = r2.save.version;
+            }
+            updateHUD();
+            console.log('✅ [save] Данные обновлены после конфликта');
+          }
+        })
+        .catch(function() {
+          console.warn('⚠️ [save] Не удалось разрешить конфликт');
+        });
+    } else if (r && r.error === 'rate_limit') {
+      SYNC.rlBackoffUntil = Date.now() + 6000;
+      console.warn('⚠️ [save] rate limit, пауза 6s');
+    }
+  })
+  .catch(function() {
+    // Ошибка сети — ничего не делаем, попробуем в следующий раз
+  })
+  .then(function() { SYNC.pushing = false; });
+}
 
   function saveInstant(data) {
     if (!SYNC.started || !SYNC.online) return;
