@@ -16,7 +16,6 @@ const API_URL     = process.env.API_URL     || 'https://ghz-production.up.railwa
 console.log('🤖 [bot] Инициализация...');
 console.log('🤖 [bot] BOT_TOKEN: ' + (BOT_TOKEN ? '✅ Установлен' : '❌ НЕ УСТАНОВЛЕН'));
 console.log('🤖 [bot] WEBAPP_URL: ' + WEBAPP_URL);
-console.log('🤖 [bot] API_URL: ' + API_URL);
 
 // ── Инициализация бота ──
 function initBot(app) {
@@ -171,7 +170,7 @@ greeting + '\n\n' +
     });
 
     // ═══════════════════════════════
-    //  ОБРАБОТКА ТРАНЗАКЦИЙ (ИСПРАВЛЕНО)
+    //  ОБРАБОТКА ТРАНЗАКЦИЙ
     // ═══════════════════════════════
     bot.on('callback_query', function(query) {
       try {
@@ -213,7 +212,7 @@ greeting + '\n\n' +
           return;
         }
 
-        // ── Транзакции (approve / reject) — ИСПРАВЛЕНО ──
+        // ── Транзакции (approve / reject) ──
         if (data.startsWith('approve_') || data.startsWith('reject_')) {
           var action = data.startsWith('approve_') ? 'approve' : 'reject';
           var txId   = data.replace(/^(approve|reject)_/, '');
@@ -240,11 +239,7 @@ greeting + '\n\n' +
             return;
           }
 
-          // ✅ ПРАВИЛЬНЫЙ URL: используем API_URL + /bot/transaction
-          var requestUrl = API_URL + '/bot/transaction/' + txId + '/' + action;
-          console.log('📤 [bot] Запрос к:', requestUrl);
-
-          _fetch(requestUrl, {
+          _fetch(API_URL + '/bot/transaction/' + txId + '/' + action, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -252,21 +247,8 @@ greeting + '\n\n' +
             },
             body: JSON.stringify({})
           })
-          .then(function(r) {
-            // ✅ Проверяем Content-Type перед парсингом JSON
-            var contentType = r.headers.get('content-type');
-            if (!contentType || !contentType.includes('application/json')) {
-              // Если ответ не JSON, пробуем прочитать как текст для отладки
-              return r.text().then(function(text) {
-                console.error('❌ [bot] Не JSON ответ от сервера:', text.substring(0, 300));
-                throw new Error('Сервер вернул ошибку (проверьте логи)');
-              });
-            }
-            return r.json();
-          })
+          .then(function(r) { return r.json(); })
           .then(function(result) {
-            console.log('✅ [bot] Ответ сервера:', result);
-            
             if (result.ok) {
               var doneText = action === 'approve' ? '✅ Подтверждено' : '❌ Отклонено';
               bot.editMessageReplyMarkup(
@@ -276,7 +258,7 @@ greeting + '\n\n' +
               bot.answerCallbackQuery(query.id, { text: doneText }).catch(function(){});
             } else {
               // Ошибка — возвращаем кнопки обратно
-              var already = result.error === 'already_processed' || result.error === 'already_processed';
+              var already = result.error === 'already_processed';
               bot.editMessageReplyMarkup(
                 already
                   ? { inline_keyboard: [[{ text: '⚠️ Уже обработана', callback_data: 'done_' + txId }]] }
@@ -296,10 +278,7 @@ greeting + '\n\n' +
               { inline_keyboard: [[{ text: '✅ Подтвердить', callback_data: 'approve_' + txId }, { text: '❌ Отклонить', callback_data: 'reject_' + txId }]] },
               { chat_id: chatId, message_id: msgId }
             ).catch(function() {});
-            bot.answerCallbackQuery(query.id, { 
-              text: '❌ Ошибка сервера: ' + err.message,
-              show_alert: true 
-            }).catch(function(){});
+            bot.answerCallbackQuery(query.id, { text: '❌ Ошибка сервера' }).catch(function(){});
           });
           return;
         }

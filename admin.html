@@ -434,23 +434,7 @@ body {
 (function() {
   'use strict';
 
-  // ═══════════════════════════════════════════════════════
-  // ИСПРАВЛЕНО: динамическое определение API URL
-  // ═══════════════════════════════════════════════════════
-  var API = (function() {
-    try {
-      var url = new URLSearchParams(window.location.search).get('api');
-      if (url) return url.replace(/\/$/, '');
-    } catch(e) {}
-    
-    if (window.ENV_API_URL) return window.ENV_API_URL.replace(/\/$/, '');
-    
-    // По умолчанию — ваш сервер на Railway
-    return 'https://ghz-production.up.railway.app';
-  })();
-
-  console.log('🔧 [admin] API URL:', API);
-
+  var API = window.location.origin;
   var SESSION = null;
   var currentPage = 1;
   var currentUserTgId = null;
@@ -712,8 +696,7 @@ body {
         html += '<span style="color:#445;">Загрузка...</span>';
         html += '</div></div>';
         
-        // === ВЫДАЧА ПРЕДМЕТОВ ===
-        html += '<div style="margin-top:14px;border-top:1px solid #1a1a35;padding-top:12px;">';
+        // === ВЫДАЧА ПРЕДМЕТОВ ===        html += '<div style="margin-top:14px;border-top:1px solid #1a1a35;padding-top:12px;">';
         html += '<div style="font-size:11px;color:#778;margin-bottom:8px;">📦 ВЫДАТЬ ПРЕДМЕТ</div>';
         html += '<div style="display:flex;flex-direction:column;gap:6px;">';
         html += '<select id="itemSelect" style="padding:8px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:6px;color:#fff;font-size:12px;font-family:\'Courier New\',monospace;">';
