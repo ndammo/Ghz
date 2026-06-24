@@ -169,8 +169,9 @@
           // ⭐ Обновляем кэш после загрузки
           _lastState = getFullState();
           
-          if (msg.data.charId) {
-            console.log('✅ Персонаж найден:', msg.data.charId);
+          var charId = msg.charId || msg.data.charId;
+if (charId) {
+  console.log('✅ Персонаж найден:', charId);
             isSynced = true;
             
             if (typeof updateHUD === 'function') updateHUD();

@@ -202,10 +202,11 @@ wss.on('connection', function(ws, req) {
           }));
 
           var data = user.data || {};
-          ws.send(JSON.stringify({
-            type: 'sync',
-            data: data
-          }));
+ws.send(JSON.stringify({
+  type: 'sync',
+  data: data,
+  charId: user.charId   // ← ДОБАВИТЬ
+}));
 
           console.log('✅ WebSocket авторизован:', tgId);
           break;
@@ -218,11 +219,12 @@ wss.on('connection', function(ws, req) {
 
           var userData = await Save.findOne({ tgId: tgId });
           if (userData) {
-            ws.send(JSON.stringify({
-              type: 'sync',
-              data: userData.data || {}
-            }));
-          }
+  ws.send(JSON.stringify({
+    type: 'sync',
+    data: userData.data || {},
+    charId: userData.charId   // ← ДОБАВИТЬ
+  }));
+}
           break;
 
         case 'save':
