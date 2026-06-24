@@ -836,11 +836,6 @@ function submitDeposit() {
       result.innerHTML = '<span style="color:#2ecc71;">✅ Заявка создана! Ожидайте подтверждения админом.</span>';
       document.getElementById('depositAmount').value = '1';
       
-      // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
-      if (window.GameSync) {
-        GameSync.save();
-      }
-      
       loadTransactions();
       setTimeout(closeWalletModal, 3000);
     } else {
@@ -895,11 +890,6 @@ function submitWithdraw() {
       result.innerHTML = '<span style="color:#2ecc71;">✅ Заявка создана! Ожидайте подтверждения админом.</span>';
       document.getElementById('withdrawAmount').value = '1';
       document.getElementById('withdrawWallet').value = '';
-      
-      // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
-      if (window.GameSync) {
-        GameSync.save();
-      }
       
       loadTransactions();
       setTimeout(closeWalletModal, 3000);

@@ -1354,7 +1354,7 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
         { tgId: tx.userId },
         { $inc: { 'data.gram': gramDelta } }
       );
-      pushUpdate(tx.userId, { gram: tx.amount });
+  
     } else {
       tx.status = 'rejected';
       tx.rejectedAt = Date.now();
@@ -1482,9 +1482,6 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
         { tgId: tx.userId },
         { $inc: { 'data.gram': gramDelta } }
       );
-      
-      // Отправляем обновление через WebSocket
-      pushUpdate(tx.userId, { gram: tx.amount });
       
     } else {
       tx.status = 'rejected';
