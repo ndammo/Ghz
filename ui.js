@@ -1161,14 +1161,72 @@ function applyCharacter(ch) {
 }
 
 function startGame() {
-  resize(); 
-  updateHUD(); 
-  initSkillsHud(); 
-  updatePotionHud();
-  updateAvatarOnStart();
-  switchTab('game');
-  spawnMonster(player.worldX + W * 0.65);
-  requestAnimationFrame(function(ts) { lastTime = ts; loop(ts); });
+  console.log('🎮 [ui] startGame вызван');
+  
+  // Если игра уже запущена — не запускаем повторно
+  if (window._gameStarted) {
+    console.log('ℹ️ [ui] Игра уже запущена');
+    return;
+  }
+  
+  // Проверка, что canvas существует
+  var canvas = document.getElementById('gameCanvas');
+  if (!canvas) {
+    console.warn('⚠️ [ui] Canvas не найден, повторная попытка через 100ms');
+    setTimeout(function() {
+      if (typeof startGame === 'function' && !window._gameStarted) startGame();
+    }, 100);
+    return;
+  }
+  
+  // Проверка, что HUD элементы существуют
+  if (!document.getElementById('hud') || !document.getElementById('nav')) {
+    console.warn('⚠️ [ui] HUD/NAV не найдены, повторная попытка через 100ms');
+    setTimeout(function() {
+      if (typeof startGame === 'function' && !window._gameStarted) startGame();
+    }, 100);
+    return;
+  }
+  
+  try {
+    window._gameStarted = true;
+    
+    resize(); 
+    updateHUD(); 
+    initSkillsHud(); 
+    updatePotionHud();
+    updateAvatarOnStart();
+    switchTab('game');
+    spawnMonster(player.worldX + W * 0.65);
+    
+    // Скрываем экран загрузки
+    var loading = document.getElementById('loadingScreen');
+    if (loading && !loading.classList.contains('hidden-done')) {
+      loading.classList.add('fade-out');
+      setTimeout(function() { 
+        loading.style.display = 'none'; 
+        loading.classList.add('hidden-done');
+      }, 500);
+    }
+    
+    // Запускаем игровой цикл
+    if (typeof lastTime !== 'undefined') {
+      lastTime = performance.now();
+    }
+    
+    if (typeof loop === 'function') {
+      loop(performance.now());
+    }
+    
+    console.log('✅ [ui] Игра запущена!');
+  } catch(e) {
+    console.error('❌ [ui] Ошибка старта игры:', e.message);
+    // Повторная попытка через 500ms
+    window._gameStarted = false;
+    setTimeout(function() {
+      if (typeof startGame === 'function') startGame();
+    }, 500);
+  }
 }
 
 // ═══════════════════════════════
