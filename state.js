@@ -39,16 +39,7 @@ const G = {
   owned: {},
   skills: {},        // { skillId: { unlocked, level } }
   inventory: [],
-  equipped: { 
-    weapon: null, 
-    body: null,      // ← исправлено: было armor
-    legs: null, 
-    gloves: null, 
-    boots: null, 
-    helmet: null, 
-    ring: null, 
-    belt: null 
-  },
+  equipped: { weapon: null, armor: null, ring: null, boots: null, helmet: null },
   invFilter: 'all',
   boss: { floor: 1, lastFightTime: 0 }, // lastFightTime = timestamp победы (ms)
 };

@@ -23,8 +23,7 @@
     return url.replace(/\/$/, '');
   })();
 
-  // 🔥 ИСПРАВЛЕНО: правильные названия слотов
-  var EQUIP_SLOTS = ['weapon', 'body', 'legs', 'gloves', 'boots', 'helmet', 'ring', 'belt'];
+  var EQUIP_SLOTS = ['weapon', 'armor', 'ring', 'boots', 'helmet'];
   
   var INSTANT_FIELDS = [
     'inventory', 'equipped', 'upg', 'skills', 
@@ -54,6 +53,10 @@
 
   function num(v, d) { v = Number(v); return isFinite(v) ? v : d; }
   function clone(o) { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return Object.assign({}, o); } }
+
+  // ═══════════════════════════════
+  //  ⚠️ УДАЛЕНО: localStorage — больше не используется
+  // ═══════════════════════════════
 
   function getTgId() {
     try {
@@ -136,6 +139,7 @@
       tgId: getTgId(),
       charId: (typeof G_CHAR !== 'undefined' && G_CHAR) ? G_CHAR.id : (G.charId || null),
 
+      // === МГНОВЕННЫЕ ПОЛЯ ===
       inventory: inv,
       equipped: eq,
       upg: clone(G.upg),
@@ -150,6 +154,7 @@
       prem: clone(G.prem || { tier: null, expiresAt: 0 }),
       boss: clone(G.boss || { floor: 1, lastFightTime: 0 }),
 
+      // === ОТЛОЖЕННЫЕ ПОЛЯ (3 сек) ===
       hp: G.hp,
       gold: G.gold,
       xp: G.xp,
@@ -157,6 +162,7 @@
       killCount: G.killCount,
       potions: G.potions,
 
+      // === ПРОЧИЕ ===
       invIdCounter: (typeof _invIdCounter === 'number') ? _invIdCounter : 0,
       dailyTasks:          clone(G.dailyTasks          || { date: '', seconds: 0, claimed: [] }),
       specialTasksClaimed: clone(G.specialTasksClaimed || {}),
@@ -165,6 +171,7 @@
       updatedAt: Date.now(),
     };
 
+    // ⚡ СЖАТИЕ
     var compressed = {
       v: full.v,
       tgId: full.tgId,
@@ -277,8 +284,7 @@
       if (typeof i.id === 'number' && i.id > _invIdCounter) _invIdCounter = i.id;
     });
 
-    // 🔥 ИСПРАВЛЕНО: правильные слоты
-    G.equipped = { weapon: null, body: null, legs: null, gloves: null, boots: null, helmet: null, ring: null, belt: null };
+    G.equipped = { weapon: null, armor: null, ring: null, boots: null, helmet: null };
     var eq = s.equipped || {};
     EQUIP_SLOTS.forEach(function (slot) {
       var id = eq[slot];
@@ -479,6 +485,7 @@
   // ═══════════════════════════════
 
   function startSyncLoops() {
+    // ⚡ КАЖДЫЕ 3 СЕКУНДЫ — серверный батч-сейв
     SYNC.batchTimer = setInterval(serverSaveBatch, 3000);
 
     document.addEventListener('visibilitychange', function () {
@@ -580,6 +587,7 @@
     serverLoad().then(function (r) {
       if (!r || !r.ok) {
         console.warn('⚠️ [serverLoad] ответ не ok:', r);
+        // ⚠️ БОЛЬШЕ НЕТ localStorage — если сервер не ответил, показываем ошибку
         _showNoServerError();
         _bootFinalize();
         return;
@@ -619,11 +627,14 @@
     });
   }
 
+  // ⚠️ НОВАЯ ФУНКЦИЯ — вместо localStorage показываем ошибку
   function _showNoServerError() {
+    // Показываем сообщение об ошибке в интерфейсе
     var statusEl = document.getElementById('lsStatus');
     if (statusEl) {
       statusEl.innerHTML = '❌ Нет соединения с сервером<br><span style="font-size:10px;color:#e74c3c;">Проверьте интернет</span>';
     }
+    // Можно также показать кнопку перезагрузки
     var barWrap = document.querySelector('.ls-bar-wrap');
     if (barWrap && !document.querySelector('.ls-retry-btn')) {
       var btn = document.createElement('button');
