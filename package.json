@@ -9,14 +9,14 @@
     "dev": "node --watch server.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=18"
   },
   "dependencies": {
-    "@fastify/cors": "^9.0.0",
-    "@fastify/helmet": "^11.0.0",
-    "@fastify/rate-limit": "^9.1.0",
+    "@fastify/cors": "^8.5.0",
+    "@fastify/helmet": "^11.1.1",
+    "@fastify/rate-limit": "^8.0.3",
     "dotenv": "^16.4.5",
-    "fastify": "^5.0.0",
+    "fastify": "^4.28.1",
     "mongoose": "^8.5.1",
     "node-telegram-bot-api": "^0.66.0",
     "pino-pretty": "^11.0.0"
