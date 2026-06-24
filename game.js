@@ -470,7 +470,7 @@ function _onBossKilled(m) {
   G.boss.lastFightTime = Date.now();
   // Прогрессируем на следующего босса (если не последний)
   if (G.boss.floor < 10) G.boss.floor = bossId + 1;
-  if (window.GameSync) window.GameSync.saveInstant({ boss: G.boss, pixr: G.pixr });
+  if (window.GameSync) window.GameSync.saveInstant();
   updateHUD();
 
   _showBossVictory(m.name, bossId, pixr, gold, xp, item);
@@ -663,7 +663,7 @@ function savePotionThreshold(val) {
   var v = parseInt(val);
   if (v >= 1 && v <= 99) {
     G.potionThreshold = v;
-    if (window.GameSync) window.GameSync.saveInstant({ potionThreshold: G.potionThreshold });
+    if (window.GameSync) window.GameSync.saveInstant();
   }
 }
 
