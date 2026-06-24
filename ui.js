@@ -5,13 +5,22 @@
   openFloorLoot, goToFloor, renderRating, renderWallet,
   switchTab, экран выбора персонажа (selectChar,
   confirmChar, applyCharacter, startGame, анимации)
+  + БИРЖА PIXR/GRAM с графиком и комиссией
   ══════════════════════════════════════════════════════
 */
 
 // ═══════════════════════════════
+//  ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
+// ═══════════════════════════════
+var _upgTab = 'stats';
+var _walletTab = 'wallet'; // 'wallet' | 'stats'
+var _marketPrice = 1000;
+var _marketHistory = [];
+var _friendsLoading = false;
+
+// ═══════════════════════════════
 //  ВКЛАДКА УЛУЧШЕНИЙ
 // ═══════════════════════════════
-var _upgTab = 'stats'; // 'stats' | 'skills'
 function setUpgTab(t) { _upgTab = t; renderUpgrades(); }
 
 function upgCost(u) {
@@ -255,10 +264,8 @@ function goToFloor(n) {
 }
 
 // ═══════════════════════════════
-//  ВКЛАДКА РЕЙТИНГА (исправленная)
+//  ВКЛАДКА РЕЙТИНГА
 // ═══════════════════════════════
-
-// Кэш рейтинга
 var _ratingCache = null;
 var _ratingCacheTime = 0;
 var _ratingLoading = false;
@@ -267,16 +274,13 @@ function renderRating() {
   var body = document.getElementById('ratingBody');
   if (!body) return;
   
-  // Показываем кэш если есть
   if (_ratingCache && Date.now() - _ratingCacheTime < 30000) {
     renderRatingData(_ratingCache, body);
     return;
   }
   
-  // Показываем загрузку
   body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">⏳ Загрузка рейтинга...</div>';
   
-  // Если нет GameSync или не онлайн — показываем заглушку
   if (!window.GameSync || !window.GameSync.state.online) {
     body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">📱 Рейтинг доступен только в Telegram</div>';
     return;
@@ -297,10 +301,8 @@ function renderRating() {
         return;
       }
       
-      // Кэшируем
       _ratingCache = r.top;
       _ratingCacheTime = Date.now();
-      
       renderRatingData(r.top, body);
     })
     .catch(function() {
@@ -314,7 +316,6 @@ function renderRatingData(players, body) {
   var charEmojis = { fire: '🔥', light: '✨', water: '💧' };
   var charColors = { fire: '#ff7030', light: '#ffd040', water: '#40d0ff' };
   
-  // Находим текущего игрока
   var tgId = window.GameSync ? window.GameSync.getTgId() : null;
   var myIndex = -1;
   
@@ -325,7 +326,6 @@ function renderRatingData(players, body) {
     return;
   }
   
-  // Используем только топ-50
   var topPlayers = players.slice(0, 50);
   
   topPlayers.forEach(function(p, i) {
@@ -362,7 +362,6 @@ function renderRatingData(players, body) {
       '</div>';
   });
   
-  // Если текущий игрок не в топ-50, добавляем его внизу
   if (myIndex === -1 && tgId) {
     var myCp = typeof calcCP === 'function' ? calcCP() : 0;
     var myLevel = G.level || 1;
@@ -371,7 +370,6 @@ function renderRatingData(players, body) {
     var myEmoji = charEmojis[myChar] || '';
     var myColor = charColors[myChar] || '#aaa';
     
-    // Аватарка текущего игрока
     var myAvatarUrl = (window.GameSync && window.GameSync._API)
       ? window.GameSync._API + '/api/avatar/' + tgId : '';
     
@@ -393,7 +391,9 @@ function renderRatingData(players, body) {
   body.innerHTML = html;
 }
 
-// ── SVG иконки для кошелька/статистики ──
+// ═══════════════════════════════
+//  SVG ИКОНКИ ДЛЯ СТАТИСТИКИ
+// ═══════════════════════════════
 function swordStatSvg(c) { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="4" y="0" width="2" height="7" fill="${c}"/><rect x="2" y="3" width="6" height="2" fill="${c}"/><rect x="4" y="7" width="2" height="1" fill="${c}" opacity="0.7"/><rect x="3" y="8" width="4" height="1" fill="${c}" opacity="0.7"/><rect x="4" y="9" width="2" height="1" fill="${c}" opacity="0.7"/></svg>`; }
 function shieldSvg()   { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#3498db"/><rect x="0" y="2" width="2" height="4" fill="#3498db"/><rect x="8" y="2" width="2" height="4" fill="#3498db"/><rect x="2" y="0" width="2" height="3" fill="#5dade2"/><rect x="6" y="0" width="2" height="3" fill="#5dade2"/><rect x="2" y="6" width="3" height="2" fill="#3498db"/><rect x="5" y="6" width="3" height="2" fill="#3498db"/><rect x="4" y="8" width="2" height="2" fill="#2980b9"/></svg>`; }
 function heartSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="1" y="1" width="3" height="2" fill="#e74c3c"/><rect x="6" y="1" width="3" height="2" fill="#e74c3c"/><rect x="0" y="2" width="10" height="4" fill="#e74c3c"/><rect x="1" y="6" width="8" height="2" fill="#e74c3c"/><rect x="2" y="8" width="6" height="1" fill="#c0392b"/><rect x="3" y="9" width="4" height="1" fill="#c0392b"/></svg>`; }
@@ -406,23 +406,20 @@ function towerSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10"
 function atkSpdSvg()   { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="1" y="1" width="2" height="2" fill="#ffaa00"/><rect x="3" y="3" width="2" height="2" fill="#ffaa00"/><rect x="5" y="1" width="2" height="2" fill="#ffaa00"/><rect x="7" y="3" width="2" height="2" fill="#ffaa00"/><rect x="3" y="5" width="4" height="2" fill="#ffcc44"/><rect x="2" y="7" width="6" height="2" fill="#ff8800"/></svg>`; }
 
 // ═══════════════════════════════
-//  ВКЛАДКА КОШЕЛЕК (исправленная)
+//  ВКЛАДКА КОШЕЛЕК (С БИРЖЕЙ)
 // ═══════════════════════════════
-
-var _walletTab = 'wallet'; // 'wallet' | 'stats'
-
 function renderWallet() {
   const cp = calcCP();
   const pixr = G.pixr || 0;
   const gram = (G.gram || 0).toFixed(3);
-  
+
   const tabsHtml = `
     <div style="display:flex;gap:4px;margin-bottom:12px;">
       <button onclick="switchWalletTab('wallet')" style="flex:1;padding:8px;font-size:12px;font-family:Courier New,monospace;
         border-radius:8px;border:1.5px solid ${_walletTab === 'wallet' ? '#40d0ff' : '#2a2a5a'};
         background:${_walletTab === 'wallet' ? 'rgba(64,208,255,0.1)' : 'rgba(255,255,255,0.03)'};
         color:${_walletTab === 'wallet' ? '#40d0ff' : '#556'};cursor:pointer;">
-        👛 Кошелек
+        💱 Биржа
       </button>
       <button onclick="switchWalletTab('stats')" style="flex:1;padding:8px;font-size:12px;font-family:Courier New,monospace;
         border-radius:8px;border:1.5px solid ${_walletTab === 'stats' ? '#f5c542' : '#2a2a5a'};
@@ -432,111 +429,284 @@ function renderWallet() {
       </button>
     </div>
   `;
-  
+
   if (_walletTab === 'stats') {
     document.getElementById('walletBody').innerHTML = tabsHtml + renderStats();
     return;
   }
-  
-  // ── КОШЕЛЕК ──
-  const canExchange = pixr >= 1000;
-  
+
+  // --- БИРЖА ---
   const html = `
     ${tabsHtml}
     
-    <!-- Балансы -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
-      <div style="padding:14px;background:rgba(255,68,204,0.06);border:1.5px solid #4a2a5a;border-radius:12px;text-align:center;">
-        <img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;display:block;margin:0 auto 4px;">
-        <div style="font-size:9px;color:#778;letter-spacing:1px;">PIXR</div>
-        <div style="font-size:20px;font-weight:bold;color:#ff44cc;">${pixr}</div>
+    <!-- Маркет-статус -->
+    <div style="background:rgba(64,208,255,0.05);border:1px solid #2a4a6a;border-radius:12px;padding:12px;margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:11px;color:#778;">PIXR / GRAM</span>
+        <span style="font-size:18px;font-weight:bold;color:#40d0ff;" id="marketPrice">${_marketPrice || '1000'}</span>
       </div>
-      <div style="padding:14px;background:rgba(64,208,255,0.06);border:1.5px solid #2a4a6a;border-radius:12px;text-align:center;">
-        <img src="images/gram.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;display:block;margin:0 auto 4px;">
-        <div style="font-size:9px;color:#778;letter-spacing:1px;">GRAM</div>
-        <div style="font-size:20px;font-weight:bold;color:#40d0ff;">${gram}</div>
+      <div style="display:flex;gap:12px;margin-top:6px;font-size:10px;color:#556;">
+        <span>📈 Объем покупок: <span id="buyVol">0</span></span>
+        <span>📉 Объем продаж: <span id="sellVol">0</span></span>
       </div>
     </div>
-    
-    <!-- Обмен PIXR → GRAM -->
-    <div style="padding:12px;background:rgba(255,255,255,0.03);border:1px solid #2a2a5a;border-radius:10px;margin-bottom:12px;">
-      <div style="font-size:10px;color:#778;margin-bottom:6px;display:flex;align-items:center;gap:4px;"><img src="images/pixr.png" style="width:14px;height:14px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"> ОБМЕН PIXR → <img src="images/gram.png" style="width:14px;height:14px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"> GRAM (1000:1)</div>
-      <div style="display:flex;gap:8px;">
-        <input id="exchangeAmount" type="number" min="1000" step="1000" value="1000" 
-          style="flex:1;padding:8px 10px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:6px;color:#fff;font-size:14px;font-family:'Courier New',monospace;">
-        <button onclick="submitExchange()" style="padding:8px 16px;background:linear-gradient(90deg,#4a2a8a,#7a4ad0);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
-          Обменять
+
+    <!-- График -->
+    <div style="background:#0a0a1a;border:1px solid #2a2a5a;border-radius:12px;padding:8px;margin-bottom:12px;height:120px;position:relative;">
+      <canvas id="priceChart" width="340" height="120" style="width:100%;height:120px;image-rendering:pixelated;"></canvas>
+    </div>
+
+    <!-- Форма обмена -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+      <div style="padding:10px;background:rgba(46,204,113,0.06);border:1px solid #1a4a3a;border-radius:8px;">
+        <div style="font-size:9px;color:#778;">ПОКУПКА GRAM</div>
+        <div style="font-size:11px;color:#2ecc71;margin:4px 0;">Цена: <span id="buyPrice">${_marketPrice || '1000'}</span> PIXR</div>
+        <input id="buyAmount" type="number" min="0.1" step="0.1" value="1" 
+          style="width:100%;padding:6px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:4px;color:#fff;font-size:13px;font-family:'Courier New',monospace;margin:4px 0;">
+        <button onclick="submitExchange('buy')" style="width:100%;padding:8px;background:linear-gradient(90deg,#1a5a3a,#2a8a4a);border:none;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;font-family:'Courier New',monospace;">
+          Купить
         </button>
       </div>
-      <div id="exchangeResult" style="font-size:10px;color:#556;margin-top:4px;min-height:16px;"></div>
+      <div style="padding:10px;background:rgba(231,76,60,0.06);border:1px solid #4a1a1a;border-radius:8px;">
+        <div style="font-size:9px;color:#778;">ПРОДАЖА GRAM</div>
+        <div style="font-size:11px;color:#e74c3c;margin:4px 0;">Цена: <span id="sellPrice">${_marketPrice || '1000'}</span> PIXR</div>
+        <input id="sellAmount" type="number" min="0.1" step="0.1" value="1" 
+          style="width:100%;padding:6px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:4px;color:#fff;font-size:13px;font-family:'Courier New',monospace;margin:4px 0;">
+        <button onclick="submitExchange('sell')" style="width:100%;padding:8px;background:linear-gradient(90deg,#5a2a2a,#8a3a3a);border:none;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;font-family:'Courier New',monospace;">
+          Продать
+        </button>
+      </div>
     </div>
-    
-    <!-- Кнопки Пополнить/Вывести -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
-      <button onclick="openDepositModal()" style="padding:14px;background:linear-gradient(90deg,#1a5a3a,#2a8a4a);border:none;border-radius:10px;color:#fff;font-size:13px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;display:flex;align-items:center;justify-content:center;gap:6px;">
-        <img src="images/gram.png" style="width:18px;height:18px;object-fit:contain;image-rendering:pixelated"> Пополнить
-      </button>
-      <button onclick="openWithdrawModal()" style="padding:14px;background:linear-gradient(90deg,#5a2a2a,#8a3a3a);border:none;border-radius:10px;color:#fff;font-size:13px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;display:flex;align-items:center;justify-content:center;gap:6px;">
-        <img src="images/gram.png" style="width:18px;height:18px;object-fit:contain;image-rendering:pixelated"> Вывести
-      </button>
+
+    <!-- Балансы -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+      <div style="padding:8px;background:rgba(255,68,204,0.06);border:1px solid #4a2a5a;border-radius:8px;text-align:center;">
+        <span style="font-size:9px;color:#778;">PIXR</span>
+        <div style="font-size:16px;font-weight:bold;color:#ff44cc;" id="walletPixr">${pixr}</div>
+      </div>
+      <div style="padding:8px;background:rgba(64,208,255,0.06);border:1px solid #2a4a6a;border-radius:8px;text-align:center;">
+        <span style="font-size:9px;color:#778;">GRAM</span>
+        <div style="font-size:16px;font-weight:bold;color:#40d0ff;" id="walletGram">${gram}</div>
+      </div>
     </div>
-    
-    <!-- Последние транзакции -->
-    <div id="txList" style="margin-top:10px;">
-      <div style="font-size:10px;color:#556;letter-spacing:1px;margin-bottom:6px;">ИСТОРИЯ ТРАНЗАКЦИЙ</div>
-      <div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">Загрузка...</div>
-    </div>
+
+    <div id="exchangeResult" style="font-size:11px;text-align:center;min-height:20px;color:#556;"></div>
   `;
-  
+
   document.getElementById('walletBody').innerHTML = html;
-  loadTransactions();
+  
+  // Загружаем рыночные данные
+  loadMarketData();
 }
 
-// ── ОБМЕН PIXR → GRAM ──
-function submitExchange() {
-  const amount = parseInt(document.getElementById('exchangeAmount').value);
+// --- ЗАГРУЗКА РЫНОЧНЫХ ДАННЫХ ---
+function loadMarketData() {
+  if (!window.GameSync || !window.GameSync._API) return;
+  
+  fetch(window.GameSync._API + '/api/market/price')
+    .then(r => r.json())
+    .then(r => {
+      if (r.ok) {
+        _marketPrice = r.price || 1000;
+        _marketHistory = r.history || [_marketPrice];
+        
+        // Обновляем UI
+        const priceEl = document.getElementById('marketPrice');
+        if (priceEl) priceEl.textContent = _marketPrice;
+        
+        const buyPrice = document.getElementById('buyPrice');
+        if (buyPrice) buyPrice.textContent = _marketPrice;
+        
+        const sellPrice = document.getElementById('sellPrice');
+        if (sellPrice) sellPrice.textContent = _marketPrice;
+        
+        const buyVol = document.getElementById('buyVol');
+        if (buyVol) buyVol.textContent = r.buyVolume || 0;
+        
+        const sellVol = document.getElementById('sellVol');
+        if (sellVol) sellVol.textContent = r.sellVolume || 0;
+        
+        // Рисуем график
+        drawChart(_marketHistory);
+      }
+    })
+    .catch(() => {});
+}
+
+// --- ОТРИСОВКА ГРАФИКА ---
+function drawChart(history) {
+  const canvas = document.getElementById('priceChart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  
+  ctx.clearRect(0, 0, w, h);
+  
+  if (!history || history.length < 2) {
+    ctx.fillStyle = '#445';
+    ctx.font = '11px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText('Нет данных', w/2, h/2);
+    return;
+  }
+  
+  const data = history.slice(-100);
+  const min = Math.min(...data) * 0.98;
+  const max = Math.max(...data) * 1.02;
+  const range = max - min || 1;
+  
+  // Сетка
+  ctx.strokeStyle = 'rgba(42,42,90,0.3)';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i < 5; i++) {
+    const y = h - (i / 4) * h;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+  
+  // Линия цены
+  const firstPrice = data[0];
+  const lastPrice = data[data.length - 1];
+  const isGreen = lastPrice >= firstPrice;
+  const lineColor = isGreen ? '#2ecc71' : '#e74c3c';
+  
+  ctx.beginPath();
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 2;
+  
+  data.forEach((price, i) => {
+    const x = (i / (data.length - 1)) * w;
+    const y = h - ((price - min) / range) * h;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  
+  // Заливка под графиком
+  const lastX = w;
+  const lastY = h - ((lastPrice - min) / range) * h;
+  ctx.lineTo(lastX, h);
+  ctx.lineTo(0, h);
+  ctx.closePath();
+  ctx.fillStyle = isGreen ? 'rgba(46,204,113,0.1)' : 'rgba(231,76,60,0.1)';
+  ctx.fill();
+  
+  // Текущая цена (последняя точка)
+  ctx.fillStyle = lineColor;
+  ctx.beginPath();
+  ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // Надпись с ценой
+  ctx.fillStyle = '#aaa';
+  ctx.font = '9px Courier New';
+  ctx.textAlign = 'right';
+  ctx.fillText(lastPrice, lastX - 6, lastY - 6);
+}
+
+// --- ОБМЕН НА БИРЖЕ ---
+function submitExchange(type) {
+  const amountInput = type === 'buy' ? document.getElementById('buyAmount') : document.getElementById('sellAmount');
+  const amount = parseFloat(amountInput.value);
   const result = document.getElementById('exchangeResult');
   
-  if (!amount || amount < 1000 || amount % 1000 !== 0) {
-    result.innerHTML = '<span style="color:#e74c3c;">Сумма должна быть кратна 1000 PIXR</span>';
+  if (!amount || amount <= 0) {
+    result.innerHTML = '<span style="color:#e74c3c;">Введите сумму</span>';
     return;
   }
   
-  if (amount > (G.pixr || 0)) {
-    result.innerHTML = '<span style="color:#e74c3c;">Недостаточно PIXR</span>';
+  if (amount < 0.1) {
+    result.innerHTML = '<span style="color:#e74c3c;">Минимальная сумма 0.1 GRAM</span>';
     return;
   }
   
-  result.innerHTML = '<span style="color:#f5c542;">Обмен...</span>';
+  result.innerHTML = '<span style="color:#f5c542;">⏳ Обработка...</span>';
   
   fetch(window.GameSync._API + '/api/wallet/exchange', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       initData: window.GameSync._INIT,
-      amount: amount
+      amount: amount,
+      type: type
     })
   })
   .then(r => r.json())
   .then(r => {
     if (r.ok) {
-      G.pixr = r.pixr;
-      G.gram = r.gram;
+      // Обновляем глобальные балансы
+      G.pixr = r.newBalances.pixr;
+      G.gram = r.newBalances.gram;
       updateHUD();
-      result.innerHTML = `<span style="color:#2ecc71;">✅ Обменяно ${amount} PIXR → ${r.earned} GRAM</span>`;
-      setTimeout(function() {
-        renderWallet();
-      }, 1000);
+      
+      // Обновляем UI балансов
+      document.getElementById('walletPixr').textContent = r.newBalances.pixr;
+      document.getElementById('walletGram').textContent = r.newBalances.gram.toFixed(3);
+      
+      // Обновляем цену
+      _marketPrice = r.newPrice;
+      _marketHistory = r.history || [_marketPrice];
+      
+      document.getElementById('marketPrice').textContent = _marketPrice;
+      document.getElementById('buyPrice').textContent = _marketPrice;
+      document.getElementById('sellPrice').textContent = _marketPrice;
+      
+      document.getElementById('buyVol').textContent = r.buyVolume || 0;
+      document.getElementById('sellVol').textContent = r.sellVolume || 0;
+      
+      drawChart(_marketHistory);
+      
+      const change = ((r.newPrice - r.price) / r.price * 100);
+      const changeStr = (change > 0 ? '+' : '') + change.toFixed(2) + '%';
+      const changeColor = change > 0 ? '#2ecc71' : change < 0 ? '#e74c3c' : '#556';
+      
+      result.innerHTML = `
+        <span style="color:#2ecc71;">✅ ${type === 'buy' ? 'Куплено' : 'Продано'} ${amount} GRAM</span><br>
+        <span style="font-size:10px;color:#556;">
+          Цена: ${r.price} → ${r.newPrice} PIXR 
+          <span style="color:${changeColor};">(${changeStr})</span>
+          · Комиссия: ${r.commission} GRAM
+        </span>
+      `;
+      
+      // Обнуляем поле
+      amountInput.value = '';
+      
+      // Сохраняем прогресс
+      if (window.GameSync && window.GameSync.touch) {
+        window.GameSync.touch();
+      }
     } else {
-      result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (r.error || 'Ошибка') + '</span>';
+      result.innerHTML = `<span style="color:#e74c3c;">❌ ${r.error || 'Ошибка'}</span>`;
     }
   })
-  .catch(function() {
+  .catch(() => {
     result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка соединения</span>';
   });
 }
 
-// ── ЗАГРУЗКА ТРАНЗАКЦИЙ (ИСПРАВЛЕННАЯ) ──
+function renderStats() {
+  const cp = calcCP();
+  return `
+    <div class="stats-grid">
+      <div class="stat-cell"><div class="stat-icon">${swordStatSvg('#ffaa00')}</div><div class="stat-label">Боевая мощь</div><div class="stat-val">${cp}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${skullSvg()}</div><div class="stat-label">Убийств</div><div class="stat-val">${G.killCount}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${cupSvg()}</div><div class="stat-label">Уровень</div><div class="stat-val">${G.level}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${towerSvg()}</div><div class="stat-label">Этаж</div><div class="stat-val">${G.floor} / ${FLOORS.length}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${swordStatSvg('#ff6060')}</div><div class="stat-label">Атака</div><div class="stat-val">${G.stats.atk}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${shieldSvg()}</div><div class="stat-label">Защита</div><div class="stat-val">${G.stats.def}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${windSvg()}</div><div class="stat-label">Скорость</div><div class="stat-val">${G.stats.spd}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${critSvg()}</div><div class="stat-label">Крит %</div><div class="stat-val">${G.stats.crit}%</div></div>
+      <div class="stat-cell"><div class="stat-icon">${dodgeSvg()}</div><div class="stat-label">Уклон %</div><div class="stat-val">${G.stats.dodge}%</div></div>
+      <div class="stat-cell"><div class="stat-icon">${heartSvg()}</div><div class="stat-label">Макс. HP</div><div class="stat-val">${G.maxHp}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${atkSpdSvg()}</div><div class="stat-label">Ск. атаки</div><div class="stat-val">${(G.stats.atkSpd||1).toFixed(2)}x</div></div>
+    </div>
+  `;
+}
+
 function loadTransactions() {
   var list = document.getElementById('txList');
   if (!list) return;
@@ -619,93 +789,9 @@ function switchWalletTab(tab) {
   renderWallet();
 }
 
-function renderStats() {
-  const cp = calcCP();
-  return `
-    <div class="stats-grid">
-      <div class="stat-cell"><div class="stat-icon">${swordStatSvg('#ffaa00')}</div><div class="stat-label">Боевая мощь</div><div class="stat-val">${cp}</div></div>
-      <div class="stat-cell"><div class="stat-icon">${skullSvg()}</div><div class="stat-label">Убийств</div><div class="stat-val">${G.killCount}</div></div>
-      <div class="stat-cell"><div class="stat-icon">${cupSvg()}</div><div class="stat-label">Уровень</div><div class="stat-val">${G.level}</div></div>
-      <div class="stat-cell"><div class="stat-icon">${towerSvg()}</div><div class="stat-label">Этаж</div><div class="stat-val">${G.floor} / ${FLOORS.length}</div></div>
-      <div class="stat-cell"><div class="stat-icon">${swordStatSvg('#ff6060')}</div><div class="stat-label">Атака</div><div class="stat-val">${G.stats.atk}</div></div>
-      <div class="stat-cell"><div class="stat-icon">${shieldSvg()}</div><div class="stat-label">Защита</div><div class="stat-val">${G.stats.def}</div></div>
-      <div class="stat-cell"><div class="stat-icon">${windSvg()}</div><div class="stat-label">Скорость</div><div class="stat-val">${G.stats.spd}</div></div>
-      <div class="stat-cell"><div class="stat-icon">${critSvg()}</div><div class="stat-label">Крит %</div><div class="stat-val">${G.stats.crit}%</div></div>
-      <div class="stat-cell"><div class="stat-icon">${dodgeSvg()}</div><div class="stat-label">Уклон %</div><div class="stat-val">${G.stats.dodge}%</div></div>
-      <div class="stat-cell"><div class="stat-icon">${heartSvg()}</div><div class="stat-label">Макс. HP</div><div class="stat-val">${G.maxHp}</div></div>
-      <div class="stat-cell"><div class="stat-icon">${atkSpdSvg()}</div><div class="stat-label">Ск. атаки</div><div class="stat-val">${(G.stats.atkSpd||1).toFixed(2)}x</div></div>
-    </div>
-  `;
-}
-
-function loadTransactions() {
-  if (!window.GameSync || !window.GameSync._INIT) return;
-  
-  fetch(window.GameSync._API + '/api/wallet/transactions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT })
-  })
-  .then(r => r.json())
-  .then(r => {
-    const list = document.getElementById('txList');
-    if (!r.ok || !r.transactions || r.transactions.length === 0) {
-      list.innerHTML = `
-        <div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">
-          <div style="font-size:24px;margin-bottom:8px;">📭</div>
-          Нет транзакций
-        </div>
-      `;
-      return;
-    }
-    
-    let html = '';
-    r.transactions.slice(0, 10).forEach(tx => {
-      const statusColors = {
-        pending: '#f5c542',
-        approved: '#2ecc71',
-        rejected: '#e74c3c'
-      };
-      const statusLabels = {
-        pending: '⏳ Ожидание',
-        approved: '✅ Подтверждено',
-        rejected: '❌ Отклонено'
-      };
-      const typeLabels = {
-        deposit: '📥 Пополнение',
-        withdraw: '📤 Вывод'
-      };
-      const date = new Date(tx.createdAt).toLocaleDateString('ru-RU');
-      
-      html += `
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #0a0a1a;font-size:11px;">
-          <div>
-            <div style="color:#ddd;">${typeLabels[tx.type] || tx.type}</div>
-            <div style="color:#556;font-size:9px;">${date}</div>
-          </div>
-          <div style="text-align:right;">
-            <div style="color:${tx.type === 'deposit' ? '#2ecc71' : '#e74c3c'};font-weight:bold;display:flex;align-items:center;gap:3px;justify-content:flex-end;">
-              ${tx.type === 'deposit' ? '+' : '-'} ${tx.amount} <img src="images/gram.png" style="width:13px;height:13px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">
-            </div>
-            <div style="color:${statusColors[tx.status] || '#556'};font-size:9px;">
-              ${statusLabels[tx.status] || tx.status}
-            </div>
-          </div>
-        </div>
-      `;
-    });
-    list.innerHTML = html;
-  })
-  .catch(() => {
-    const list = document.getElementById('txList');
-    list.innerHTML = '<div style="color:#e74c3c;text-align:center;padding:20px 0;font-size:12px;">Ошибка загрузки</div>';
-  });
-}
-
 // ═══════════════════════════════
 //  МОДАЛКИ ПОПОЛНЕНИЯ/ВЫВОДА
 // ═══════════════════════════════
-
 function openDepositModal() {
   const modal = document.getElementById('depositModal');
   if (!modal) createDepositModal();
@@ -771,7 +857,6 @@ function createDepositModal() {
   document.getElementById('depositMemo').textContent = tgId + '_' + Date.now().toString(36);
 }
 
-// ── Копирование поля реквизитов ──
 function _copyDepositField(fieldId, btnId) {
   var el  = document.getElementById(fieldId);
   var btn = document.getElementById(btnId);
@@ -863,7 +948,6 @@ function closeWalletModal(e) {
   document.querySelectorAll('.wallet-modal').forEach(m => m.classList.add('hidden'));
 }
 
-// ── ОТПРАВКА ЗАПРОСА ──
 function submitDeposit() {
   const amount = parseInt(document.getElementById('depositAmount').value);
   const result = document.getElementById('depositResult');
@@ -983,8 +1067,6 @@ function switchTab(tab) {
 // ═══════════════════════════════
 //  ВКЛАДКА ДРУЗЕЙ
 // ═══════════════════════════════
-var _friendsLoading = false;
-
 function renderFriends() {
   var body = document.getElementById('friendsBody');
   if (!body) return;
@@ -1230,7 +1312,6 @@ function startGame() {
 // ═══════════════════════════════
 //  ОБНОВЛЕНИЕ АВАТАРКИ В HUD
 // ═══════════════════════════════
-
 function updateHudAvatar() {
   var avatarEl = document.getElementById('hudAvatar');
   var imgEl = document.getElementById('hudAvatarImg');
@@ -1252,7 +1333,6 @@ function updateHudAvatar() {
     return;
   }
 
-  // 1. photo_url из initDataUnsafe (Telegram иногда передаёт напрямую)
   var photoUrl = null;
   try {
     var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
@@ -1261,7 +1341,6 @@ function updateHudAvatar() {
     }
   } catch (e) {}
 
-  // 2. Серверный прокси через Bot API
   if (!photoUrl && window.GameSync && window.GameSync._API) {
     photoUrl = window.GameSync._API + '/api/avatar/' + tgId;
   }
@@ -1292,15 +1371,13 @@ function updateHudAvatar() {
   };
 }
 
-// Ждём пока GameSync._API будет готов, потом загружаем аватарку
 function updateAvatarOnStart() {
   var attempts = 0;
-  var maxAttempts = 20; // до 10 секунд
+  var maxAttempts = 20;
   function tryLoad() {
     attempts++;
     var tgId = window.GameSync && window.GameSync.getTgId ? window.GameSync.getTgId() : null;
     var api  = window.GameSync && window.GameSync._API;
-    // photo_url не требует _API — грузим сразу если есть tgId
     var hasPhotoUrl = false;
     try {
       var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
@@ -1373,10 +1450,10 @@ window.addEventListener('load', function() {
 });
 
 window.addEventListener('resize', resize);
+
 // ═══════════════════════════════
 //  ЗАДАНИЯ
 // ═══════════════════════════════
-
 var DAILY_MILESTONES = [
   { id: 0, minutes: 10, rewardType: 'potions', amount: 50,   icon: '<svg width="18" height="18" viewBox="0 0 12 14" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="4" height="2" fill="#aaa"/><rect x="3" y="1" width="6" height="2" fill="#ccc"/><rect x="2" y="3" width="8" height="1" fill="#e74c3c"/><rect x="1" y="4" width="10" height="7" fill="#e74c3c"/><rect x="2" y="11" width="8" height="2" fill="#c0392b"/><rect x="3" y="13" width="6" height="1" fill="#c0392b"/><rect x="2" y="5" width="4" height="4" fill="#ff8888"/><rect x="3" y="4" width="2" height="2" fill="#ffbbbb"/></svg>', label: '50 зелий' },
   { id: 1, minutes: 20, rewardType: 'gold',    amount: 1000, icon: '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>', label: '1000 золота' },
@@ -1592,6 +1669,7 @@ function _taskToast(msg) {
   fu.classList.remove('show'); void fu.offsetWidth; fu.classList.add('show');
   setTimeout(function() { fu.classList.remove('show'); }, 2500);
 }
+
 // ═══════════════════════════════
 //  ВКЛАДКА БОССОВ
 // ═══════════════════════════════
@@ -1628,7 +1706,6 @@ function renderBossTab() {
     else if (!isUnlocked)        { extraStyle = 'opacity:0.5;'; }
 
     html += '<div style="margin-bottom:12px;border-radius:10px;border:1.5px solid ' + borderColor + ';' + extraStyle + 'overflow:hidden;">';
-    // Заголовок
     html += '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.04);border-bottom:1px solid #1a1a35;">';
     html += '<span style="font-size:26px;line-height:1;">' + b.emoji + '</span>';
     html += '<div style="flex:1;"><div style="font-size:13px;font-weight:bold;color:' + (isCurrent ? '#e74c3c' : '#ccc') + ';">Босс ' + b.id + ': ' + b.name;
@@ -1636,14 +1713,12 @@ function renderBossTab() {
     html += '</div><div style="font-size:10px;color:#778;margin-top:2px;">HP: ' + b.hp.toLocaleString() + ' · ATK: ' + b.atk + ' · CP: ' + b.cpReq.toLocaleString() + '</div></div>';
     if (!isUnlocked) html += '<div style="font-size:9px;color:#f88;text-align:right;min-width:44px;">🔒<br>+' + (b.cpReq - cp) + ' CP</div>';
     html += '</div>';
-    // Награды
     html += '<div style="padding:8px 12px 10px;background:rgba(0,0,0,0.15);">';
     html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:8px;">';
     html += '<div style="background:rgba(255,68,204,0.07);border:1px solid #4a2a5a;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">PIXR</div><div style="font-size:13px;font-weight:bold;color:#ff44cc;">' + pixr + '</div></div>';
     html += '<div style="background:rgba(245,197,66,0.07);border:1px solid #4a3a10;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">Золото</div><div style="font-size:11px;font-weight:bold;color:#f5c542;">' + (gold >= 1000 ? (gold/1000).toFixed(0)+'K' : gold) + '</div></div>';
     html += '<div style="background:rgba(167,139,250,0.07);border:1px solid #3a2a6a;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">Предмет</div><div style="font-size:9px;font-weight:bold;color:#a78bfa;">' + rarName + '</div></div>';
     html += '</div>';
-    // Кнопка
     if (!isUnlocked) {
       html += '<div style="padding:9px;font-size:11px;border-radius:8px;border:1px solid #333;background:rgba(255,255,255,0.02);color:#446;text-align:center;">🔒 Нужно ' + b.cpReq.toLocaleString() + ' CP</div>';
     } else if (canFight) {
