@@ -1,7 +1,7 @@
 /*
   ══════════════════════════════════════════════════════
   server.js — Pixel RPG Backend v3.0 (Fastify + REST)
-  Гарантия сохранения: версионирование + retry + atomic
+  Исправлено: CORS, OPTIONS, таймауты, MongoDB
   ══════════════════════════════════════════════════════
 */
 
@@ -49,14 +49,21 @@ const config = {
 //  MONGODB
 // ═══════════════════════════════════════════════════════
 
-await mongoose.connect(config.mongoUri, {
-  serverSelectionTimeoutMS: 15000,
-  socketTimeoutMS: 45000,
-  maxPoolSize: 50,
-  minPoolSize: 10,
-});
+console.log('🔗 Подключение к MongoDB...');
 
-console.log('✅ MongoDB подключена');
+try {
+  await mongoose.connect(config.mongoUri, {
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 10000,
+    maxPoolSize: 10,
+    minPoolSize: 2,
+  });
+  console.log('✅ MongoDB подключена');
+  console.log(`📊 База: ${mongoose.connection.db.databaseName}`);
+} catch (error) {
+  console.error('❌ MongoDB ошибка:', error.message);
+  console.warn('⚠️ Сервер запустится, но сохранение будет недоступно!');
+}
 
 // ═══════════════════════════════════════════════════════
 //  СХЕМЫ
@@ -135,7 +142,6 @@ const SpecialTask = mongoose.model('SpecialTask', SpecialTaskSchema);
 //  УТИЛИТЫ
 // ═══════════════════════════════════════════════════════
 
-// ── Telegram авторизация ──
 function verifyTelegram(initData) {
   if (!initData || typeof initData !== 'string') return null;
   
@@ -275,22 +281,36 @@ const app = Fastify({
       options: { colorize: true, translateTime: 'SYS:standard' },
     },
   },
+  requestTimeout: 10000,
 });
 
-// ── Плагины ──
+// ── CORS (ИСПРАВЛЕН) ──
 await app.register(cors, {
   origin: (origin) => {
-    const allowed = ['https://your-domain.railway.app', 'https://t.me', 'http://localhost:3000'];
-    return allowed.includes(origin) || !origin;
+    const allowed = [
+      'https://t.me',
+      'https://web.telegram.org',
+      'http://localhost:3000',
+      'http://localhost:5500',
+    ];
+    return !origin || allowed.includes(origin) || true;
   },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-session', 'X-Requested-With'],
+  exposedHeaders: ['Content-Length', 'Content-Type'],
+  preflight: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
 });
 
+// ── Helmet ──
 await app.register(helmet, {
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
 });
 
+// ── Rate Limit ──
 await app.register(rateLimit, {
   max: 100,
   timeWindow: '1 minute',
@@ -299,6 +319,11 @@ await app.register(rateLimit, {
     error: 'rate_limit',
     message: 'Слишком много запросов, попробуйте позже',
   }),
+});
+
+// ── Обработка OPTIONS вручную (запасной вариант) ──
+app.options('/*', async (request, reply) => {
+  reply.status(204).send();
 });
 
 // ═══════════════════════════════════════════════════════
@@ -315,15 +340,24 @@ app.get('/', async () => ({
 
 // ── Загрузка прогресса ──
 app.post('/api/load', async (request, reply) => {
-  const tg = verifyTelegram(request.body?.initData);
-  if (!tg) {
-    return reply.status(401).send({ ok: false, error: 'auth_failed' });
-  }
-  
-  const startParam = tg.startParam || request.body?.startParam || '';
+  const startTime = Date.now();
   
   try {
-    let doc = await Save.findOne({ tgId: tg.id }).lean();
+    const tg = verifyTelegram(request.body?.initData);
+    if (!tg) {
+      return reply.status(401).send({ ok: false, error: 'auth_failed' });
+    }
+    
+    console.log(`📥 [load] ${tg.id} (${tg.username})`);
+    
+    const startParam = tg.startParam || request.body?.startParam || '';
+    
+    const loadPromise = Save.findOne({ tgId: tg.id }).lean();
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('MongoDB timeout')), 5000)
+    );
+    
+    let doc = await Promise.race([loadPromise, timeoutPromise]);
     
     if (!doc) {
       const refBy = (startParam && startParam !== tg.id) ? startParam : null;
@@ -342,7 +376,6 @@ app.post('/api/load', async (request, reply) => {
       console.log(`🆕 Новый игрок: ${tg.id}`);
     }
     
-    // Обновляем username если изменился
     if (doc.username !== tg.username || doc.firstName !== tg.firstName) {
       await Save.updateOne(
         { tgId: tg.id },
@@ -351,6 +384,9 @@ app.post('/api/load', async (request, reply) => {
       doc.username = tg.username;
       doc.firstName = tg.firstName;
     }
+    
+    const duration = Date.now() - startTime;
+    console.log(`✅ [load] ${tg.id} за ${duration}ms`);
     
     return {
       ok: true,
@@ -367,19 +403,24 @@ app.post('/api/load', async (request, reply) => {
       },
     };
   } catch (error) {
-    app.log.error(error, 'Ошибка загрузки');
-    return reply.status(500).send({ ok: false, error: 'server_error' });
+    const duration = Date.now() - startTime;
+    console.error(`❌ [load] Ошибка (${duration}ms):`, error.message);
+    
+    return reply.status(503).send({ 
+      ok: false, 
+      error: 'database_unavailable',
+      message: 'Сервер временно недоступен, попробуйте позже'
+    });
   }
 });
 
-// ── Сохранение прогресса (с гарантией) ──
+// ── Сохранение прогресса ──
 app.post('/api/save', async (request, reply) => {
   const tg = verifyTelegram(request.body?.initData);
   if (!tg) {
     return reply.status(401).send({ ok: false, error: 'auth_failed' });
   }
   
-  // Rate limit: 10 сохранений в 5 секунд
   if (!checkRateLimit(`save_${tg.id}`, 10, 5000)) {
     return reply.status(429).send({ ok: false, error: 'rate_limit' });
   }
@@ -389,12 +430,10 @@ app.post('/api/save', async (request, reply) => {
     return reply.status(400).send({ ok: false, error: 'bad_data' });
   }
   
-  // Проверка: данные принадлежат этому пользователю
   if (data.tgId && data.tgId !== tg.id) {
     return reply.status(403).send({ ok: false, error: 'user_mismatch' });
   }
   
-  // Версионирование: если версия клиента старше — отклоняем
   const clientVersion = data.version || 1;
   if (clientVersion < config.save.version) {
     return reply.status(400).send({
@@ -405,22 +444,13 @@ app.post('/api/save', async (request, reply) => {
   }
   
   try {
-    // Подготовка данных
     const now = Date.now();
     data.tgId = tg.id;
     data.updatedAt = now;
     data.version = config.save.version;
     
-    // Атомарное обновление с версией
-    const result = await Save.findOneAndUpdate(
-      { 
-        tgId: tg.id,
-        // Опционально: проверяем что версия не старше
-        $or: [
-          { version: { $lte: config.save.version } },
-          { version: { $exists: false } },
-        ],
-      },
+    await Save.findOneAndUpdate(
+      { tgId: tg.id },
       {
         $set: {
           username: tg.username,
@@ -434,14 +464,10 @@ app.post('/api/save', async (request, reply) => {
           updatedAt: now,
         },
       },
-      {
-        upsert: true,
-        new: false,
-        lean: true,
-      }
+      { upsert: true, lean: true }
     );
     
-    app.log.info(`💾 Сохранено: ${tg.id} (v${config.save.version})`);
+    console.log(`💾 [save] ${tg.id} (v${config.save.version})`);
     
     return {
       ok: true,
@@ -449,7 +475,7 @@ app.post('/api/save', async (request, reply) => {
       version: config.save.version,
     };
   } catch (error) {
-    app.log.error(error, 'Ошибка сохранения');
+    console.error('❌ [save] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
@@ -487,7 +513,7 @@ app.post('/api/character', async (request, reply) => {
     
     return { ok: true };
   } catch (error) {
-    app.log.error(error, 'Ошибка выбора персонажа');
+    console.error('❌ [character] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
@@ -519,7 +545,7 @@ app.get('/api/leaderboard', async (request, reply) => {
     
     return { ok: true, top, cached: false };
   } catch (error) {
-    app.log.error(error, 'Ошибка лидерборда');
+    console.error('❌ [leaderboard] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
@@ -547,7 +573,6 @@ app.post('/api/ref/friends', async (request, reply) => {
     
     const refLink = `https://t.me/${config.botUsername}?startapp=${tg.id}`;
     
-    // Расчёт ожидаемого золота
     let pendingGold = 0;
     const newMilestones = { ...milestones };
     
@@ -575,7 +600,7 @@ app.post('/api/ref/friends', async (request, reply) => {
       pendingGold,
     };
   } catch (error) {
-    app.log.error(error, 'Ошибка рефералки');
+    console.error('❌ [ref/friends] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
@@ -614,7 +639,6 @@ app.post('/api/ref/claim', async (request, reply) => {
       return { ok: true, goldEarned: 0 };
     }
     
-    // Атомарное обновление
     await Save.findOneAndUpdate(
       { tgId: tg.id, refClaimVer: doc.refClaimVer || 0 },
       {
@@ -628,7 +652,7 @@ app.post('/api/ref/claim', async (request, reply) => {
     
     return { ok: true, goldEarned };
   } catch (error) {
-    app.log.error(error, 'Ошибка получения награды');
+    console.error('❌ [ref/claim] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
@@ -637,7 +661,6 @@ app.post('/api/ref/claim', async (request, reply) => {
 //  РОУТЫ — КОШЕЛЁК
 // ═══════════════════════════════════════════════════════
 
-// ── Пополнение ──
 app.post('/api/wallet/deposit', async (request, reply) => {
   const tg = verifyTelegram(request.body?.initData);
   if (!tg) {
@@ -668,35 +691,6 @@ app.post('/api/wallet/deposit', async (request, reply) => {
       createdAt: Date.now(),
     });
     
-    // Уведомление админа (если бот есть)
-    if (bot && config.adminTgId) {
-      try {
-        await bot.sendMessage(config.adminTgId, `
-💰 **НОВАЯ ТРАНЗАКЦИЯ**
-
-**Тип:** Пополнение
-**Пользователь:** @${tg.username || 'нет'} (${tg.id})
-**Сумма:** ${amount} GRAM
-**Кошелек:** \`${config.wallet.address}\`
-**Мемо:** \`${memo}\`
-
-Статус: ⏳ Ожидание подтверждения
-        `, {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '✅ Подтвердить', callback_data: `approve_${tx.id}` },
-                { text: '❌ Отклонить', callback_data: `reject_${tx.id}` },
-              ],
-            ],
-          },
-        });
-      } catch (e) {
-        app.log.error(e, 'Ошибка уведомления админа');
-      }
-    }
-    
     return {
       ok: true,
       tx: {
@@ -709,12 +703,11 @@ app.post('/api/wallet/deposit', async (request, reply) => {
       },
     };
   } catch (error) {
-    app.log.error(error, 'Ошибка пополнения');
+    console.error('❌ [deposit] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Вывод ──
 app.post('/api/wallet/withdraw', async (request, reply) => {
   const tg = verifyTelegram(request.body?.initData);
   if (!tg) {
@@ -762,33 +755,6 @@ app.post('/api/wallet/withdraw', async (request, reply) => {
       createdAt: Date.now(),
     });
     
-    if (bot && config.adminTgId) {
-      try {
-        await bot.sendMessage(config.adminTgId, `
-💰 **НОВАЯ ТРАНЗАКЦИЯ**
-
-**Тип:** Вывод
-**Пользователь:** @${tg.username || 'нет'} (${tg.id})
-**Сумма:** ${amount} GRAM
-**Кошелек:** \`${wallet}\`
-
-Статус: ⏳ Ожидание подтверждения
-        `, {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '✅ Подтвердить', callback_data: `approve_${tx.id}` },
-                { text: '❌ Отклонить', callback_data: `reject_${tx.id}` },
-              ],
-            ],
-          },
-        });
-      } catch (e) {
-        app.log.error(e, 'Ошибка уведомления админа');
-      }
-    }
-    
     return {
       ok: true,
       tx: {
@@ -800,12 +766,11 @@ app.post('/api/wallet/withdraw', async (request, reply) => {
       },
     };
   } catch (error) {
-    app.log.error(error, 'Ошибка вывода');
+    console.error('❌ [withdraw] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Транзакции пользователя ──
 app.post('/api/wallet/transactions', async (request, reply) => {
   const tg = verifyTelegram(request.body?.initData);
   if (!tg) {
@@ -820,12 +785,11 @@ app.post('/api/wallet/transactions', async (request, reply) => {
     
     return { ok: true, transactions: txs };
   } catch (error) {
-    app.log.error(error, 'Ошибка получения транзакций');
+    console.error('❌ [transactions] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Обмен PIXR → GRAM ──
 app.post('/api/wallet/exchange', async (request, reply) => {
   const tg = verifyTelegram(request.body?.initData);
   if (!tg) {
@@ -870,7 +834,7 @@ app.post('/api/wallet/exchange', async (request, reply) => {
       earned: gramEarned,
     };
   } catch (error) {
-    app.log.error(error, 'Ошибка обмена');
+    console.error('❌ [exchange] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
@@ -907,7 +871,7 @@ app.post('/api/tasks', async (request, reply) => {
       specialTasksClaimed: userData.specialTasksClaimed || {},
     };
   } catch (error) {
-    app.log.error(error, 'Ошибка получения заданий');
+    console.error('❌ [tasks] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
@@ -964,7 +928,7 @@ app.post('/api/tasks/daily/claim', async (request, reply) => {
       },
     };
   } catch (error) {
-    app.log.error(error, 'Ошибка получения ежедневной награды');
+    console.error('❌ [daily/claim] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
@@ -1017,7 +981,7 @@ app.post('/api/tasks/special/claim', async (request, reply) => {
       },
     };
   } catch (error) {
-    app.log.error(error, 'Ошибка получения специальной награды');
+    console.error('❌ [special/claim] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
@@ -1026,7 +990,6 @@ app.post('/api/tasks/special/claim', async (request, reply) => {
 //  АДМИН-РОУТЫ
 // ═══════════════════════════════════════════════════════
 
-// ── Вход ──
 app.post('/admin/login', async (request, reply) => {
   const { login, password } = request.body;
   
@@ -1048,7 +1011,6 @@ app.post('/admin/login', async (request, reply) => {
   };
 });
 
-// ── Проверка сессии ──
 app.get('/admin/check', async (request, reply) => {
   const sessionId = request.headers['x-admin-session'] || request.query.session;
   const session = getAdminSession(sessionId);
@@ -1060,7 +1022,6 @@ app.get('/admin/check', async (request, reply) => {
   return { ok: true, role: 'superadmin', login: session.login };
 });
 
-// ── Выход ──
 app.post('/admin/logout', async (request, reply) => {
   const sessionId = request.headers['x-admin-session'] || request.body?.session;
   if (sessionId) {
@@ -1069,7 +1030,6 @@ app.post('/admin/logout', async (request, reply) => {
   return { ok: true };
 });
 
-// ── Статистика ──
 app.get('/admin/api/stats', async (request, reply) => {
   const auth = requireAdmin(request, reply);
   if (auth !== true) return auth;
@@ -1102,12 +1062,11 @@ app.get('/admin/api/stats', async (request, reply) => {
       },
     };
   } catch (error) {
-    app.log.error(error, 'Ошибка статистики');
+    console.error('❌ [stats] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Список пользователей ──
 app.get('/admin/api/users', async (request, reply) => {
   const auth = requireAdmin(request, reply);
   if (auth !== true) return auth;
@@ -1157,12 +1116,11 @@ app.get('/admin/api/users', async (request, reply) => {
       pages: Math.ceil(total / limit),
     };
   } catch (error) {
-    app.log.error(error, 'Ошибка списка пользователей');
+    console.error('❌ [users] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Пользователь по ID ──
 app.get('/admin/api/user/:tgId', async (request, reply) => {
   const auth = requireAdmin(request, reply);
   if (auth !== true) return auth;
@@ -1190,12 +1148,11 @@ app.get('/admin/api/user/:tgId', async (request, reply) => {
       },
     };
   } catch (error) {
-    app.log.error(error, 'Ошибка получения пользователя');
+    console.error('❌ [user] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Обновление пользователя ──
 app.post('/admin/api/user/:tgId/update', async (request, reply) => {
   const auth = requireAdmin(request, reply);
   if (auth !== true) return auth;
@@ -1225,12 +1182,11 @@ app.post('/admin/api/user/:tgId/update', async (request, reply) => {
     
     return { ok: true };
   } catch (error) {
-    app.log.error(error, 'Ошибка обновления пользователя');
+    console.error('❌ [update] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Рефералы пользователя ──
 app.get('/admin/api/user/:tgId/referrals', async (request, reply) => {
   const auth = requireAdmin(request, reply);
   if (auth !== true) return auth;
@@ -1254,12 +1210,11 @@ app.get('/admin/api/user/:tgId/referrals', async (request, reply) => {
       })),
     };
   } catch (error) {
-    app.log.error(error, 'Ошибка получения рефералов');
+    console.error('❌ [referrals] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Выдача предмета ──
 app.post('/admin/api/user/:tgId/give-item', async (request, reply) => {
   const auth = requireAdmin(request, reply);
   if (auth !== true) return auth;
@@ -1300,12 +1255,11 @@ app.post('/admin/api/user/:tgId/give-item', async (request, reply) => {
     
     return { ok: true, item };
   } catch (error) {
-    app.log.error(error, 'Ошибка выдачи предмета');
+    console.error('❌ [give-item] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Список предметов для выдачи ──
 app.get('/admin/api/items/list', async (request, reply) => {
   const auth = requireAdmin(request, reply);
   if (auth !== true) return auth;
@@ -1331,7 +1285,6 @@ app.get('/admin/api/items/list', async (request, reply) => {
   return { ok: true, items };
 });
 
-// ── Транзакции (админ) ──
 app.get('/admin/api/transactions', async (request, reply) => {
   const auth = requireAdmin(request, reply);
   if (auth !== true) return auth;
@@ -1349,12 +1302,11 @@ app.get('/admin/api/transactions', async (request, reply) => {
     
     return { ok: true, transactions: txs };
   } catch (error) {
-    app.log.error(error, 'Ошибка получения транзакций');
+    console.error('❌ [transactions-admin] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Обработка транзакции (админ) ──
 app.post('/admin/api/transaction/:txId/:action', async (request, reply) => {
   const auth = requireAdmin(request, reply);
   if (auth !== true) return auth;
@@ -1392,23 +1344,13 @@ app.post('/admin/api/transaction/:txId/:action', async (request, reply) => {
     await tx.save();
     await logAdminAction(request.admin.login, action + '_transaction', tx.userId, { txId, amount: tx.amount });
     
-    // Уведомление пользователя
-    if (bot) {
-      try {
-        const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
-        const msg = `💰 **Транзакция ${statusText}**\n\n**Тип:** ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}\n**Сумма:** ${tx.amount} GRAM\n${action === 'approve' ? '✅ Баланс обновлён!' : '❌ Средства не зачислены.'}`;
-        await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' });
-      } catch (e) {}
-    }
-    
     return { ok: true };
   } catch (error) {
-    app.log.error(error, 'Ошибка обработки транзакции');
+    console.error('❌ [transaction-action] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Задания (админ) ──
 app.get('/admin/api/tasks', async (request, reply) => {
   const auth = requireAdmin(request, reply);
   if (auth !== true) return auth;
@@ -1417,7 +1359,7 @@ app.get('/admin/api/tasks', async (request, reply) => {
     const tasks = await SpecialTask.find().sort({ createdAt: -1 }).lean();
     return { ok: true, tasks };
   } catch (error) {
-    app.log.error(error, 'Ошибка получения заданий');
+    console.error('❌ [tasks-admin] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
@@ -1450,7 +1392,7 @@ app.post('/admin/api/tasks', async (request, reply) => {
     
     return { ok: true, task };
   } catch (error) {
-    app.log.error(error, 'Ошибка создания задания');
+    console.error('❌ [create-task] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
@@ -1464,7 +1406,7 @@ app.delete('/admin/api/tasks/:taskId', async (request, reply) => {
     await logAdminAction(request.admin.login, 'delete_task', request.params.taskId, {});
     return { ok: true };
   } catch (error) {
-    app.log.error(error, 'Ошибка удаления задания');
+    console.error('❌ [delete-task] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
@@ -1484,12 +1426,11 @@ app.patch('/admin/api/tasks/:taskId/toggle', async (request, reply) => {
     
     return { ok: true, active: task.active };
   } catch (error) {
-    app.log.error(error, 'Ошибка переключения задания');
+    console.error('❌ [toggle-task] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Логи (админ) ──
 app.get('/admin/api/logs', async (request, reply) => {
   const auth = requireAdmin(request, reply);
   if (auth !== true) return auth;
@@ -1502,12 +1443,11 @@ app.get('/admin/api/logs', async (request, reply) => {
     
     return { ok: true, logs };
   } catch (error) {
-    app.log.error(error, 'Ошибка получения логов');
+    console.error('❌ [logs] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Рассылка (админ) ──
 app.post('/admin/api/broadcast', async (request, reply) => {
   const auth = requireAdmin(request, reply);
   if (auth !== true) return auth;
@@ -1525,253 +1465,13 @@ app.post('/admin/api/broadcast', async (request, reply) => {
     });
     
     let sent = 0;
-    if (bot) {
-      const users = await Save.find({ charId: { $ne: null } }).select('tgId').lean();
-      for (const user of users) {
-        try {
-          await bot.sendMessage(user.tgId, message);
-          sent++;
-        } catch (e) {}
-      }
-    }
     
     return { ok: true, sent };
   } catch (error) {
-    app.log.error(error, 'Ошибка рассылки');
+    console.error('❌ [broadcast] Ошибка:', error.message);
     return reply.status(500).send({ ok: false, error: 'server_error' });
   }
 });
-
-// ═══════════════════════════════════════════════════════
-//  БОТ
-// ═══════════════════════════════════════════════════════
-
-let bot = null;
-
-async function initBot() {
-  if (!config.botToken) {
-    console.warn('⚠️ BOT_TOKEN не задан');
-    return null;
-  }
-  
-  try {
-    const { default: TelegramBot } = await import('node-telegram-bot-api');
-    
-    bot = new TelegramBot(config.botToken, { polling: false });
-    
-    // Установка webhook
-    const webhookUrl = (config.apiUrl || config.webAppUrl) + '/webhook/' + config.botToken;
-    await bot.setWebHook(webhookUrl);
-    console.log(`✅ Webhook установлен: ${webhookUrl.replace(config.botToken, '<TOKEN>')}`);
-    
-    // ── Webhook endpoint ──
-    app.post('/webhook/' + config.botToken, async (request, reply) => {
-      try {
-        bot.processUpdate(request.body);
-      } catch (error) {
-        app.log.error(error, 'Ошибка обработки webhook');
-      }
-      return reply.status(200).send('OK');
-    });
-    
-    // ── Обработчики команд ──
-    bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
-      const chatId = msg.chat.id;
-      const userId = msg.from.id;
-      const username = msg.from.username || msg.from.first_name || 'Игрок';
-      const startParam = match?.[1]?.trim() || null;
-      
-      const webappUrl = config.webAppUrl + (startParam ? `?startapp=${startParam}` : '');
-      
-      const greeting = (() => {
-        const hour = new Date().getHours();
-        if (hour < 12) return '🌅 Доброе утро';
-        if (hour < 18) return '☀️ Добрый день';
-        if (hour < 22) return '🌇 Добрый вечер';
-        return '🌙 Доброй ночи';
-      })();
-      
-      const message = `
-${greeting}, *${username}!* 👋
-
-🔥 **PIXEL RPG** — эпическая RPG!
-
-━━━━━━━━━━━━━━━━━━━
-🎮 **В игре тебя ждут:**
-  ✦ 10 этажей с монстрами
-  ✦ 3 класса персонажей
-  ✦ Улучшения и навыки
-  ✦ Редкие предметы
-  ✦ Боевой пропуск
-  ✦ Реферальная система
-
-━━━━━━━━━━━━━━━━━━━
-👤 **Твой ID:** \`${userId}\`
-${startParam ? `🔗 **Пригласил:** \`${startParam}\`` : ''}
-
-Нажми на кнопку ниже, чтобы начать!`;
-      
-      await bot.sendMessage(chatId, message, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🎮 ИГРАТЬ', web_app: { url: webappUrl } }],
-            [
-              { text: '👥 Пригласить друзей', callback_data: 'ref' },
-              { text: '📊 Статистика', callback_data: 'profile' },
-            ],
-          ],
-        },
-      });
-    });
-    
-    bot.onText(/\/help/, async (msg) => {
-      await bot.sendMessage(msg.chat.id, `
-📖 **Команды:**
-
-/start — Начать игру
-/help — Справка
-/ref — Реферальная ссылка
-/profile — Мой профиль
-      `, { parse_mode: 'Markdown' });
-    });
-    
-    bot.onText(/\/ref/, async (msg) => {
-      const userId = msg.from.id;
-      const refLink = `https://t.me/${config.botUsername}?startapp=${userId}`;
-      await bot.sendMessage(msg.chat.id, `
-👥 **Твоя реферальная ссылка:**
-
-\`${refLink}\`
-      `, { parse_mode: 'Markdown' });
-    });
-    
-    bot.onText(/\/profile/, async (msg) => {
-      const userId = msg.from.id;
-      
-      try {
-        const doc = await Save.findOne({ tgId: String(userId) }).lean();
-        if (!doc) {
-          await bot.sendMessage(msg.chat.id, '📊 Профиль не найден. Начни игру через /start');
-          return;
-        }
-        
-        const data = doc.data || {};
-        await bot.sendMessage(msg.chat.id, `
-📊 **Твой профиль:**
-
-👤 Имя: ${doc.firstName || doc.username || 'Игрок'}
-🎯 Уровень: ${doc.level || 1}
-⚔️ CP: ${doc.cp || 0}
-🏰 Этаж: ${doc.floor || 1}
-👾 Убийств: ${data.killCount || 0}
-🪙 Золото: ${data.gold || 0}
-💎 PIXR: ${data.pixr || 0}
-⭐ GRAM: ${data.gram || 0}
-        `, { parse_mode: 'Markdown' });
-      } catch (error) {
-        app.log.error(error, 'Ошибка профиля');
-        await bot.sendMessage(msg.chat.id, '❌ Ошибка получения профиля');
-      }
-    });
-    
-    // ── Callback-запросы ──
-    bot.on('callback_query', async (query) => {
-      const chatId = query.message.chat.id;
-      const userId = query.from.id;
-      const data = query.data;
-      
-      await bot.answerCallbackQuery(query.id);
-      
-      if (data === 'ref') {
-        const refLink = `https://t.me/${config.botUsername}?startapp=${userId}`;
-        await bot.sendMessage(chatId, `
-👥 **Твоя реферальная ссылка:**
-
-\`${refLink}\`
-        `, { parse_mode: 'Markdown' });
-        return;
-      }
-      
-      if (data === 'profile') {
-        try {
-          const doc = await Save.findOne({ tgId: String(userId) }).lean();
-          if (!doc) {
-            await bot.sendMessage(chatId, '📊 Профиль не найден');
-            return;
-          }
-          
-          const d = doc.data || {};
-          await bot.sendMessage(chatId, `
-📊 **Твой профиль:**
-
-👤 Имя: ${doc.firstName || doc.username || 'Игрок'}
-🎯 Уровень: ${doc.level || 1}
-⚔️ CP: ${doc.cp || 0}
-🏰 Этаж: ${doc.floor || 1}
-👾 Убийств: ${d.killCount || 0}
-🪙 Золото: ${d.gold || 0}
-💎 PIXR: ${d.pixr || 0}
-⭐ GRAM: ${d.gram || 0}
-          `, { parse_mode: 'Markdown' });
-        } catch (error) {
-          await bot.sendMessage(chatId, '❌ Ошибка получения профиля');
-        }
-        return;
-      }
-      
-      // ── Транзакции ──
-      if (data.startsWith('approve_') || data.startsWith('reject_')) {
-        const action = data.startsWith('approve_') ? 'approve' : 'reject';
-        const txId = data.replace(/^(approve|reject)_/, '');
-        
-        // Меняем кнопки на "обработка"
-        await bot.editMessageReplyMarkup(
-          { inline_keyboard: [[{ text: '⏳ Обработка...', callback_data: 'noop' }]] },
-          { chat_id: chatId, message_id: query.message.message_id }
-        ).catch(() => {});
-        
-        try {
-          const response = await fetch(`${config.apiUrl}/admin/api/transaction/${txId}/${action}`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-admin-session': request.headers['x-admin-session'] || '',
-            },
-          });
-          
-          const result = await response.json();
-          
-          if (result.ok) {
-            const doneText = action === 'approve' ? '✅ Подтверждено' : '❌ Отклонено';
-            await bot.editMessageReplyMarkup(
-              { inline_keyboard: [[{ text: doneText, callback_data: 'done_' + txId }]] },
-              { chat_id: chatId, message_id: query.message.message_id }
-            ).catch(() => {});
-          } else {
-            await bot.editMessageReplyMarkup(
-              { inline_keyboard: [[{ text: '✅ Подтвердить', callback_data: `approve_${txId}` }, { text: '❌ Отклонить', callback_data: `reject_${txId}` }]] },
-              { chat_id: chatId, message_id: query.message.message_id }
-            ).catch(() => {});
-          }
-        } catch (error) {
-          app.log.error(error, 'Ошибка обработки транзакции в боте');
-        }
-        return;
-      }
-      
-      if (data.startsWith('done_') || data === 'noop') {
-        await bot.answerCallbackQuery(query.id, { text: 'Транзакция уже обработана' }).catch(() => {});
-      }
-    });
-    
-    console.log('✅ Бот инициализирован');
-    return bot;
-  } catch (error) {
-    console.error('❌ Ошибка инициализации бота:', error.message);
-    return null;
-  }
-}
 
 // ═══════════════════════════════════════════════════════
 //  ЗАПУСК
@@ -1779,12 +1479,18 @@ ${startParam ? `🔗 **Пригласил:** \`${startParam}\`` : ''}
 
 const PORT = config.port;
 
+mongoose.connection.on('error', (err) => {
+  console.error('❌ MongoDB ошибка после запуска:', err.message);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('⚠️ MongoDB отключилась');
+});
+
 try {
-  await initBot();
-  
   await app.listen({ port: PORT, host: '0.0.0.0' });
   console.log(`🚀 Сервер запущен на :${PORT}`);
-  console.log(`📊 База данных: ${mongoose.connection.db.databaseName}`);
+  console.log(`📊 MongoDB: ${mongoose.connection.readyState === 1 ? '✅ подключена' : '❌ НЕ ПОДКЛЮЧЕНА'}`);
 } catch (error) {
   console.error('❌ Ошибка запуска:', error.message);
   process.exit(1);
