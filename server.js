@@ -302,7 +302,7 @@ app.post('/api/load', async (req, res) => {
 
 // ═══════════════════════════════
 //  СОХРАНЕНИЕ — ПРОСТОЕ, БЕЗ ВЕРСИЙ
-//  Полная перезапись data
+//  ПОЛНАЯ ПЕРЕЗАПИСЬ data
 // ═══════════════════════════════
 app.post('/api/save', async (req, res) => {
   const startTime = Date.now();
@@ -331,7 +331,7 @@ app.post('/api/save', async (req, res) => {
       { tgId: tg.id },
       {
         $set: {
-          data: data,
+          data: data,  // ← ВЕСЬ data!
           username: tg.username,
           firstName: tg.firstName,
           charId: data.charId || null,
