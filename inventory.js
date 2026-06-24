@@ -116,11 +116,6 @@ function tryDropItem(floor) {
   var item = generateItem(floor);
   G.inventory.push(item);
   showDropNotif(item);
-  
-  // ✅ СТАЛО (обернули в if):
-  if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
-    window.GameSync.saveInstant();
-  }
 }
 
 // ── Уведомление о новом дропе ──
@@ -180,7 +175,6 @@ function equipItem(itemId) {
   item._equipped = true;
   recalcStats(); updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
-  if (window.GameSync) window.GameSync.saveInstant();
 }
 
 // ── Снять предмет ──
@@ -191,7 +185,6 @@ function unequipItem(itemId) {
   item._equipped = false;
   recalcStats(); updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
-  if (window.GameSync) window.GameSync.saveInstant();
 }
 
 // ── Уничтожить предмет ──
@@ -203,7 +196,6 @@ function destroyItem(itemId) {
   G.inventory.splice(idx, 1);
   updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
-  if (window.GameSync) window.GameSync.saveInstant();
 }
 
 // ═══════════════════════════════
@@ -247,7 +239,6 @@ function refineItem(itemId) {
     showRefineResult(false, item, false, cost);
   }
   updateHUD();
-  if (window.GameSync) window.GameSync.saveInstant();
 }
 
 // ── Оверлей результата заточки ──
@@ -321,7 +312,6 @@ function useSkillBook(skillId) {
   updateSkillsHud();
   renderUpgrades();
   if (activeTab === 'inv') renderInventory();
-  if (window.GameSync) window.GameSync.saveInstant();
 }
 
 // ═══════════════════════════════
@@ -365,7 +355,6 @@ function deleteSelected() {
   });
   _invSelected = {};
   updateHUD(); renderInventory();
-  if (window.GameSync) window.GameSync.saveInstant();
 }
 
 // ── Закрытие модалки предмета ──

@@ -112,37 +112,15 @@ const BG_FADE = 0.045;
 
 // ── RESIZE ──
 function resize() {
-  var canvas = document.getElementById('gameCanvas');
-  if (!canvas) {
-    console.warn('⚠️ [render] Canvas не найден при resize');
-    return;
-  }
-  
-  var hud = document.getElementById('hud');
-  var nav = document.getElementById('nav');
-  
-  if (!hud || !nav) {
-    console.warn('⚠️ [render] HUD или NAV не найдены при resize, используем значения по умолчанию');
-    HUD_H = 60;
-    NAV_H = 56;
-  } else {
-    HUD_H = hud.offsetHeight || 60;
-    NAV_H = nav.offsetHeight || 56;
-  }
-  
-  W = canvas.width = window.innerWidth;
+  W = canvas.width  = window.innerWidth;
   H = canvas.height = window.innerHeight;
+  HUD_H  = document.getElementById('hud').offsetHeight;
+  NAV_H  = document.getElementById('nav').offsetHeight;
   GROUND = H - NAV_H - 12;
   PLAYER_SCREEN_X = Math.floor(W * 0.16);
-  
-  if (typeof player !== 'undefined' && player) {
-    player.y = GROUND - 128;
-    worldX = player.worldX - PLAYER_SCREEN_X;
-  }
-  
-  if (typeof positionSkillsHud === 'function') {
-    positionSkillsHud();
-  }
+  player.y = GROUND - 128;
+  worldX   = player.worldX - PLAYER_SCREEN_X;
+  positionSkillsHud();
 }
 
 // ═══════════════════════════════════════════════════════

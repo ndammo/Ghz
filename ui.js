@@ -27,10 +27,6 @@ function buyUpgrade(u) {
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
-
-  if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
-    window.GameSync.saveInstant();
-  }
 }
 
 function renderUpgrades() {
@@ -256,7 +252,6 @@ function goToFloor(n) {
   monsters = [];
   nextMonsterSpawn = player.worldX + 400;
   updateHUD(); switchTab('game');
-  if (window.GameSync) window.GameSync.saveInstant();
 }
 
 // ═══════════════════════════════
@@ -282,7 +277,7 @@ function renderRating() {
   body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">⏳ Загрузка рейтинга...</div>';
   
   // Если нет GameSync или не онлайн — показываем заглушку
-  if (!window.GameSync || !window.GameSync.isOnline()) {
+  if (!window.GameSync || !window.GameSync.state.online) {
     body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">📱 Рейтинг доступен только в Telegram</div>';
     return;
   }
@@ -291,7 +286,7 @@ function renderRating() {
   _ratingLoading = true;
   
   var tgId = window.GameSync.getTgId();
-  var api = window.GameSync.API;
+  var api = window.GameSync._API;
   
   fetch(api + '/api/leaderboard?tgId=' + encodeURIComponent(tgId))
     .then(function(r) { return r.json(); })
@@ -346,8 +341,8 @@ function renderRatingData(players, body) {
     var cp = p.cp || 0;
     
     var avatarUrl = '';
-    if (p.tgId && window.GameSync && window.GameSync.API) {
-      avatarUrl = window.GameSync.API + '/api/avatar/' + p.tgId;
+    if (p.tgId && window.GameSync && window.GameSync._API) {
+      avatarUrl = window.GameSync._API + '/api/avatar/' + p.tgId;
     }
     
     html += 
@@ -377,8 +372,8 @@ function renderRatingData(players, body) {
     var myColor = charColors[myChar] || '#aaa';
     
     // Аватарка текущего игрока
-    var myAvatarUrl = (window.GameSync && window.GameSync.API)
-      ? window.GameSync.API + '/api/avatar/' + tgId : '';
+    var myAvatarUrl = (window.GameSync && window.GameSync._API)
+      ? window.GameSync._API + '/api/avatar/' + tgId : '';
     
     html += 
       '<div style="margin-top:10px;border-top:1px solid #2a2a5a;padding-top:8px;font-size:9px;color:#556;text-align:center;">— Ты не в топе —</div>' +
@@ -514,7 +509,7 @@ function submitExchange() {
   
   result.innerHTML = '<span style="color:#f5c542;">Обмен...</span>';
   
-  fetch(window.GameSync.API + '/api/wallet/exchange', {
+  fetch(window.GameSync._API + '/api/wallet/exchange', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -529,7 +524,6 @@ function submitExchange() {
       G.gram = r.gram;
       updateHUD();
       result.innerHTML = `<span style="color:#2ecc71;">✅ Обменяно ${amount} PIXR → ${r.earned} GRAM</span>`;
-      if (window.GameSync) window.GameSync.saveInstant();
       setTimeout(function() {
         renderWallet();
       }, 1000);
@@ -542,7 +536,7 @@ function submitExchange() {
   });
 }
 
-// ── ЗАГРУЗКА ТРАНЗАКЦИЙ ──
+// ── ЗАГРУЗКА ТРАНЗАКЦИЙ (ИСПРАВЛЕННАЯ) ──
 function loadTransactions() {
   var list = document.getElementById('txList');
   if (!list) return;
@@ -554,7 +548,7 @@ function loadTransactions() {
   
   list.innerHTML = '<div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">Загрузка...</div>';
   
-  fetch(window.GameSync.API + '/api/wallet/transactions', {
+  fetch(window.GameSync._API + '/api/wallet/transactions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ initData: window.GameSync._INIT })
@@ -642,6 +636,70 @@ function renderStats() {
       <div class="stat-cell"><div class="stat-icon">${atkSpdSvg()}</div><div class="stat-label">Ск. атаки</div><div class="stat-val">${(G.stats.atkSpd||1).toFixed(2)}x</div></div>
     </div>
   `;
+}
+
+function loadTransactions() {
+  if (!window.GameSync || !window.GameSync._INIT) return;
+  
+  fetch(window.GameSync._API + '/api/wallet/transactions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: window.GameSync._INIT })
+  })
+  .then(r => r.json())
+  .then(r => {
+    const list = document.getElementById('txList');
+    if (!r.ok || !r.transactions || r.transactions.length === 0) {
+      list.innerHTML = `
+        <div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">
+          <div style="font-size:24px;margin-bottom:8px;">📭</div>
+          Нет транзакций
+        </div>
+      `;
+      return;
+    }
+    
+    let html = '';
+    r.transactions.slice(0, 10).forEach(tx => {
+      const statusColors = {
+        pending: '#f5c542',
+        approved: '#2ecc71',
+        rejected: '#e74c3c'
+      };
+      const statusLabels = {
+        pending: '⏳ Ожидание',
+        approved: '✅ Подтверждено',
+        rejected: '❌ Отклонено'
+      };
+      const typeLabels = {
+        deposit: '📥 Пополнение',
+        withdraw: '📤 Вывод'
+      };
+      const date = new Date(tx.createdAt).toLocaleDateString('ru-RU');
+      
+      html += `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #0a0a1a;font-size:11px;">
+          <div>
+            <div style="color:#ddd;">${typeLabels[tx.type] || tx.type}</div>
+            <div style="color:#556;font-size:9px;">${date}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="color:${tx.type === 'deposit' ? '#2ecc71' : '#e74c3c'};font-weight:bold;display:flex;align-items:center;gap:3px;justify-content:flex-end;">
+              ${tx.type === 'deposit' ? '+' : '-'} ${tx.amount} <img src="images/gram.png" style="width:13px;height:13px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">
+            </div>
+            <div style="color:${statusColors[tx.status] || '#556'};font-size:9px;">
+              ${statusLabels[tx.status] || tx.status}
+            </div>
+          </div>
+        </div>
+      `;
+    });
+    list.innerHTML = html;
+  })
+  .catch(() => {
+    const list = document.getElementById('txList');
+    list.innerHTML = '<div style="color:#e74c3c;text-align:center;padding:20px 0;font-size:12px;">Ошибка загрузки</div>';
+  });
 }
 
 // ═══════════════════════════════
@@ -817,7 +875,7 @@ function submitDeposit() {
   
   result.innerHTML = '<span style="color:#f5c542;">Отправка...</span>';
   
-  fetch(window.GameSync.API + '/api/wallet/deposit', {
+  fetch(window.GameSync._API + '/api/wallet/deposit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -858,7 +916,7 @@ function submitWithdraw() {
   
   result.innerHTML = '<span style="color:#f5c542;">Отправка...</span>';
   
-  fetch(window.GameSync.API + '/api/wallet/withdraw', {
+  fetch(window.GameSync._API + '/api/wallet/withdraw', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -874,7 +932,6 @@ function submitWithdraw() {
       document.getElementById('withdrawAmount').value = '1';
       document.getElementById('withdrawWallet').value = '';
       loadTransactions();
-      if (window.GameSync) window.GameSync.saveInstant();
       setTimeout(closeWalletModal, 3000);
     } else {
       result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (r.error || 'Ошибка') + '</span>';
@@ -932,7 +989,7 @@ function renderFriends() {
   var body = document.getElementById('friendsBody');
   if (!body) return;
 
-  if (!window.GameSync || !window.GameSync.isOnline()) {
+  if (!window.GameSync || !window.GameSync.state.online) {
     body.innerHTML = '<div style="text-align:center;padding:40px 16px;color:#556;font-size:12px;">' +
       '<div style="font-size:32px;margin-bottom:12px;">📱</div>' +
       'Реферальная программа<br>доступна только в Telegram</div>';
@@ -950,7 +1007,7 @@ function renderFriends() {
     }
   }, 10000);
 
-  fetch(window.GameSync.API + '/api/ref/friends', {
+  fetch(window.GameSync._API + '/api/ref/friends', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ initData: window.GameSync._INIT }),
@@ -1076,7 +1133,7 @@ function friendsClaim(btn) {
   if (!window.GameSync) return;
   btn.disabled = true;
   btn.textContent = 'Получение...';
-  fetch(window.GameSync.API + '/api/ref/claim', {
+  fetch(window.GameSync._API + '/api/ref/claim', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ initData: window.GameSync._INIT }),
@@ -1086,7 +1143,7 @@ function friendsClaim(btn) {
     if (r.ok && r.goldEarned > 0) {
       G.gold += r.goldEarned;
       updateHUD();
-      if (window.GameSync) window.GameSync.saveInstant();
+      if (typeof window.GameSync.touch === 'function') window.GameSync.touch();
       showFriendsToast('+' + r.goldEarned + ' золота получено!');
       setTimeout(function() { renderFriends(); }, 800);
     } else {
@@ -1137,7 +1194,6 @@ function confirmChar() {
   document.getElementById('charSelect').classList.add('hidden');
   startGame();
   updateHudAvatar();
-  if (window.GameSync) window.GameSync.saveInstant();
 }
 
 function applyCharacterSprites(ch) {
@@ -1161,72 +1217,14 @@ function applyCharacter(ch) {
 }
 
 function startGame() {
-  console.log('🎮 [ui] startGame вызван');
-  
-  // Если игра уже запущена — не запускаем повторно
-  if (window._gameStarted) {
-    console.log('ℹ️ [ui] Игра уже запущена');
-    return;
-  }
-  
-  // Проверка, что canvas существует
-  var canvas = document.getElementById('gameCanvas');
-  if (!canvas) {
-    console.warn('⚠️ [ui] Canvas не найден, повторная попытка через 100ms');
-    setTimeout(function() {
-      if (typeof startGame === 'function' && !window._gameStarted) startGame();
-    }, 100);
-    return;
-  }
-  
-  // Проверка, что HUD элементы существуют
-  if (!document.getElementById('hud') || !document.getElementById('nav')) {
-    console.warn('⚠️ [ui] HUD/NAV не найдены, повторная попытка через 100ms');
-    setTimeout(function() {
-      if (typeof startGame === 'function' && !window._gameStarted) startGame();
-    }, 100);
-    return;
-  }
-  
-  try {
-    window._gameStarted = true;
-    
-    resize(); 
-    updateHUD(); 
-    initSkillsHud(); 
-    updatePotionHud();
-    updateAvatarOnStart();
-    switchTab('game');
-    spawnMonster(player.worldX + W * 0.65);
-    
-    // Скрываем экран загрузки
-    var loading = document.getElementById('loadingScreen');
-    if (loading && !loading.classList.contains('hidden-done')) {
-      loading.classList.add('fade-out');
-      setTimeout(function() { 
-        loading.style.display = 'none'; 
-        loading.classList.add('hidden-done');
-      }, 500);
-    }
-    
-    // Запускаем игровой цикл
-    if (typeof lastTime !== 'undefined') {
-      lastTime = performance.now();
-    }
-    
-    if (typeof loop === 'function') {
-      loop(performance.now());
-    }
-    
-    console.log('✅ [ui] Игра запущена!');
-  } catch(e) {
-    console.error('❌ [ui] Ошибка старта игры:', e.message);
-    // Повторная попытка через 500ms
-    window._gameStarted = false;
-    setTimeout(function() {
-      if (typeof startGame === 'function') startGame();
-    }, 500);
-  }
+  resize(); 
+  updateHUD(); 
+  initSkillsHud(); 
+  updatePotionHud();
+  updateAvatarOnStart();
+  switchTab('game');
+  spawnMonster(player.worldX + W * 0.65);
+  requestAnimationFrame(function(ts) { lastTime = ts; loop(ts); });
 }
 
 // ═══════════════════════════════
@@ -1264,8 +1262,8 @@ function updateHudAvatar() {
   } catch (e) {}
 
   // 2. Серверный прокси через Bot API
-  if (!photoUrl && window.GameSync && window.GameSync.API) {
-    photoUrl = window.GameSync.API + '/api/avatar/' + tgId;
+  if (!photoUrl && window.GameSync && window.GameSync._API) {
+    photoUrl = window.GameSync._API + '/api/avatar/' + tgId;
   }
 
   if (!photoUrl) return;
@@ -1301,7 +1299,7 @@ function updateAvatarOnStart() {
   function tryLoad() {
     attempts++;
     var tgId = window.GameSync && window.GameSync.getTgId ? window.GameSync.getTgId() : null;
-    var api  = window.GameSync && window.GameSync.API;
+    var api  = window.GameSync && window.GameSync._API;
     // photo_url не требует _API — грузим сразу если есть tgId
     var hasPhotoUrl = false;
     try {
@@ -1375,7 +1373,6 @@ window.addEventListener('load', function() {
 });
 
 window.addEventListener('resize', resize);
-
 // ═══════════════════════════════
 //  ЗАДАНИЯ
 // ═══════════════════════════════
@@ -1438,14 +1435,14 @@ function renderTaskModal() {
 
   body.innerHTML = html;
 
-  if (!window.GameSync || !window.GameSync.isOnline()) {
+  if (!window.GameSync || !window.GameSync.state.online) {
     document.getElementById('specialTasksSection').innerHTML =
       '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">СПЕЦИАЛЬНЫЕ</div>' +
       '<div style="text-align:center;padding:16px;color:#445;font-size:11px;">Доступно только онлайн</div>';
     return;
   }
 
-  fetch(window.GameSync.API + '/api/tasks', {
+  fetch(window.GameSync._API + '/api/tasks', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ initData: window.GameSync._INIT }),
@@ -1538,8 +1535,8 @@ function startSpecialTask(taskId, link) {
 }
 
 function claimDailyTask(milestoneId) {
-  if (!window.GameSync || !window.GameSync.isOnline()) return;
-  fetch(window.GameSync.API + '/api/tasks/daily/claim', {
+  if (!window.GameSync || !window.GameSync.state.online) return;
+  fetch(window.GameSync._API + '/api/tasks/daily/claim', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ initData: window.GameSync._INIT, milestoneId: milestoneId }),
@@ -1555,7 +1552,6 @@ function claimDailyTask(milestoneId) {
     if (!G.dailyTasks) G.dailyTasks = { date: new Date().toISOString().slice(0,10), seconds:0, claimed:[] };
     if (G.dailyTasks.claimed.indexOf(milestoneId) === -1) G.dailyTasks.claimed.push(milestoneId);
     updateHUD();
-    if (window.GameSync) window.GameSync.saveInstant();
     _taskToast('+' + rw.amount + ' ' + (rw.type==='gold'?'золота':rw.type==='potions'?'зелий':'PIXR') + ' получено!');
     renderTaskModal();
   })
@@ -1563,8 +1559,8 @@ function claimDailyTask(milestoneId) {
 }
 
 function claimSpecialTask(taskId) {
-  if (!window.GameSync || !window.GameSync.isOnline()) return;
-  fetch(window.GameSync.API + '/api/tasks/special/claim', {
+  if (!window.GameSync || !window.GameSync.state.online) return;
+  fetch(window.GameSync._API + '/api/tasks/special/claim', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ initData: window.GameSync._INIT, taskId: taskId }),
@@ -1581,7 +1577,6 @@ function claimSpecialTask(taskId) {
     G.specialTasksClaimed[taskId] = Date.now();
     delete _specialTaskTimers[taskId];
     updateHUD();
-    if (window.GameSync) window.GameSync.saveInstant();
     _taskToast('+' + rw.amount + ' ' + rw.type + ' получено!');
     renderTaskModal();
   })
@@ -1597,7 +1592,6 @@ function _taskToast(msg) {
   fu.classList.remove('show'); void fu.offsetWidth; fu.classList.add('show');
   setTimeout(function() { fu.classList.remove('show'); }, 2500);
 }
-
 // ═══════════════════════════════
 //  ВКЛАДКА БОССОВ
 // ═══════════════════════════════

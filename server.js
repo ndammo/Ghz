@@ -71,6 +71,7 @@ const SaveSchema = new mongoose.Schema({
   cp:        { type: Number, default: 0 },
   floor:     { type: Number, default: 1 },
   updatedAt:    { type: Number, default: 0 },
+  refClaimVer:  { type: Number, default: 0 },
   refBy:        { type: String, default: null },
   refMilestones: { type: mongoose.Schema.Types.Mixed, default: {} },
 }, { minimize: false });
@@ -108,7 +109,6 @@ const AdminLogSchema = new mongoose.Schema({
   timestamp: { type: Number, default: Date.now }
 });
 const AdminLog = mongoose.model('AdminLog', AdminLogSchema);
-
 // ── Специальные задания (создаются через админку) ──
 const SpecialTaskSchema = new mongoose.Schema({
   taskId:       { type: String, required: true, unique: true },
@@ -315,15 +315,15 @@ app.post('/api/load', async (req, res) => {
   }
 });
 
-// ── Сохранение (упрощенное, без версионирования) ──
+// ── Сохранение ──
 app.post('/api/save', async (req, res) => {
   const startTime = Date.now();
   
   try {
-    const tg = authUser(req, res);
+    const tg = authUser(req, res); 
     if (!tg) return;
     
-    if (rateLimit(tg.id, 20, 10000)) {
+    if (rateLimit(tg.id, 10, 10000)) {
       return res.status(429).json({ ok: false, error: 'rate_limit' });
     }
     
@@ -345,17 +345,21 @@ app.post('/api/save', async (req, res) => {
       { tgId: tg.id },
       { 
         $set: {
-          username: tg.username,
+          username: tg.username, 
           firstName: tg.firstName,
-          charId: data.charId || null,
+          charId: data.charId || null, 
           data: data,
           level: Number(data.level) || 1,
-          cp: Number(data.cp) || 0,
+          cp:    Number(data.cp)    || 0,
           floor: Number(data.floor) || 1,
           updatedAt: data.updatedAt,
         }
       },
-      { upsert: true, new: false, lean: true }
+      { 
+        upsert: true,
+        new: false,
+        lean: true,
+      }
     );
 
     const duration = Date.now() - startTime;
@@ -478,10 +482,16 @@ app.post('/api/ref/friends', async (req, res) => {
   }
 });
 
-// ── Рефералка: забрать награду (упрощенно, без версионирования) ──
+const _claiming = new Set();
 app.post('/api/ref/claim', async (req, res) => {
-  const tg = authUser(req, res);
+  const tg = authUser(req, res); 
   if (!tg) return;
+  
+  if (_claiming.has(tg.id)) {
+    return res.status(429).json({ ok: false, error: 'in_progress' });
+  }
+  
+  _claiming.add(tg.id);
   
   try {
     const doc = await Save.findOne({ tgId: tg.id });
@@ -498,12 +508,13 @@ app.post('/api/ref/claim', async (req, res) => {
     doc.data.gold = (doc.data.gold || 0) + gold;
 
     await Save.findOneAndUpdate(
-      { tgId: tg.id },
+      { tgId: tg.id, refClaimVer: doc.refClaimVer || 0 },
       { 
         $set: { 
           refMilestones: newMilestones, 
           data: doc.data 
-        }
+        }, 
+        $inc: { refClaimVer: 1 } 
       }
     );
 
@@ -511,8 +522,12 @@ app.post('/api/ref/claim', async (req, res) => {
   } catch (e) {
     console.error('❌ [ref/claim] error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
+  } finally {
+    _claiming.delete(tg.id);
   }
 });
+
+
 
 // ═══════════════════════════════
 //  ЗАДАНИЯ
@@ -833,7 +848,7 @@ app.post('/api/wallet/withdraw', async (req, res) => {
 });
 
 // ── Получение транзакций пользователя ──
-app.post('/api/wallet/transactions', async (req, res) => {
+app.post('/api/wallet/transactions', async (req, res) => {  // ← GET → POST
   const tg = authUser(req, res);
   if (!tg) return;
   
@@ -867,6 +882,8 @@ app.post('/api/wallet/exchange', async (req, res) => {
   try {
     const gramEarned = amount / 1000;
 
+    // Атомарно списываем PIXR и начисляем GRAM через $inc
+    // Условие 'data.pixr': { $gte: amount } гарантирует атомарную проверку баланса
     const result = await Save.findOneAndUpdate(
       { tgId: tg.id, 'data.pixr': { $gte: amount } },
       {
@@ -1027,6 +1044,7 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
       tx.status = 'approved';
       tx.approvedAt = Date.now();
 
+      // Атомарно начисляем/списываем GRAM через $inc — не перезаписываем весь data
       const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
       await Save.findOneAndUpdate(
         { tgId: tx.userId },
@@ -1132,6 +1150,7 @@ app.get('/admin/api/users', requireAdmin, async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
 
 // ── Admin: список заданий ──
 app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
@@ -1241,6 +1260,57 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     console.error('❌ [admin] update error:', e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+
+// ── Admin: список заданий ──
+app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
+  try {
+    const tasks = await SpecialTask.find().sort({ createdAt: -1 }).lean();
+    res.json({ ok: true, tasks });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Admin: создать задание ──
+app.post('/admin/api/tasks', requireAdmin, async (req, res) => {
+  try {
+    const { title, description, link, linkText, rewardType, rewardAmount } = req.body;
+    if (!title || !rewardType || !rewardAmount)
+      return res.status(400).json({ ok: false, error: 'missing_fields' });
+    const taskId = 'task_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+    const task   = await SpecialTask.create({
+      taskId, title,
+      description:  description  || '',
+      link:         link         || '',
+      linkText:     linkText     || 'Перейти',
+      rewardType,
+      rewardAmount: Number(rewardAmount),
+      active: true,
+      createdAt: Date.now(),
+    });
+    await logAdminAction(req.admin.login, 'create_task', taskId, { title, rewardType, rewardAmount });
+    res.json({ ok: true, task });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Admin: удалить задание ──
+app.delete('/admin/api/tasks/:taskId', requireAdmin, async (req, res) => {
+  try {
+    await SpecialTask.deleteOne({ taskId: req.params.taskId });
+    await logAdminAction(req.admin.login, 'delete_task', req.params.taskId, {});
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Admin: вкл/выкл задание ──
+app.patch('/admin/api/tasks/:taskId/toggle', requireAdmin, async (req, res) => {
+  try {
+    const task = await SpecialTask.findOne({ taskId: req.params.taskId });
+    if (!task) return res.status(404).json({ ok: false, error: 'not_found' });
+    task.active = !task.active;
+    await task.save();
+    res.json({ ok: true, active: task.active });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/api/user/:tgId/referrals', requireAdmin, async (req, res) => {
