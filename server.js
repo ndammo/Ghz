@@ -59,8 +59,6 @@ mongoose.connect(MONGODB_URI, {
 // ═══════════════════════════════
 //  СХЕМЫ
 // ═══════════════════════════════
-
-// ── Пользователи ──
 const SaveSchema = new mongoose.Schema({
   tgId:      { type: String, required: true, unique: true },
   username:  { type: String, default: '' },
@@ -74,10 +72,10 @@ const SaveSchema = new mongoose.Schema({
   refClaimVer:  { type: Number, default: 0 },
   refBy:        { type: String, default: null },
   refMilestones: { type: mongoose.Schema.Types.Mixed, default: {} },
-  version:   { type: Number, default: 0 }, // 🔥 НОВОЕ: защита от конфликтов
+  version:   { type: Number, default: 0 },
 }, { minimize: false });
 
-SaveSchema.index({ tgId: 1 }, { unique: true });
+// Индексы (без дублирования tgId, т.к. unique: true уже создаёт индекс)
 SaveSchema.index({ cp: -1, level: -1 });
 SaveSchema.index({ refBy: 1 });
 SaveSchema.index({ updatedAt: -1 });
