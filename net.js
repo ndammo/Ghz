@@ -20,6 +20,7 @@
   var ws = null;
   var isConnected = false;
   var isReady = false;
+  var isSynced = false; // ← ПОЛУЧИЛИ ЛИ ДАННЫЕ С СЕРВЕРА?
   var reconnectTimer = null;
   var saveQueue = [];
   var isSaving = false;
@@ -57,6 +58,7 @@
     if (ws && ws.readyState === WebSocket.CONNECTING) return;
 
     console.log('🔌 Подключение к WebSocket...');
+    updateLoadingStatus('Подключение к серверу...', 30);
 
     try {
       ws = new WebSocket(WS_URL + '/ws');
@@ -69,6 +71,7 @@
     ws.onopen = function() {
       console.log('✅ WebSocket подключен');
       isConnected = true;
+      updateLoadingStatus('Загрузка данных...', 50);
 
       var tgId = getTgId();
       if (tgId) {
@@ -103,6 +106,28 @@
   }
 
   // ═══════════════════════════════
+  //  ОБНОВЛЕНИЕ ЭКРАНА ЗАГРУЗКИ
+  // ═══════════════════════════════
+
+  function updateLoadingStatus(text, pct) {
+    var status = document.getElementById('lsStatus');
+    var bar = document.getElementById('lsBar');
+    if (status) status.innerHTML = '<span class="ls-dots">' + text + '</span>';
+    if (bar && pct !== undefined) bar.style.width = pct + '%';
+  }
+
+  function hideLoadingScreen() {
+    var el = document.getElementById('loadingScreen');
+    if (!el || el.classList.contains('fade-out')) return;
+    el.style.pointerEvents = 'none';
+    el.classList.add('fade-out');
+    setTimeout(function() {
+      el.style.display = 'none';
+      el.classList.add('hidden-done');
+    }, 520);
+  }
+
+  // ═══════════════════════════════
   //  ПЕРЕПОДКЛЮЧЕНИЕ
   // ═══════════════════════════════
 
@@ -110,6 +135,7 @@
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(function() {
       console.log('🔄 Переподключение...');
+      updateLoadingStatus('Переподключение...', 20);
       connectWebSocket();
     }, 3000);
   }
@@ -125,17 +151,63 @@
         isReady = true;
         SYNC.serverConfirmed = true;
         SYNC.online = true;
+        updateLoadingStatus('Авторизация...', 60);
         break;
 
       case 'sync':
         console.log('📥 Получены данные с сервера');
+        updateLoadingStatus('Применение данных...', 80);
+        
+        // Применяем данные
         if (msg.data) {
           applySnapshot(msg.data);
-          if (typeof updateHUD === 'function') updateHUD();
-          if (typeof initSkillsHud === 'function') initSkillsHud();
-          if (typeof updatePotionHud === 'function') updatePotionHud();
-          if (typeof renderInventory === 'function' && typeof activeTab !== 'undefined' && activeTab === 'inv') renderInventory();
-          if (typeof renderWallet === 'function' && typeof activeTab !== 'undefined' && activeTab === 'wallet') renderWallet();
+          
+          // ⭐ ЕСТЬ ЛИ ПЕРСОНАЖ?
+          if (msg.data.charId) {
+            // ✅ Есть персонаж → запускаем игру
+            console.log('✅ Персонаж найден:', msg.data.charId);
+            isSynced = true;
+            
+            // Обновляем UI
+            if (typeof updateHUD === 'function') updateHUD();
+            if (typeof initSkillsHud === 'function') initSkillsHud();
+            if (typeof updatePotionHud === 'function') updatePotionHud();
+            if (typeof renderInventory === 'function' && typeof activeTab !== 'undefined' && activeTab === 'inv') renderInventory();
+            if (typeof renderWallet === 'function' && typeof activeTab !== 'undefined' && activeTab === 'wallet') renderWallet();
+            
+            // Скрываем экран загрузки
+            hideLoadingScreen();
+            
+            // Скрываем выбор персонажа
+            var cs = document.getElementById('charSelect');
+            if (cs) cs.classList.add('hidden');
+            
+            // Запускаем игру (только если ещё не запущена)
+            if (!SYNC.started && typeof startGame === 'function') {
+              SYNC.started = true;
+              updateLoadingStatus('Запуск игры...', 95);
+              // Небольшая задержка для плавности
+              setTimeout(function() {
+                startGame();
+                hideLoadingScreen();
+              }, 300);
+            }
+          } else {
+            // ❌ Нет персонажа → показать выбор
+            console.log('ℹ️ Персонаж не выбран, показываем выбор');
+            isSynced = true;
+            
+            // Скрываем загрузку
+            hideLoadingScreen();
+            
+            // Показываем выбор персонажа
+            var cs = document.getElementById('charSelect');
+            if (cs) cs.classList.remove('hidden');
+            
+            // Скрываем HUD навыков
+            var skillsHud = document.getElementById('skillsHud');
+            if (skillsHud) skillsHud.classList.remove('visible');
+          }
         }
         break;
 
@@ -188,7 +260,6 @@
     // Экипировка
     if (s.equipped) {
       G.equipped = s.equipped;
-      // Восстанавливаем _equipped для предметов в инвентаре
       if (G.inventory) {
         G.inventory.forEach(function(item) {
           item._equipped = false;
@@ -376,17 +447,14 @@
           break;
 
         default:
-          // Неизвестное поле — просто копируем
           G[key] = data[key];
       }
     });
 
-    // Пересчёт статов
     if (data.inventory || data.equipped || data.upg) {
       if (typeof recalcStats === 'function') recalcStats();
     }
 
-    // Обновляем UI
     if (typeof updatePotionHud === 'function') updatePotionHud();
     if (typeof updateSkillsHud === 'function') updateSkillsHud();
   }
@@ -456,7 +524,6 @@
   }
 
   function saveInstant(data) {
-    // Объединяем с текущим состоянием и сохраняем
     var full = getFullState();
     Object.keys(data).forEach(function(key) {
       full[key] = data[key];
@@ -502,7 +569,6 @@
       }
     }
 
-    // Если нет TG_ID, пробуем из localStorage
     if (!TG_ID) {
       try {
         TG_ID = localStorage.getItem('tgId');
@@ -514,32 +580,42 @@
   }
 
   // ═══════════════════════════════
-  //  БУТСТРАП
+  //  ЗАПУСК
   // ═══════════════════════════════
 
-  function boot() {
-    initTelegram();
-
-    // Скрываем экран загрузки
+  function startGameFlow() {
+    // Показываем экран загрузки
     var loadingScreen = document.getElementById('loadingScreen');
     if (loadingScreen) {
-      setTimeout(function() {
-        loadingScreen.classList.add('fade-out');
-        setTimeout(function() {
-          loadingScreen.style.display = 'none';
-        }, 500);
-      }, 500);
+      loadingScreen.style.display = 'flex';
+      loadingScreen.classList.remove('fade-out', 'hidden-done');
     }
-
+    
+    updateLoadingStatus('Подключение...', 10);
+    
     // Подключаемся к WebSocket
     connectWebSocket();
+    
+    // Таймаут на случай, если данные не пришли
+    setTimeout(function() {
+      if (!isSynced) {
+        console.warn('⚠️ Данные не получены, показываем выбор персонажа');
+        hideLoadingScreen();
+        var cs = document.getElementById('charSelect');
+        if (cs) cs.classList.remove('hidden');
+      }
+    }, 10000);
+  }
 
-    // Начинаем игровой цикл
-    if (typeof startGame === 'function') {
-      startGame();
+  function init() {
+    initTelegram();
+    
+    // Если есть персонаж в G, но не запущена игра
+    if (G_CHAR && !SYNC.started) {
+      // ... но лучше дождаться данных с сервера
     }
-
-    SYNC.booted = true;
+    
+    startGameFlow();
   }
 
   // ═══════════════════════════════
@@ -566,9 +642,9 @@
   // ═══════════════════════════════
 
   if (document.readyState === 'complete') {
-    boot();
+    init();
   } else {
-    window.addEventListener('load', boot);
+    window.addEventListener('load', init);
   }
 
   // Сохраняем при закрытии
