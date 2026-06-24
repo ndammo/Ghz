@@ -1463,5 +1463,5 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, function() {
   console.log(`🚀 Server on :${PORT}`);
   console.log(`🔌 WebSocket on :${PORT}/ws`);
-  console.log(`📊 MongoDB: ${mongoose.connection.db.databaseName}`);
+  console.log(`📊 MongoDB: ${mongoose.connection.name || 'подключение...'}`);
 });
