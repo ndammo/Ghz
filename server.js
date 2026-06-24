@@ -18,15 +18,43 @@ if (!process.env.BOT_USERNAME) console.warn('⚠️  BOT_USERNAME не зада�
 const REF_GOLD_PER_MILESTONE = 500;
 const REF_MILESTONE_STEP     = 5;
 
-// ── CORS ──
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS,DELETE,PATCH');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
-  res.header('Vary', 'Origin');
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
+// ═══════════════════════════════
+//  ЛОГГИРОВАНИЕ
+// ═══════════════════════════════
+app.use(function(req, res, next) {
+  console.log(`📨 ${req.method} ${req.path} from ${req.headers.origin || 'unknown'}`);
   next();
 });
+
+// ═══════════════════════════════
+//  УЛУЧШЕННЫЙ CORS
+// ═══════════════════════════════
+app.use(function(req, res, next) {
+  const origin = req.headers.origin || '*';
+  const allowedOrigins = [
+    'https://ghz-production.up.railway.app',
+    'http://localhost:3000',
+    'http://127.0.0.1:5500',
+    'http://127.0.0.1:8080'
+  ];
+  
+  if (allowedOrigins.includes(origin) || origin.includes('railway.app')) {
+    res.header('Access-Control-Allow-Origin', origin);
+  } else {
+    res.header('Access-Control-Allow-Origin', '*');
+  }
+  
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, x-admin-session, x-bot-secret');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Vary', 'Origin');
+  
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 app.use(express.json({ limit: '1mb', type: ['application/json', 'text/plain'] }));
 
 // ═══════════════════════════════
@@ -109,6 +137,7 @@ const AdminLogSchema = new mongoose.Schema({
   timestamp: { type: Number, default: Date.now }
 });
 const AdminLog = mongoose.model('AdminLog', AdminLogSchema);
+
 // ── Специальные задания (создаются через админку) ──
 const SpecialTaskSchema = new mongoose.Schema({
   taskId:       { type: String, required: true, unique: true },
@@ -123,7 +152,6 @@ const SpecialTaskSchema = new mongoose.Schema({
 }, { minimize: false });
 SpecialTaskSchema.index({ active: 1, createdAt: -1 });
 const SpecialTask = mongoose.model('SpecialTask', SpecialTaskSchema);
-
 
 // ═══════════════════════════════
 //  КОНФИГ КОШЕЛЬКА
@@ -527,8 +555,6 @@ app.post('/api/ref/claim', async (req, res) => {
   }
 });
 
-
-
 // ═══════════════════════════════
 //  ЗАДАНИЯ
 // ═══════════════════════════════
@@ -848,7 +874,7 @@ app.post('/api/wallet/withdraw', async (req, res) => {
 });
 
 // ── Получение транзакций пользователя ──
-app.post('/api/wallet/transactions', async (req, res) => {  // ← GET → POST
+app.post('/api/wallet/transactions', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
   
@@ -882,8 +908,6 @@ app.post('/api/wallet/exchange', async (req, res) => {
   try {
     const gramEarned = amount / 1000;
 
-    // Атомарно списываем PIXR и начисляем GRAM через $inc
-    // Условие 'data.pixr': { $gte: amount } гарантирует атомарную проверку баланса
     const result = await Save.findOneAndUpdate(
       { tgId: tg.id, 'data.pixr': { $gte: amount } },
       {
@@ -910,7 +934,6 @@ app.post('/api/wallet/exchange', async (req, res) => {
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
-
 
 // ═══════════════════════════════
 //  БОТ: подтверждение/отклонение транзакций
@@ -1044,7 +1067,6 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
       tx.status = 'approved';
       tx.approvedAt = Date.now();
 
-      // Атомарно начисляем/списываем GRAM через $inc — не перезаписываем весь data
       const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
       await Save.findOneAndUpdate(
         { tgId: tx.userId },
@@ -1150,7 +1172,6 @@ app.get('/admin/api/users', requireAdmin, async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
-
 
 // ── Admin: список заданий ──
 app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
@@ -1260,57 +1281,6 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     console.error('❌ [admin] update error:', e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
-});
-
-
-// ── Admin: список заданий ──
-app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
-  try {
-    const tasks = await SpecialTask.find().sort({ createdAt: -1 }).lean();
-    res.json({ ok: true, tasks });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: создать задание ──
-app.post('/admin/api/tasks', requireAdmin, async (req, res) => {
-  try {
-    const { title, description, link, linkText, rewardType, rewardAmount } = req.body;
-    if (!title || !rewardType || !rewardAmount)
-      return res.status(400).json({ ok: false, error: 'missing_fields' });
-    const taskId = 'task_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-    const task   = await SpecialTask.create({
-      taskId, title,
-      description:  description  || '',
-      link:         link         || '',
-      linkText:     linkText     || 'Перейти',
-      rewardType,
-      rewardAmount: Number(rewardAmount),
-      active: true,
-      createdAt: Date.now(),
-    });
-    await logAdminAction(req.admin.login, 'create_task', taskId, { title, rewardType, rewardAmount });
-    res.json({ ok: true, task });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: удалить задание ──
-app.delete('/admin/api/tasks/:taskId', requireAdmin, async (req, res) => {
-  try {
-    await SpecialTask.deleteOne({ taskId: req.params.taskId });
-    await logAdminAction(req.admin.login, 'delete_task', req.params.taskId, {});
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: вкл/выкл задание ──
-app.patch('/admin/api/tasks/:taskId/toggle', requireAdmin, async (req, res) => {
-  try {
-    const task = await SpecialTask.findOne({ taskId: req.params.taskId });
-    if (!task) return res.status(404).json({ ok: false, error: 'not_found' });
-    task.active = !task.active;
-    await task.save();
-    res.json({ ok: true, active: task.active });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/api/user/:tgId/referrals', requireAdmin, async (req, res) => {
@@ -1552,7 +1522,6 @@ app.post('/admin/logout', (req, res) => {
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
 });
-
 
 // ═══════════════════════════════
 //  Бот

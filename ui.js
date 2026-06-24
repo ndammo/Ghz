@@ -406,7 +406,7 @@ function towerSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10"
 function atkSpdSvg()   { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="1" y="1" width="2" height="2" fill="#ffaa00"/><rect x="3" y="3" width="2" height="2" fill="#ffaa00"/><rect x="5" y="1" width="2" height="2" fill="#ffaa00"/><rect x="7" y="3" width="2" height="2" fill="#ffaa00"/><rect x="3" y="5" width="4" height="2" fill="#ffcc44"/><rect x="2" y="7" width="6" height="2" fill="#ff8800"/></svg>`; }
 
 // ═══════════════════════════════
-//  ВКЛАДКА КОШЕЛЕК (исправленная)
+//  ВКЛАДКА КОШЕЛЕК
 // ═══════════════════════════════
 
 var _walletTab = 'wallet'; // 'wallet' | 'stats'
@@ -422,7 +422,7 @@ function renderWallet() {
         border-radius:8px;border:1.5px solid ${_walletTab === 'wallet' ? '#40d0ff' : '#2a2a5a'};
         background:${_walletTab === 'wallet' ? 'rgba(64,208,255,0.1)' : 'rgba(255,255,255,0.03)'};
         color:${_walletTab === 'wallet' ? '#40d0ff' : '#556'};cursor:pointer;">
-        👛 Кошелек
+        ?? Кошелек
       </button>
       <button onclick="switchWalletTab('stats')" style="flex:1;padding:8px;font-size:12px;font-family:Courier New,monospace;
         border-radius:8px;border:1.5px solid ${_walletTab === 'stats' ? '#f5c542' : '#2a2a5a'};
@@ -536,17 +536,17 @@ function submitExchange() {
   });
 }
 
-// ── ЗАГРУЗКА ТРАНЗАКЦИЙ (ИСПРАВЛЕННАЯ) ──
+// ── ЗАГРУЗКА ТРАНЗАКЦИЙ ──
 function loadTransactions() {
   var list = document.getElementById('txList');
   if (!list) return;
   
   if (!window.GameSync || !window.GameSync._INIT) {
-    list.innerHTML = '<div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">Авторизуйтесь в Telegram</div>';
+    list.innerHTML = '<div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">📱 Авторизуйтесь в Telegram</div>';
     return;
   }
   
-  list.innerHTML = '<div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">Загрузка...</div>';
+  list.innerHTML = '<div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">⏳ Загрузка...</div>';
   
   fetch(window.GameSync._API + '/api/wallet/transactions', {
     method: 'POST',
@@ -588,7 +588,6 @@ function loadTransactions() {
     var html = '';
     r.transactions.slice(0, 10).forEach(function(tx) {
       var date = new Date(tx.createdAt).toLocaleDateString('ru-RU');
-      
       html += `
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #0a0a1a;font-size:11px;">
           <div>
@@ -610,7 +609,7 @@ function loadTransactions() {
   })
   .catch(function(err) {
     console.error('❌ [wallet] loadTransactions error:', err.message);
-    list.innerHTML = '<div style="color:#e74c3c;text-align:center;padding:20px 0;font-size:12px;">Ошибка загрузки</div>';
+    list.innerHTML = '<div style="color:#e74c3c;text-align:center;padding:20px 0;font-size:12px;">❌ Ошибка загрузки транзакций</div>';
   });
 }
 
@@ -636,70 +635,6 @@ function renderStats() {
       <div class="stat-cell"><div class="stat-icon">${atkSpdSvg()}</div><div class="stat-label">Ск. атаки</div><div class="stat-val">${(G.stats.atkSpd||1).toFixed(2)}x</div></div>
     </div>
   `;
-}
-
-function loadTransactions() {
-  if (!window.GameSync || !window.GameSync._INIT) return;
-  
-  fetch(window.GameSync._API + '/api/wallet/transactions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT })
-  })
-  .then(r => r.json())
-  .then(r => {
-    const list = document.getElementById('txList');
-    if (!r.ok || !r.transactions || r.transactions.length === 0) {
-      list.innerHTML = `
-        <div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">
-          <div style="font-size:24px;margin-bottom:8px;">📭</div>
-          Нет транзакций
-        </div>
-      `;
-      return;
-    }
-    
-    let html = '';
-    r.transactions.slice(0, 10).forEach(tx => {
-      const statusColors = {
-        pending: '#f5c542',
-        approved: '#2ecc71',
-        rejected: '#e74c3c'
-      };
-      const statusLabels = {
-        pending: '⏳ Ожидание',
-        approved: '✅ Подтверждено',
-        rejected: '❌ Отклонено'
-      };
-      const typeLabels = {
-        deposit: '📥 Пополнение',
-        withdraw: '📤 Вывод'
-      };
-      const date = new Date(tx.createdAt).toLocaleDateString('ru-RU');
-      
-      html += `
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #0a0a1a;font-size:11px;">
-          <div>
-            <div style="color:#ddd;">${typeLabels[tx.type] || tx.type}</div>
-            <div style="color:#556;font-size:9px;">${date}</div>
-          </div>
-          <div style="text-align:right;">
-            <div style="color:${tx.type === 'deposit' ? '#2ecc71' : '#e74c3c'};font-weight:bold;display:flex;align-items:center;gap:3px;justify-content:flex-end;">
-              ${tx.type === 'deposit' ? '+' : '-'} ${tx.amount} <img src="images/gram.png" style="width:13px;height:13px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">
-            </div>
-            <div style="color:${statusColors[tx.status] || '#556'};font-size:9px;">
-              ${statusLabels[tx.status] || tx.status}
-            </div>
-          </div>
-        </div>
-      `;
-    });
-    list.innerHTML = html;
-  })
-  .catch(() => {
-    const list = document.getElementById('txList');
-    list.innerHTML = '<div style="color:#e74c3c;text-align:center;padding:20px 0;font-size:12px;">Ошибка загрузки</div>';
-  });
 }
 
 // ═══════════════════════════════
@@ -863,17 +798,23 @@ function closeWalletModal(e) {
   document.querySelectorAll('.wallet-modal').forEach(m => m.classList.add('hidden'));
 }
 
-// ── ОТПРАВКА ЗАПРОСА ──
+// ── ИСПРАВЛЕННАЯ ОТПРАВКА ЗАПРОСА ПОПОЛНЕНИЯ ──
 function submitDeposit() {
-  const amount = parseInt(document.getElementById('depositAmount').value);
-  const result = document.getElementById('depositResult');
+  var amount = parseInt(document.getElementById('depositAmount').value);
+  var result = document.getElementById('depositResult');
   
-  if (!amount || amount < 1 || amount > 100) {
-    result.innerHTML = '<span style="color:#e74c3c;">Сумма от 1 до 100 GRAM</span>';
+  if (!amount || amount < 1) {
+    result.innerHTML = '<span style="color:#e74c3c;">Сумма от 1 GRAM</span>';
     return;
   }
   
-  result.innerHTML = '<span style="color:#f5c542;">Отправка...</span>';
+  // Проверяем, что GameSync инициализирован
+  if (!window.GameSync || !window.GameSync._INIT) {
+    result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка авторизации. Перезапустите игру.</span>';
+    return;
+  }
+  
+  result.innerHTML = '<span style="color:#f5c542;">⏳ Отправка...</span>';
   
   fetch(window.GameSync._API + '/api/wallet/deposit', {
     method: 'POST',
@@ -883,8 +824,11 @@ function submitDeposit() {
       amount: amount
     })
   })
-  .then(r => r.json())
-  .then(r => {
+  .then(function(r) { 
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json(); 
+  })
+  .then(function(r) {
     if (r.ok) {
       result.innerHTML = '<span style="color:#2ecc71;">✅ Заявка создана! Ожидайте подтверждения админом.</span>';
       document.getElementById('depositAmount').value = '1';
@@ -894,17 +838,21 @@ function submitDeposit() {
       result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (r.error || 'Ошибка') + '</span>';
     }
   })
-  .catch(() => {
-    result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка соединения</span>';
+  .catch(function(err) {
+    console.error('❌ [deposit] Ошибка:', err.message);
+    result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка соединения с сервером</span>';
   });
 }
 
+// ── ИСПРАВЛЕННАЯ ОТПРАВКА ЗАПРОСА ВЫВОДА ──
 function submitWithdraw() {
-  const amount = parseInt(document.getElementById('withdrawAmount').value);
-  const wallet = document.getElementById('withdrawWallet').value.trim();
-  const result = document.getElementById('withdrawResult');
+  var amount = parseInt(document.getElementById('withdrawAmount').value);
+  var wallet = document.getElementById('withdrawWallet').value.trim();
+  var result = document.getElementById('withdrawResult');
   
-  if (!amount || amount < 1 || amount > Math.floor(G.gram || 0)) {
+  var maxWithdraw = Math.floor(G.gram || 0);
+  
+  if (!amount || amount < 1 || amount > maxWithdraw) {
     result.innerHTML = '<span style="color:#e74c3c;">Недостаточно средств или неверная сумма</span>';
     return;
   }
@@ -914,7 +862,12 @@ function submitWithdraw() {
     return;
   }
   
-  result.innerHTML = '<span style="color:#f5c542;">Отправка...</span>';
+  if (!window.GameSync || !window.GameSync._INIT) {
+    result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка авторизации. Перезапустите игру.</span>';
+    return;
+  }
+  
+  result.innerHTML = '<span style="color:#f5c542;">⏳ Отправка...</span>';
   
   fetch(window.GameSync._API + '/api/wallet/withdraw', {
     method: 'POST',
@@ -925,8 +878,11 @@ function submitWithdraw() {
       wallet: wallet
     })
   })
-  .then(r => r.json())
-  .then(r => {
+  .then(function(r) { 
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json(); 
+  })
+  .then(function(r) {
     if (r.ok) {
       result.innerHTML = '<span style="color:#2ecc71;">✅ Заявка создана! Ожидайте подтверждения админом.</span>';
       document.getElementById('withdrawAmount').value = '1';
@@ -937,8 +893,9 @@ function submitWithdraw() {
       result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (r.error || 'Ошибка') + '</span>';
     }
   })
-  .catch(() => {
-    result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка соединения</span>';
+  .catch(function(err) {
+    console.error('❌ [withdraw] Ошибка:', err.message);
+    result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка соединения с сервером</span>';
   });
 }
 
