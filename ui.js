@@ -296,7 +296,7 @@ function renderRating() {
   _ratingLoading = true;
   
   var tgId = window.GameSync.getTgId();
-  var api = window.GameSync._API;
+  var api = window.GameSync.getApiUrl();
   
   fetch(api + '/api/leaderboard?tgId=' + encodeURIComponent(tgId))
     .then(function(r) { return r.json(); })
@@ -347,8 +347,8 @@ function renderRatingData(players, body) {
     var cp = p.cp || 0;
     
     var avatarUrl = '';
-    if (p.tgId && window.GameSync && window.GameSync._API) {
-      avatarUrl = window.GameSync._API + '/api/avatar/' + p.tgId;
+    if (p.tgId && window.GameSync && window.GameSync.getApiUrl) {
+      avatarUrl = window.GameSync.getApiUrl() + '/api/avatar/' + p.tgId;
     }
     
     html += 
@@ -376,8 +376,8 @@ function renderRatingData(players, body) {
     var myEmoji = charEmojis[myChar] || '';
     var myColor = charColors[myChar] || '#aaa';
     
-    var myAvatarUrl = (window.GameSync && window.GameSync._API)
-      ? window.GameSync._API + '/api/avatar/' + tgId : '';
+    var myAvatarUrl = (window.GameSync && window.GameSync.getApiUrl)
+      ? window.GameSync.getApiUrl() + '/api/avatar/' + tgId : '';
     
     html += 
       '<div style="margin-top:10px;border-top:1px solid #2a2a5a;padding-top:8px;font-size:9px;color:#556;text-align:center;">— Ты не в топе —</div>' +
@@ -510,11 +510,11 @@ function submitExchange() {
   
   result.innerHTML = '<span style="color:#f5c542;">Обмен...</span>';
   
-  fetch(window.GameSync._API + '/api/wallet/exchange', {
+  fetch(window.GameSync.getApiUrl() + '/api/wallet/exchange', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      initData: window.GameSync._INIT,
+      initData: window.GameSync.INIT,
       amount: amount
     })
   })
@@ -547,17 +547,17 @@ function loadTransactions() {
   var list = document.getElementById('txList');
   if (!list) return;
   
-  if (!window.GameSync || !window.GameSync._INIT) {
+  if (!window.GameSync || !window.GameSync.INIT) {
     list.innerHTML = '<div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">📱 Авторизуйтесь в Telegram</div>';
     return;
   }
   
   list.innerHTML = '<div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">⏳ Загрузка...</div>';
   
-  fetch(window.GameSync._API + '/api/wallet/transactions', {
+  fetch(window.GameSync.getApiUrl() + '/api/wallet/transactions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT })
+    body: JSON.stringify({ initData: window.GameSync.INIT })
   })
   .then(function(r) { 
     if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -812,18 +812,18 @@ function submitDeposit() {
     return;
   }
   
-  if (!window.GameSync || !window.GameSync._INIT) {
+  if (!window.GameSync || !window.GameSync.INIT) {
     result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка авторизации. Перезапустите игру.</span>';
     return;
   }
   
   result.innerHTML = '<span style="color:#f5c542;">⏳ Отправка...</span>';
   
-  fetch(window.GameSync._API + '/api/wallet/deposit', {
+  fetch(window.GameSync.getApiUrl() + '/api/wallet/deposit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      initData: window.GameSync._INIT,
+      initData: window.GameSync.INIT,
       amount: amount
     })
   })
@@ -870,18 +870,18 @@ function submitWithdraw() {
     return;
   }
   
-  if (!window.GameSync || !window.GameSync._INIT) {
+  if (!window.GameSync || !window.GameSync.INIT) {
     result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка авторизации. Перезапустите игру.</span>';
     return;
   }
   
   result.innerHTML = '<span style="color:#f5c542;">⏳ Отправка...</span>';
   
-  fetch(window.GameSync._API + '/api/wallet/withdraw', {
+  fetch(window.GameSync.getApiUrl() + '/api/wallet/withdraw', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      initData: window.GameSync._INIT,
+      initData: window.GameSync.INIT,
       amount: amount,
       wallet: wallet
     })
@@ -985,10 +985,10 @@ function renderFriends() {
     }
   }, 10000);
 
-  fetch(window.GameSync._API + '/api/ref/friends', {
+  fetch(window.GameSync.getApiUrl() + '/api/ref/friends', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT }),
+    body: JSON.stringify({ initData: window.GameSync.INIT }),
   })
   .then(function(r) { return r.json(); })
   .then(function(r) {
@@ -1113,10 +1113,10 @@ function friendsClaim(btn) {
   if (!window.GameSync) return;
   btn.disabled = true;
   btn.textContent = 'Получение...';
-  fetch(window.GameSync._API + '/api/ref/claim', {
+  fetch(window.GameSync.getApiUrl() + '/api/ref/claim', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT }),
+    body: JSON.stringify({ initData: window.GameSync.INIT }),
   })
   .then(function(r) { return r.json(); })
   .then(function(r) {
@@ -1252,8 +1252,8 @@ function updateHudAvatar() {
     }
   } catch (e) {}
 
-  if (!photoUrl && window.GameSync && window.GameSync._API) {
-    photoUrl = window.GameSync._API + '/api/avatar/' + tgId;
+  if (!photoUrl && window.GameSync && window.GameSync.getApiUrl) {
+    photoUrl = window.GameSync.getApiUrl() + '/api/avatar/' + tgId;
   }
 
   if (!photoUrl) return;
@@ -1288,7 +1288,7 @@ function updateAvatarOnStart() {
   function tryLoad() {
     attempts++;
     var tgId = window.GameSync && window.GameSync.getTgId ? window.GameSync.getTgId() : null;
-    var api  = window.GameSync && window.GameSync._API;
+    var api  = window.GameSync && window.GameSync.getApiUrl;
     var hasPhotoUrl = false;
     try {
       var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;

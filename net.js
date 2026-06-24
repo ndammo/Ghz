@@ -2,6 +2,7 @@
   ══════════════════════════════════════════════════════
   net.js — WebSocket клиент
   Единый источник истины — сервер
+  Отправляет ТОЛЬКО изменённые поля (diff)
   ══════════════════════════════════════════════════════
 */
 
@@ -20,12 +21,16 @@
   var ws = null;
   var isConnected = false;
   var isReady = false;
-  var isSynced = false; // ← ПОЛУЧИЛИ ЛИ ДАННЫЕ С СЕРВЕРА?
+  var isSynced = false;
   var reconnectTimer = null;
   var saveQueue = [];
   var isSaving = false;
   var TG_INIT = '';
   var TG_ID = null;
+  
+  // ⭐ Храним предыдущее состояние для сравнения
+  var _lastState = {};
+  
   var SYNC = {
     booted: false,
     started: false,
@@ -158,53 +163,43 @@
         console.log('📥 Получены данные с сервера');
         updateLoadingStatus('Применение данных...', 80);
         
-        // Применяем данные
         if (msg.data) {
           applySnapshot(msg.data);
           
-          // ⭐ ЕСТЬ ЛИ ПЕРСОНАЖ?
+          // ⭐ Обновляем кэш после загрузки
+          _lastState = getFullState();
+          
           if (msg.data.charId) {
-            // ✅ Есть персонаж → запускаем игру
             console.log('✅ Персонаж найден:', msg.data.charId);
             isSynced = true;
             
-            // Обновляем UI
             if (typeof updateHUD === 'function') updateHUD();
             if (typeof initSkillsHud === 'function') initSkillsHud();
             if (typeof updatePotionHud === 'function') updatePotionHud();
             if (typeof renderInventory === 'function' && typeof activeTab !== 'undefined' && activeTab === 'inv') renderInventory();
             if (typeof renderWallet === 'function' && typeof activeTab !== 'undefined' && activeTab === 'wallet') renderWallet();
             
-            // Скрываем экран загрузки
             hideLoadingScreen();
             
-            // Скрываем выбор персонажа
             var cs = document.getElementById('charSelect');
             if (cs) cs.classList.add('hidden');
             
-            // Запускаем игру (только если ещё не запущена)
             if (!SYNC.started && typeof startGame === 'function') {
               SYNC.started = true;
               updateLoadingStatus('Запуск игры...', 95);
-              // Небольшая задержка для плавности
               setTimeout(function() {
                 startGame();
                 hideLoadingScreen();
               }, 300);
             }
           } else {
-            // ❌ Нет персонажа → показать выбор
             console.log('ℹ️ Персонаж не выбран, показываем выбор');
             isSynced = true;
-            
-            // Скрываем загрузку
             hideLoadingScreen();
             
-            // Показываем выбор персонажа
             var cs = document.getElementById('charSelect');
             if (cs) cs.classList.remove('hidden');
             
-            // Скрываем HUD навыков
             var skillsHud = document.getElementById('skillsHud');
             if (skillsHud) skillsHud.classList.remove('visible');
           }
@@ -214,6 +209,8 @@
       case 'update':
         console.log('🔄 Обновление от сервера:', Object.keys(msg.data));
         applyUpdate(msg.data);
+        // ⭐ Обновляем кэш после обновления
+        _lastState = getFullState();
         if (typeof updateHUD === 'function') updateHUD();
         break;
 
@@ -241,14 +238,12 @@
   function applySnapshot(s) {
     if (!s || typeof s !== 'object') return false;
 
-    // Персонаж
     if (s.charId && typeof CHARS !== 'undefined' && CHARS[s.charId]) {
       G_CHAR = CHARS[s.charId];
       G.charId = s.charId;
       if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
     }
 
-    // Инвентарь
     if (s.inventory && Array.isArray(s.inventory)) {
       G.inventory = s.inventory.map(function(item) {
         var c = Object.assign({}, item);
@@ -257,7 +252,6 @@
       });
     }
 
-    // Экипировка
     if (s.equipped) {
       G.equipped = s.equipped;
       if (G.inventory) {
@@ -272,17 +266,14 @@
       }
     }
 
-    // Улучшения
     if (s.upg) {
       G.upg = Object.assign({ atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 }, s.upg);
     }
 
-    // Навыки
     if (s.skills) {
       G.skills = s.skills;
     }
 
-    // Прогресс
     if (s.level !== undefined) G.level = s.level;
     if (s.xp !== undefined) G.xp = s.xp;
     if (s.xpNeeded !== undefined) G.xpNeeded = s.xpNeeded;
@@ -290,32 +281,23 @@
     if (s.maxFloor !== undefined) G.maxFloor = s.maxFloor;
     if (s.killCount !== undefined) G.killCount = s.killCount;
 
-    // Валюта
     if (s.gold !== undefined) G.gold = s.gold;
     if (s.pixr !== undefined) G.pixr = s.pixr;
     if (s.gram !== undefined) G.gram = s.gram;
 
-    // HP
     if (s.hp !== undefined) G.hp = s.hp;
     if (s.maxHp !== undefined) G.maxHp = s.maxHp;
 
-    // Зелья
     if (s.potions !== undefined) G.potions = s.potions;
     if (s.potionLv !== undefined) G.potionLv = s.potionLv;
     if (s.potionThreshold !== undefined) G.potionThreshold = s.potionThreshold;
 
-    // Подписки
     if (s.bp) G.bp = s.bp;
     if (s.prem) G.prem = s.prem;
-
-    // Боссы
     if (s.boss) G.boss = s.boss;
-
-    // Задания
     if (s.dailyTasks) G.dailyTasks = s.dailyTasks;
     if (s.specialTasksClaimed) G.specialTasksClaimed = s.specialTasksClaimed;
 
-    // Пересчёт статов
     if (typeof recalcStats === 'function') recalcStats();
 
     return true;
@@ -339,7 +321,6 @@
             });
           }
           break;
-
         case 'equipped':
           G.equipped = data[key];
           if (G.inventory) {
@@ -353,91 +334,69 @@
             });
           }
           break;
-
         case 'upg':
           G.upg = Object.assign({ atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 }, data[key]);
           break;
-
         case 'skills':
           G.skills = data[key];
           break;
-
         case 'level':
           G.level = data[key];
           break;
-
         case 'xp':
           G.xp = data[key];
           break;
-
         case 'xpNeeded':
           G.xpNeeded = data[key];
           break;
-
         case 'floor':
           G.floor = data[key];
           break;
-
         case 'maxFloor':
           G.maxFloor = data[key];
           break;
-
         case 'gold':
           G.gold = data[key];
           break;
-
         case 'pixr':
           G.pixr = data[key];
           break;
-
         case 'gram':
           G.gram = data[key];
           break;
-
         case 'hp':
           G.hp = data[key];
           break;
-
         case 'maxHp':
           G.maxHp = data[key];
           break;
-
         case 'potions':
           G.potions = data[key];
           break;
-
         case 'potionLv':
           G.potionLv = data[key];
           break;
-
         case 'potionThreshold':
           G.potionThreshold = data[key];
           break;
-
         case 'bp':
           G.bp = data[key];
           break;
-
         case 'prem':
           G.prem = data[key];
           break;
-
         case 'boss':
           G.boss = data[key];
           break;
-
         case 'dailyTasks':
           G.dailyTasks = data[key];
           break;
-
         case 'specialTasksClaimed':
           G.specialTasksClaimed = data[key];
           break;
-
         case 'killCount':
           G.killCount = data[key];
           break;
-
         case 'charId':
           G.charId = data[key];
           if (data[key] && typeof CHARS !== 'undefined' && CHARS[data[key]]) {
@@ -445,7 +404,6 @@
             if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
           }
           break;
-
         default:
           G[key] = data[key];
       }
@@ -493,8 +451,28 @@
   }
 
   // ═══════════════════════════════
-  //  СОХРАНЕНИЕ
+  //  СОХРАНЕНИЕ — ТОЛЬКО ИЗМЕНЕНИЯ (DIFF)
   // ═══════════════════════════════
+
+  function getChanges() {
+    var current = getFullState();
+    var changes = {};
+    var hasChanges = false;
+
+    Object.keys(current).forEach(function(key) {
+      var oldVal = _lastState[key];
+      var newVal = current[key];
+      
+      var isEqual = JSON.stringify(oldVal) === JSON.stringify(newVal);
+      
+      if (!isEqual) {
+        changes[key] = newVal;
+        hasChanges = true;
+      }
+    });
+
+    return { changes: changes, hasChanges: hasChanges };
+  }
 
   function sendSave(data) {
     if (!isReady || !ws || ws.readyState !== WebSocket.OPEN) {
@@ -510,17 +488,24 @@
   }
 
   function saveEverything() {
+    var result = getChanges();
+    
+    if (!result.hasChanges) {
+      return;
+    }
+
     if (!isReady) {
-      saveQueue.push(getFullState());
+      saveQueue.push(result.changes);
       return;
     }
 
     if (isSaving) {
-      saveQueue.push(getFullState());
+      saveQueue.push(result.changes);
       return;
     }
 
-    sendSave(getFullState());
+    sendSave(result.changes);
+    _lastState = getFullState();
   }
 
   function saveInstant(data) {
@@ -529,12 +514,24 @@
       full[key] = data[key];
     });
     
-    if (!isReady || isSaving) {
-      saveQueue.push(full);
+    // Временно обновляем G
+    Object.keys(data).forEach(function(key) {
+      G[key] = data[key];
+    });
+    
+    var result = getChanges();
+    
+    if (!result.hasChanges) {
       return;
     }
 
-    sendSave(full);
+    if (!isReady || isSaving) {
+      saveQueue.push(result.changes);
+      return;
+    }
+
+    sendSave(result.changes);
+    _lastState = getFullState();
   }
 
   // ═══════════════════════════════
@@ -545,6 +542,14 @@
     if (isReady && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'load' }));
     }
+  }
+
+  // ═══════════════════════════════
+  //  ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ КЭША
+  // ═══════════════════════════════
+
+  function refreshCache() {
+    _lastState = getFullState();
   }
 
   // ═══════════════════════════════
@@ -584,7 +589,6 @@
   // ═══════════════════════════════
 
   function startGameFlow() {
-    // Показываем экран загрузки
     var loadingScreen = document.getElementById('loadingScreen');
     if (loadingScreen) {
       loadingScreen.style.display = 'flex';
@@ -592,11 +596,8 @@
     }
     
     updateLoadingStatus('Подключение...', 10);
-    
-    // Подключаемся к WebSocket
     connectWebSocket();
     
-    // Таймаут на случай, если данные не пришли
     setTimeout(function() {
       if (!isSynced) {
         console.warn('⚠️ Данные не получены, показываем выбор персонажа');
@@ -609,12 +610,6 @@
 
   function init() {
     initTelegram();
-    
-    // Если есть персонаж в G, но не запущена игра
-    if (G_CHAR && !SYNC.started) {
-      // ... но лучше дождаться данных с сервера
-    }
-    
     startGameFlow();
   }
 
@@ -632,9 +627,10 @@
     applyUpdate: applyUpdate,
     applySnapshot: applySnapshot,
     getFullState: getFullState,
+    refreshCache: refreshCache,
     state: SYNC,
-    _API: API,
-    get _INIT() { return TG_INIT; }
+    getApiUrl: function() { return API; },
+    get INIT() { return TG_INIT; }
   };
 
   // ═══════════════════════════════
@@ -647,7 +643,7 @@
     window.addEventListener('load', init);
   }
 
-  // Сохраняем при закрытии
+  // Сохраняем при закрытии (отправляем ВСЁ, для надёжности)
   window.addEventListener('beforeunload', function() {
     if (isReady) {
       var data = getFullState();
