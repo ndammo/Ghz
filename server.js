@@ -202,11 +202,10 @@ wss.on('connection', function(ws, req) {
           }));
 
           var data = user.data || {};
-ws.send(JSON.stringify({
-  type: 'sync',
-  data: data,
-  charId: user.charId   // ← ДОБАВИТЬ
-}));
+          ws.send(JSON.stringify({
+            type: 'sync',
+            data: data
+          }));
 
           console.log('✅ WebSocket авторизован:', tgId);
           break;
@@ -219,47 +218,46 @@ ws.send(JSON.stringify({
 
           var userData = await Save.findOne({ tgId: tgId });
           if (userData) {
-  ws.send(JSON.stringify({
-    type: 'sync',
-    data: userData.data || {},
-    charId: userData.charId   // ← ДОБАВИТЬ
-  }));
-}
+            ws.send(JSON.stringify({
+              type: 'sync',
+              data: userData.data || {}
+            }));
+          }
           break;
 
         case 'save':
-  if (!authenticated || !tgId) {
-    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
-    return;
-  }
+          if (!authenticated || !tgId) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+            return;
+          }
 
-  var saveData = msg.data;
-  if (!saveData || typeof saveData !== 'object') {
-    ws.send(JSON.stringify({ type: 'error', message: 'Invalid data' }));
-    return;
-  }
+          var saveData = msg.data;
+          if (!saveData || typeof saveData !== 'object') {
+            ws.send(JSON.stringify({ type: 'error', message: 'Invalid data' }));
+            return;
+          }
 
-  await Save.findOneAndUpdate(
-  { tgId: tgId },
-  {
-    $set: {
-      data: saveData,
-      level: saveData.level || 1,
-      floor: saveData.floor || 1,
-      charId: saveData.charId || null,  // ← ДОБАВИТЬ ЭТУ СТРОКУ
-      updatedAt: Date.now()
-    }
-  },
-  { upsert: true }
-);
+          await Save.findOneAndUpdate(
+            { tgId: tgId },
+            {
+              $set: {
+                data: saveData,
+                level: saveData.level || 1,
+                cp: saveData.cp || 0,
+                floor: saveData.floor || 1,
+                updatedAt: Date.now()
+              }
+            },
+            { upsert: true }
+          );
 
-  ws.send(JSON.stringify({
-    type: 'saved',
-    timestamp: Date.now()
-  }));
+          ws.send(JSON.stringify({
+            type: 'saved',
+            timestamp: Date.now()
+          }));
 
-  console.log('💾 Сохранено:', tgId, Object.keys(saveData).length, 'полей');
-  break;
+          console.log('💾 Сохранено:', tgId, Object.keys(saveData).length, 'полей');
+          break;
 
         default:
           console.log('📨 Неизвестный тип сообщения:', msg.type);
@@ -426,20 +424,21 @@ app.post('/api/save', async (req, res) => {
     }
 
     await Save.findOneAndUpdate(
-  { tgId: tg.id },
-  {
-    $set: {
-      username: tg.username, 
-      firstName: tg.firstName,
-      charId: data.charId || null, 
-      data: data,
-      level: Number(data.level) || 1,
-      floor: Number(data.floor) || 1,
-      updatedAt: Date.now()
-    }
-  },
-  { upsert: true }
-);
+      { tgId: tg.id },
+      {
+        $set: {
+          username: tg.username, 
+          firstName: tg.firstName,
+          charId: data.charId || null, 
+          data: data,
+          level: Number(data.level) || 1,
+          cp: Number(data.cp) || 0,
+          floor: Number(data.floor) || 1,
+          updatedAt: Date.now()
+        }
+      },
+      { upsert: true }
+    );
 
     res.json({ ok: true, updatedAt: Date.now() });
   } catch (e) {
@@ -1355,7 +1354,7 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
         { tgId: tx.userId },
         { $inc: { 'data.gram': gramDelta } }
       );
-  
+      pushUpdate(tx.userId, { gram: tx.amount });
     } else {
       tx.status = 'rejected';
       tx.rejectedAt = Date.now();
@@ -1447,76 +1446,6 @@ app.patch('/admin/api/tasks/:taskId/toggle', requireAdmin, async (req, res) => {
 });
 
 // ═══════════════════════════════
-//  БОТ — ОБРАБОТКА ТРАНЗАКЦИЙ
-// ═══════════════════════════════
-
-app.post('/bot/transaction/:txId/:action', async (req, res) => {
-  try {
-    const { txId, action } = req.params;
-    const botSecret = req.headers['x-bot-secret'];
-    
-    // Проверяем секрет
-    if (botSecret !== process.env.BOT_TOKEN) {
-      return res.status(401).json({ ok: false, error: 'unauthorized' });
-    }
-    
-    if (!['approve', 'reject'].includes(action)) {
-      return res.status(400).json({ ok: false, error: 'invalid_action' });
-    }
-    
-    const tx = await Transaction.findOne({ id: txId });
-    if (!tx) {
-      return res.status(404).json({ ok: false, error: 'transaction_not_found' });
-    }
-    
-    if (tx.status !== 'pending') {
-      return res.status(400).json({ ok: false, error: 'already_processed' });
-    }
-    
-    if (action === 'approve') {
-      tx.status = 'approved';
-      tx.approvedAt = Date.now();
-      
-      // Начисляем GRAM (для депозита) или списываем (для вывода)
-      const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
-      await Save.findOneAndUpdate(
-        { tgId: tx.userId },
-        { $inc: { 'data.gram': gramDelta } }
-      );
-      
-    } else {
-      tx.status = 'rejected';
-      tx.rejectedAt = Date.now();
-    }
-    
-    await tx.save();
-    
-    // Уведомляем пользователя в Telegram
-    if (bot) {
-      const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
-      const msg = `
-💰 **Транзакция ${statusText}**
-
-**Тип:** ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}
-**Сумма:** ${tx.amount} GRAM
-**Статус:** ${statusText}
-${action === 'approve' ? '✅ Баланс обновлен!' : '❌ Средства не были зачислены.'}
-      `;
-      try {
-        await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' });
-      } catch (e) {
-        console.error('❌ [bot] Ошибка уведомления пользователя:', e.message);
-      }
-    }
-    
-    res.json({ ok: true });
-    
-  } catch (e) {
-    console.error('❌ [bot] Ошибка обработки транзакции:', e.message);
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-// ═══════════════════════════════
 //  БОТ
 // ═══════════════════════════════
 let bot = null;
@@ -1534,5 +1463,5 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, function() {
   console.log(`🚀 Server on :${PORT}`);
   console.log(`🔌 WebSocket on :${PORT}/ws`);
-  console.log(`📊 MongoDB: ${mongoose.connection.name || 'подключение...'}`);
+  console.log(`📊 MongoDB: ${mongoose.connection.db.databaseName}`);
 });
