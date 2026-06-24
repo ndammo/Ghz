@@ -1,6 +1,6 @@
 /*
   ══════════════════════════════════════════════════════
-  inventory.js — Система инвентаря и предметов
+  inventory.js — Система инвентаря и предметов (Socket.io)
   Содержит: генерацию предметов, шанс дропа, надевание/
   снятие/уничтожение, модальное окно предмета, систему
   заточки (+1..+10), книги навыков, рендер инвентаря
@@ -175,6 +175,11 @@ function equipItem(itemId) {
   item._equipped = true;
   recalcStats(); updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  
+  // Мгновенное сохранение
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ equipped: G.equipped, inventory: G.inventory });
+  }
 }
 
 // ── Снять предмет ──
@@ -185,6 +190,11 @@ function unequipItem(itemId) {
   item._equipped = false;
   recalcStats(); updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  
+  // Мгновенное сохранение
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ equipped: G.equipped, inventory: G.inventory });
+  }
 }
 
 // ── Уничтожить предмет ──
@@ -196,6 +206,11 @@ function destroyItem(itemId) {
   G.inventory.splice(idx, 1);
   updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  
+  // Мгновенное сохранение
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ inventory: G.inventory, equipped: G.equipped });
+  }
 }
 
 // ═══════════════════════════════
@@ -239,6 +254,11 @@ function refineItem(itemId) {
     showRefineResult(false, item, false, cost);
   }
   updateHUD();
+  
+  // Мгновенное сохранение
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ inventory: G.inventory, equipped: G.equipped, gold: G.gold });
+  }
 }
 
 // ── Оверлей результата заточки ──
@@ -312,6 +332,11 @@ function useSkillBook(skillId) {
   updateSkillsHud();
   renderUpgrades();
   if (activeTab === 'inv') renderInventory();
+  
+  // Мгновенное сохранение
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ skills: G.skills, inventory: G.inventory });
+  }
 }
 
 // ═══════════════════════════════
@@ -355,6 +380,11 @@ function deleteSelected() {
   });
   _invSelected = {};
   updateHUD(); renderInventory();
+  
+  // Мгновенное сохранение
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ inventory: G.inventory, equipped: G.equipped });
+  }
 }
 
 // ── Закрытие модалки предмета ──

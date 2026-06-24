@@ -1,40 +1,19 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Pixel RPG</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
-<!--
-  ══════════════════════════════════════════════════════
-  index.html — Точка входа
-  Содержит: HTML-разметку всех экранов (выбор персонажа,
-  HUD, панели инвентаря/улучшений/этажей/рейтинга/кошелька,
-  нижняя навигация, модальные окна, HUD скиллов).
-  Подключает все CSS и JS файлы проекта.
-
-  ПОРЯДОК ПОДКЛЮЧЕНИЯ СКРИПТОВ ВАЖЕН:
-  1. data.js    — константы (CHARS, FLOORS, RARITIES, ...)
-  2. state.js   — объект G, calcCP, floorCfg
-  3. render.js  — canvas, спрайты, функции рисования
-  4. skills.js  — система навыков, баффы, HUD скиллов
-  5. game.js    — player, update loop, монстры, боёвка
-  6. inventory.js — предметы, заточка, рендер инвентаря
-  7. ui.js      — панели, вкладки, выбор персонажа
-  ══════════════════════════════════════════════════════
--->
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pixel RPG</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <!-- ══════════════════════════════════
      ЭКРАН ЗАГРУЗКИ
-     Скрывается после получения данных с сервера
      ══════════════════════════════════ -->
 <div id="loadingScreen">
-  <!-- Звёзды (генерируются JS) -->
   <div class="ls-stars" id="lsStars"></div>
-
-  <!-- Пиксельный посох -->
   <div class="ls-logo-wrap">
     <svg class="ls-pixel-icon" width="64" height="64" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated">
       <rect x="7" y="1" width="2" height="11" fill="#8B6914"/>
@@ -55,7 +34,6 @@
     <div class="ls-title">PIXEL RPG</div>
     <div class="ls-subtitle">GRAM</div>
   </div>
-
   <div class="ls-bar-wrap">
     <div class="ls-bar-fill" id="lsBar"></div>
   </div>
@@ -63,11 +41,50 @@
   <div class="ls-version">v1.0 · PIXEL RPG</div>
 </div>
 
+<!-- ══════════════════════════════════
+     ЭКРАННЫЙ ЛОГГЕР
+     ══════════════════════════════════ -->
+<div id="debugLog" style="
+  position: fixed;
+  bottom: 80px;
+  left: 10px;
+  right: 10px;
+  z-index: 9999;
+  background: rgba(0,0,0,0.92);
+  border: 2px solid #f5c542;
+  border-radius: 8px;
+  padding: 8px 10px;
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  color: #0f0;
+  display: block;
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-break: break-all;
+  box-shadow: 0 0 20px rgba(245,197,66,0.2);
+"></div>
+
+<button id="debugToggle" style="
+  position: fixed;
+  bottom: 60px;
+  right: 10px;
+  z-index: 10000;
+  background: rgba(0,0,0,0.8);
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #aaa;
+  font-size: 10px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-family: 'Courier New', monospace;
+" onclick="toggleDebug()">🐞 СКРЫТЬ</button>
+
 <div id="app">
 
   <!-- ══════════════════════════════════
        ЭКРАН ВЫБОРА ПЕРСОНАЖА
-       Показывается до старта игры
        ══════════════════════════════════ -->
   <div id="charSelect">
     <div class="cs-bg"></div>
@@ -140,12 +157,12 @@
   </div>
 
   <!-- ══════════════════════════════════
-       ИГРОВОЙ КАНВАС (рендерится через render.js)
+       ИГРОВОЙ КАНВАС
        ══════════════════════════════════ -->
   <canvas id="gameCanvas"></canvas>
 
   <!-- ══════════════════════════════════
-     TOP HUD — HP, XP, золото, этаж, CP
+     TOP HUD
      ══════════════════════════════════ -->
   <div id="hud">
     <div class="hud-avatar" id="hudAvatar">
@@ -219,6 +236,7 @@
       </div>
     </div>
   </div>
+
   <!-- BP кнопка -->
   <div id="bpHudBtn" class="bp-hud-btn" onclick="openBattlePass()">
     <svg width="18" height="18" viewBox="0 0 14 14" fill="none" style="image-rendering:pixelated">
@@ -231,6 +249,7 @@
     </svg>
     <span class="bp-hud-label">BP</span>
   </div>
+
   <!-- Premium кнопка -->
   <div class="prem-hud-btn" onclick="openPremModal()">
     <svg width="18" height="18" viewBox="0 0 14 14" fill="none" style="image-rendering:pixelated">
@@ -248,7 +267,6 @@
     <span class="prem-hud-label">VIP</span>
   </div>
 
-  <!-- Премиум модалка -->
   <!-- Task кнопка -->
   <div id="taskHudBtn" class="task-hud-btn" onclick="openTaskModal()" style="display:none;">
     <svg width="18" height="18" viewBox="0 0 14 14" fill="none" style="image-rendering:pixelated">
@@ -264,6 +282,7 @@
     <span class="task-hud-label">TASK</span>
   </div>
 
+  <!-- Boss кнопка -->
   <div id="bossHudBtn" class="boss-hud-btn" onclick="switchTab('boss')" style="display:none;">
     <svg width="18" height="18" viewBox="0 0 14 14" fill="none" style="image-rendering:pixelated">
       <rect x="6" y="0" width="2" height="3" fill="#e74c3c"/>
@@ -278,7 +297,7 @@
     <span class="boss-hud-label">BOSS</span>
   </div>
 
-
+  <!-- Premium модалка -->
   <div id="premModal" class="prem-modal hidden">
     <div class="prem-modal-box">
       <div class="prem-modal-header">
@@ -287,7 +306,6 @@
       </div>
       <div class="prem-status" id="premStatus">Нет активного Premium</div>
 
-      <!-- Gold 7 дней -->
       <div class="prem-card gold-card">
         <div class="prem-card-title">⚡ GOLD · 7 дней</div>
         <div class="prem-card-price">10 GRAM</div>
@@ -300,7 +318,6 @@
         <button class="prem-card-btn" onclick="buyPrem('gold')">Купить за 10 GRAM</button>
       </div>
 
-      <!-- Platinum 7 дней -->
       <div class="prem-card plat-card">
         <div class="prem-card-title">💎 PLATINUM · 7 дней</div>
         <div class="prem-card-price">50 GRAM</div>
@@ -313,7 +330,6 @@
         <button class="prem-card-btn" onclick="buyPrem('plat')">Купить за 50 GRAM</button>
       </div>
 
-      <!-- Ultra 30 дней -->
       <div class="prem-card ultra-card">
         <div class="prem-card-title">🔥 ULTRA · 30 дней</div>
         <div class="prem-card-price">300 GRAM</div>
@@ -330,37 +346,41 @@
   </div>
 
   <!-- ══════════════════════════════════
-       ПАНЕЛИ (полноэкранные вкладки)
+       ПАНЕЛИ
        ══════════════════════════════════ -->
-
-  <!-- Инвентарь -->
   <div class="panel" id="panelInv">
     <div class="panel-header">🎒 ИНВЕНТАРЬ</div>
     <div class="panel-body" id="invBody"></div>
   </div>
 
-  <!-- Улучшения характеристик и навыков -->
   <div class="panel" id="panelUpgrades">
     <div class="panel-header">⚒️ УЛУЧШЕНИЯ</div>
     <div class="panel-body" id="upgradesBody"></div>
   </div>
 
-  <!-- Рейтинг игроков -->
   <div class="panel" id="panelRating">
     <div class="panel-header">🏆 РЕЙТИНГ</div>
     <div class="panel-body" id="ratingBody"></div>
   </div>
 
-  <!-- Кошелёк и статистика -->
   <div class="panel" id="panelWallet">
     <div class="panel-header">👛 КОШЕЛЁК</div>
     <div class="panel-body" id="walletBody"></div>
   </div>
 
-  <!-- Список этажей -->
   <div class="panel" id="panelFloors">
     <div class="panel-header">🏰 ЭТАЖИ</div>
     <div class="panel-body" id="floorsBody"></div>
+  </div>
+
+  <div class="panel" id="panelFriends">
+    <div class="panel-header">👥 ДРУЗЬЯ</div>
+    <div class="panel-body" id="friendsBody"></div>
+  </div>
+
+  <div class="panel" id="panelBoss">
+    <div class="panel-header">👹 БОССЫ</div>
+    <div class="panel-body" id="bossBody"></div>
   </div>
 
   <!-- ══════════════════════════════════
@@ -391,7 +411,7 @@
   </div>
 
   <!-- ══════════════════════════════════
-       МОДАЛЬНОЕ ОКНО ПРЕДМЕТА
+       МОДАЛЬНЫЕ ОКНА
        ══════════════════════════════════ -->
   <div id="itemModal" onclick="closeItemModal()">
     <div id="itemModalCard" onclick="event.stopPropagation()">
@@ -407,26 +427,25 @@
     </div>
   </div>
 
-  <!-- ══════════════════════════════════
-       ОВЕРЛЕЙ РЕЗУЛЬТАТА ЗАТОЧКИ
-       ══════════════════════════════════ -->
   <div id="refineOverlay">
     <div class="refine-result-icon" id="refineIcon"></div>
     <div class="refine-result-text" id="refineText"></div>
     <div class="refine-result-sub"  id="refineSub"></div>
   </div>
 
-  <!-- ══════════════════════════════════
-       МОДАЛЬНОЕ ОКНО ДРОПА ЭТАЖА
-       ══════════════════════════════════ -->
   <div id="floorLootModal" onclick="closeFloorLootModal()">
     <div id="floorLootCard" onclick="event.stopPropagation()">
       <div id="floorLootContent"></div>
     </div>
   </div>
 
+  <div id="floorUnlock">
+    <div class="fu-title">🎉 НОВЫЙ ЭТАЖ ОТКРЫТ!</div>
+    <div class="fu-sub" id="fuText"></div>
+  </div>
+
   <!-- ══════════════════════════════════
-       HUD НАВЫКОВ (3 кнопки над ИГРА)
+       HUD НАВЫКОВ
        ══════════════════════════════════ -->
   <div id="skillsHud">
     <div class="sk-btn" id="sk0btn" onclick="castSkillManual(0)">
@@ -456,7 +475,7 @@
   </div>
 
   <!-- ══════════════════════════════════
-       МОДАЛКА ЗЕЛИЙ
+       МОДАЛКИ
        ══════════════════════════════════ -->
   <div id="potionModal" class="potion-modal hidden">
     <div class="potion-modal-box">
@@ -497,18 +516,6 @@
     </div>
   </div>
 
-  <!-- ══════════════════════════════════
-       ТОСТ НОВОГО ЭТАЖА
-       ══════════════════════════════════ -->
-  <div id="floorUnlock">
-    <div class="fu-title">🎉 НОВЫЙ ЭТАЖ ОТКРЫТ!</div>
-    <div class="fu-sub" id="fuText"></div>
-  </div>
-
-
-  <!-- ══════════════════════════════════
-       BATTLE PASS МОДАЛКА
-       ══════════════════════════════════ -->
   <div id="bpModal" class="bp-modal hidden">
     <div class="bp-modal-box">
       <div class="bp-modal-header">
@@ -524,18 +531,16 @@
     </div>
   </div>
 
-  <!-- Task модалка -->
   <div id="taskModal" class="task-modal hidden">
     <div class="task-modal-box">
       <div class="task-modal-header">
-        <span class="task-modal-title"><svg width="16" height="16" viewBox="0 0 12 14" fill="none" style="image-rendering:pixelated;vertical-align:middle;margin-right:5px"><rect x="1" y="1" width="10" height="12" fill="#2a2a5a"/><rect x="2" y="2" width="8" height="10" fill="#1a1a3a"/><rect x="3" y="0" width="6" height="3" fill="#3a3a6a"/><rect x="4" y="1" width="4" height="1" fill="#f5c542"/><rect x="2" y="5" width="2" height="2" fill="#2ecc71"/><rect x="5" y="5" width="5" height="2" fill="#3a3a6a"/><rect x="2" y="8" width="2" height="2" fill="#2ecc71"/><rect x="5" y="8" width="4" height="2" fill="#3a3a6a"/></svg>ЗАДАНИЯ</span>
+        <span class="task-modal-title">📋 ЗАДАНИЯ</span>
         <button class="bp-close-btn" onclick="closeTaskModal()">✕</button>
       </div>
       <div class="task-modal-body" id="taskModalBody"></div>
     </div>
   </div>
 
-  <!-- Модалка смерти -->
   <div id="deathModal" class="death-modal hidden">
     <div class="death-modal-box">
       <div class="death-modal-skull">💀</div>
@@ -545,48 +550,6 @@
     </div>
   </div>
 
-
-  <!-- Друзья / Реферальная программа -->
-  <div class="panel" id="panelFriends">
-    <div class="panel-header">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated;vertical-align:middle;margin-right:6px">
-        <rect x="2" y="1" width="5" height="5" fill="currentColor"/>
-        <rect x="1" y="3" width="1" height="3" fill="currentColor"/>
-        <rect x="7" y="3" width="1" height="3" fill="currentColor"/>
-        <rect x="2" y="6" width="5" height="4" fill="currentColor"/>
-        <rect x="9" y="2" width="5" height="5" fill="currentColor"/>
-        <rect x="8" y="4" width="1" height="3" fill="currentColor"/>
-        <rect x="14" y="4" width="1" height="3" fill="currentColor"/>
-        <rect x="9" y="7" width="5" height="4" fill="currentColor"/>
-        <rect x="3" y="10" width="3" height="5" fill="currentColor"/>
-        <rect x="10" y="11" width="3" height="4" fill="currentColor"/>
-      </svg>
-      ДРУЗЬЯ
-    </div>
-    <div class="panel-body" id="friendsBody">
-      <div style="text-align:center;padding:40px 0;color:#445;font-size:12px;">Загрузка...</div>
-    </div>
-  </div>
-
-  <!-- Боссы -->
-  <div class="panel" id="panelBoss">
-    <div class="panel-header">
-      <svg width="16" height="16" viewBox="0 0 14 14" fill="none" style="image-rendering:pixelated;vertical-align:middle;margin-right:6px">
-        <rect x="6" y="0" width="2" height="3" fill="#e74c3c"/>
-        <rect x="3" y="1" width="2" height="3" fill="#e74c3c"/>
-        <rect x="9" y="1" width="2" height="3" fill="#e74c3c"/>
-        <rect x="1" y="3" width="12" height="8" fill="#e74c3c"/>
-        <rect x="2" y="11" width="10" height="2" fill="#c0392b"/>
-        <rect x="4" y="5" width="2" height="4" fill="#0d0d22"/>
-        <rect x="8" y="5" width="2" height="4" fill="#0d0d22"/>
-        <rect x="5" y="7" width="4" height="2" fill="#ff6060"/>
-      </svg>
-      БОССЫ
-    </div>
-    <div class="panel-body" id="bossBody"></div>
-  </div>
-
-  <!-- Модалка победы над боссом -->
   <div id="bossVictoryModal" class="boss-victory-modal hidden" onclick="this.classList.add('hidden')">
     <div id="bossVictoryContent" class="boss-victory-box" onclick="event.stopPropagation()"></div>
   </div>
@@ -594,16 +557,106 @@
 </div><!-- #app -->
 
 <!-- ══════════════════════════════════
-     СКРИПТЫ — порядок подключения важен!
+     СКРИПТЫ
      ══════════════════════════════════ -->
-<script src="data.js"></script>       <!-- Игровые данные: персонажи, этажи, предметы -->
-<script src="state.js"></script>      <!-- Состояние игры (объект G) и расчёт CP -->
-<script src="render.js"></script>     <!-- Canvas-движок: небо, земля, спрайты, частицы -->
-<script src="skills.js"></script>     <!-- Система навыков: баффы, кулдауны, HUD скиллов -->
-<script src="game.js"></script>       <!-- Игровая логика: update, монстры, боёвка, XP -->
-<script src="inventory.js"></script>  <!-- Инвентарь: предметы, заточка, книги навыков -->
-<script src="ui.js"></script>         <!-- UI-панели: этажи, улучшения, рейтинг, кошелёк -->
-<script src="net.js"></script>        <!-- Сеть: Telegram-авторизация, сохранение прогресса на сервер -->
+<script>
+// ══════════════════════════════════════════════════════
+//  ЭКРАННЫЙ ЛОГГЕР — показывает всё в игре
+// ══════════════════════════════════════════════════════
 
+(function() {
+  'use strict';
+
+  const logEl = document.getElementById('debugLog');
+  const MAX_LINES = 50;
+
+  // Функция добавления лога
+  function addLog(msg, type) {
+    if (!logEl) return;
+    
+    const time = new Date().toLocaleTimeString();
+    const colors = {
+      ok: '#2ecc71',
+      error: '#e74c3c',
+      warn: '#f5c542',
+      info: '#40d0ff',
+      net: '#ff44cc',
+      socket: '#a78bfa'
+    };
+    const color = colors[type] || '#0f0';
+    
+    const line = document.createElement('div');
+    line.style.color = color;
+    line.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+    line.style.padding = '2px 0';
+    line.style.fontSize = '10px';
+    line.textContent = `[${time}] ${msg}`;
+    
+    logEl.appendChild(line);
+    
+    while (logEl.children.length > MAX_LINES) {
+      logEl.removeChild(logEl.firstChild);
+    }
+    
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  // Перехватываем console.log
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalWarn = console.warn;
+
+  console.log = function(...args) {
+    originalLog.apply(console, args);
+    const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    addLog('📝 ' + msg, 'info');
+  };
+
+  console.error = function(...args) {
+    originalError.apply(console, args);
+    const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    addLog('❌ ' + msg, 'error');
+  };
+
+  console.warn = function(...args) {
+    originalWarn.apply(console, args);
+    const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    addLog('⚠️ ' + msg, 'warn');
+  };
+
+  // Специальные функции для логов
+  window.logOk = function(msg) { addLog('✅ ' + msg, 'ok'); };
+  window.logError = function(msg) { addLog('❌ ' + msg, 'error'); };
+  window.logWarn = function(msg) { addLog('⚠️ ' + msg, 'warn'); };
+  window.logInfo = function(msg) { addLog('ℹ️ ' + msg, 'info'); };
+  window.logNet = function(msg) { addLog('📡 ' + msg, 'net'); };
+  window.logSocket = function(msg) { addLog('🔌 ' + msg, 'socket'); };
+
+  // Переключение видимости
+  window.toggleDebug = function() {
+    if (!logEl) return;
+    const isVisible = logEl.style.display !== 'none';
+    logEl.style.display = isVisible ? 'none' : 'block';
+    const btn = document.getElementById('debugToggle');
+    if (btn) btn.textContent = isVisible ? '🐞 ЛОГИ' : '🐞 СКРЫТЬ';
+  };
+
+  // Добавляем стартовые логи
+  addLog('🚀 Игра загружена', 'ok');
+  addLog('📡 API_URL: ' + (window.API_URL || 'не задан'), 'net');
+  addLog('🔌 Версия: v2.0', 'info');
+  
+  console.log('✅ Экранный логгер активирован!');
+})();
+</script>
+
+<script src="data.js"></script>
+<script src="state.js"></script>
+<script src="render.js"></script>
+<script src="skills.js"></script>
+<script src="game.js"></script>
+<script src="inventory.js"></script>
+<script src="net.js"></script>
+<script src="ui.js"></script>
 </body>
 </html>

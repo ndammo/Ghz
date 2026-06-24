@@ -1,6 +1,6 @@
 /*
   ══════════════════════════════════════════════════════
-  ui.js — Интерфейс панелей и вкладок
+  ui.js — Интерфейс панелей и вкладок (Socket.io версия)
   Содержит: renderUpgrades, buyUpgrade, renderFloors,
   openFloorLoot, goToFloor, renderRating, renderWallet,
   switchTab, экран выбора персонажа (selectChar,
@@ -27,6 +27,11 @@ function buyUpgrade(u) {
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
+  
+  // Мгновенное сохранение
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ upg: G.upg, gold: G.gold });
+  }
 }
 
 function renderUpgrades() {
@@ -252,10 +257,15 @@ function goToFloor(n) {
   monsters = [];
   nextMonsterSpawn = player.worldX + 400;
   updateHUD(); switchTab('game');
+  
+  // Мгновенное сохранение
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ floor: G.floor, maxFloor: G.maxFloor });
+  }
 }
 
 // ═══════════════════════════════
-//  ВКЛАДКА РЕЙТИНГА (исправленная)
+//  ВКЛАДКА РЕЙТИНГА (Socket.io версия)
 // ═══════════════════════════════
 
 // Кэш рейтинга
@@ -273,40 +283,31 @@ function renderRating() {
     return;
   }
   
-  // Показываем загрузку
-  body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">⏳ Загрузка рейтинга...</div>';
-  
-  // Если нет GameSync или не онлайн — показываем заглушку
-  if (!window.GameSync || !window.GameSync.state.online) {
-    body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">📱 Рейтинг доступен только в Telegram</div>';
+  // Проверяем подключение
+  if (!window.GameSocket || !window.GameSocket.isConnected()) {
+    body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">📱 Подключение...</div>';
     return;
   }
   
   if (_ratingLoading) return;
   _ratingLoading = true;
   
-  var tgId = window.GameSync.getTgId();
-  var api = window.GameSync._API;
+  body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">⏳ Загрузка рейтинга...</div>';
   
-  fetch(api + '/api/leaderboard?tgId=' + encodeURIComponent(tgId))
-    .then(function(r) { return r.json(); })
-    .then(function(r) {
-      _ratingLoading = false;
-      if (!r.ok || !r.top) {
-        body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#e74c3c;font-size:12px;">❌ Ошибка загрузки</div>';
-        return;
-      }
-      
-      // Кэшируем
-      _ratingCache = r.top;
-      _ratingCacheTime = Date.now();
-      
-      renderRatingData(r.top, body);
-    })
-    .catch(function() {
-      _ratingLoading = false;
-      body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#e74c3c;font-size:12px;">❌ Нет соединения</div>';
-    });
+  window.GameSocket.getLeaderboard(function(response) {
+    _ratingLoading = false;
+    
+    if (!response || !response.ok || !response.top) {
+      body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#e74c3c;font-size:12px;">❌ Ошибка загрузки</div>';
+      return;
+    }
+    
+    // Кэшируем
+    _ratingCache = response.top;
+    _ratingCacheTime = Date.now();
+    
+    renderRatingData(response.top, body);
+  });
 }
 
 function renderRatingData(players, body) {
@@ -315,7 +316,7 @@ function renderRatingData(players, body) {
   var charColors = { fire: '#ff7030', light: '#ffd040', water: '#40d0ff' };
   
   // Находим текущего игрока
-  var tgId = window.GameSync ? window.GameSync.getTgId() : null;
+  var tgId = window.GameSocket ? window.GameSocket.getTgId() : null;
   var myIndex = -1;
   
   var html = '<div style="font-size:10px;color:#778;margin-bottom:12px;">🏆 Топ ' + Math.min(players.length, 50) + ' игроков по Боевой мощи</div>';
@@ -341,8 +342,8 @@ function renderRatingData(players, body) {
     var cp = p.cp || 0;
     
     var avatarUrl = '';
-    if (p.tgId && window.GameSync && window.GameSync._API) {
-      avatarUrl = window.GameSync._API + '/api/avatar/' + p.tgId;
+    if (p.tgId && window.GameSocket && window.GameSocket._API) {
+      avatarUrl = window.GameSocket._API + '/api/avatar/' + p.tgId;
     }
     
     html += 
@@ -372,8 +373,8 @@ function renderRatingData(players, body) {
     var myColor = charColors[myChar] || '#aaa';
     
     // Аватарка текущего игрока
-    var myAvatarUrl = (window.GameSync && window.GameSync._API)
-      ? window.GameSync._API + '/api/avatar/' + tgId : '';
+    var myAvatarUrl = (window.GameSocket && window.GameSocket._API)
+      ? window.GameSocket._API + '/api/avatar/' + tgId : '';
     
     html += 
       '<div style="margin-top:10px;border-top:1px solid #2a2a5a;padding-top:8px;font-size:9px;color:#556;text-align:center;">— Ты не в топе —</div>' +
@@ -406,7 +407,7 @@ function towerSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10"
 function atkSpdSvg()   { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="1" y="1" width="2" height="2" fill="#ffaa00"/><rect x="3" y="3" width="2" height="2" fill="#ffaa00"/><rect x="5" y="1" width="2" height="2" fill="#ffaa00"/><rect x="7" y="3" width="2" height="2" fill="#ffaa00"/><rect x="3" y="5" width="4" height="2" fill="#ffcc44"/><rect x="2" y="7" width="6" height="2" fill="#ff8800"/></svg>`; }
 
 // ═══════════════════════════════
-//  ВКЛАДКА КОШЕЛЕК (исправленная)
+//  ВКЛАДКА КОШЕЛЕК (Socket.io версия)
 // ═══════════════════════════════
 
 var _walletTab = 'wallet'; // 'wallet' | 'stats'
@@ -492,7 +493,7 @@ function renderWallet() {
   loadTransactions();
 }
 
-// ── ОБМЕН PIXR → GRAM ──
+// ── ОБМЕН PIXR → GRAM (Socket.io) ──
 function submitExchange() {
   const amount = parseInt(document.getElementById('exchangeAmount').value);
   const result = document.getElementById('exchangeResult');
@@ -509,58 +510,43 @@ function submitExchange() {
   
   result.innerHTML = '<span style="color:#f5c542;">Обмен...</span>';
   
-  fetch(window.GameSync._API + '/api/wallet/exchange', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      initData: window.GameSync._INIT,
-      amount: amount
-    })
-  })
-  .then(r => r.json())
-  .then(r => {
-    if (r.ok) {
-      G.pixr = r.pixr;
-      G.gram = r.gram;
+  if (!window.GameSocket || !window.GameSocket.isConnected()) {
+    result.innerHTML = '<span style="color:#e74c3c;">❌ Нет соединения</span>';
+    return;
+  }
+  
+  window.GameSocket.exchangePixr(amount, function(response) {
+    if (response && response.ok) {
+      G.pixr = response.pixr;
+      G.gram = response.gram;
       updateHUD();
-      result.innerHTML = `<span style="color:#2ecc71;">✅ Обменяно ${amount} PIXR → ${r.earned} GRAM</span>`;
-      setTimeout(function() {
-        renderWallet();
-      }, 1000);
+      result.innerHTML = `<span style="color:#2ecc71;">✅ Обменяно ${amount} PIXR → ${response.earned} GRAM</span>`;
+      setTimeout(function() { renderWallet(); }, 1000);
     } else {
-      result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (r.error || 'Ошибка') + '</span>';
+      result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (response?.error || 'Ошибка') + '</span>';
     }
-  })
-  .catch(function() {
-    result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка соединения</span>';
   });
 }
 
-// ── ЗАГРУЗКА ТРАНЗАКЦИЙ (ИСПРАВЛЕННАЯ) ──
+// ── ЗАГРУЗКА ТРАНЗАКЦИЙ (Socket.io) ──
 function loadTransactions() {
   var list = document.getElementById('txList');
   if (!list) return;
   
-  if (!window.GameSync || !window.GameSync._INIT) {
-    list.innerHTML = '<div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">Авторизуйтесь в Telegram</div>';
+  if (!window.GameSocket || !window.GameSocket.isConnected()) {
+    list.innerHTML = '<div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">Подключение...</div>';
     return;
   }
   
   list.innerHTML = '<div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">Загрузка...</div>';
   
-  fetch(window.GameSync._API + '/api/wallet/transactions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT })
-  })
-  .then(function(r) { 
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json(); 
-  })
-  .then(function(r) {
-    if (!r.ok) throw new Error(r.error || 'Unknown error');
+  window.GameSocket.getTransactions(function(response) {
+    if (!response || !response.ok || !response.transactions) {
+      list.innerHTML = '<div style="color:#e74c3c;text-align:center;padding:20px 0;font-size:12px;">Ошибка загрузки</div>';
+      return;
+    }
     
-    if (!r.transactions || r.transactions.length === 0) {
+    if (response.transactions.length === 0) {
       list.innerHTML = `
         <div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">
           <div style="font-size:24px;margin-bottom:8px;">📭</div>
@@ -570,25 +556,13 @@ function loadTransactions() {
       return;
     }
     
-    var statusColors = {
-      pending: '#f5c542',
-      approved: '#2ecc71',
-      rejected: '#e74c3c'
-    };
-    var statusLabels = {
-      pending: '⏳ Ожидание',
-      approved: '✅ Подтверждено',
-      rejected: '❌ Отклонено'
-    };
-    var typeLabels = {
-      deposit: '📥 Пополнение',
-      withdraw: '📤 Вывод'
-    };
+    var statusColors = { pending: '#f5c542', approved: '#2ecc71', rejected: '#e74c3c' };
+    var statusLabels = { pending: '⏳ Ожидание', approved: '✅ Подтверждено', rejected: '❌ Отклонено' };
+    var typeLabels = { deposit: '📥 Пополнение', withdraw: '📤 Вывод' };
     
     var html = '';
-    r.transactions.slice(0, 10).forEach(function(tx) {
+    response.transactions.slice(0, 10).forEach(function(tx) {
       var date = new Date(tx.createdAt).toLocaleDateString('ru-RU');
-      
       html += `
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #0a0a1a;font-size:11px;">
           <div>
@@ -607,10 +581,6 @@ function loadTransactions() {
       `;
     });
     list.innerHTML = html;
-  })
-  .catch(function(err) {
-    console.error('❌ [wallet] loadTransactions error:', err.message);
-    list.innerHTML = '<div style="color:#e74c3c;text-align:center;padding:20px 0;font-size:12px;">Ошибка загрузки</div>';
   });
 }
 
@@ -638,72 +608,727 @@ function renderStats() {
   `;
 }
 
-function loadTransactions() {
-  if (!window.GameSync || !window.GameSync._INIT) return;
-  
-  fetch(window.GameSync._API + '/api/wallet/transactions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT })
-  })
-  .then(r => r.json())
-  .then(r => {
-    const list = document.getElementById('txList');
-    if (!r.ok || !r.transactions || r.transactions.length === 0) {
-      list.innerHTML = `
-        <div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">
-          <div style="font-size:24px;margin-bottom:8px;">📭</div>
-          Нет транзакций
-        </div>
-      `;
-      return;
-    }
-    
-    let html = '';
-    r.transactions.slice(0, 10).forEach(tx => {
-      const statusColors = {
-        pending: '#f5c542',
-        approved: '#2ecc71',
-        rejected: '#e74c3c'
-      };
-      const statusLabels = {
-        pending: '⏳ Ожидание',
-        approved: '✅ Подтверждено',
-        rejected: '❌ Отклонено'
-      };
-      const typeLabels = {
-        deposit: '📥 Пополнение',
-        withdraw: '📤 Вывод'
-      };
-      const date = new Date(tx.createdAt).toLocaleDateString('ru-RU');
-      
-      html += `
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #0a0a1a;font-size:11px;">
-          <div>
-            <div style="color:#ddd;">${typeLabels[tx.type] || tx.type}</div>
-            <div style="color:#556;font-size:9px;">${date}</div>
-          </div>
-          <div style="text-align:right;">
-            <div style="color:${tx.type === 'deposit' ? '#2ecc71' : '#e74c3c'};font-weight:bold;display:flex;align-items:center;gap:3px;justify-content:flex-end;">
-              ${tx.type === 'deposit' ? '+' : '-'} ${tx.amount} <img src="images/gram.png" style="width:13px;height:13px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">
-            </div>
-            <div style="color:${statusColors[tx.status] || '#556'};font-size:9px;">
-              ${statusLabels[tx.status] || tx.status}
-            </div>
-          </div>
-        </div>
-      `;
-    });
-    list.innerHTML = html;
-  })
-  .catch(() => {
-    const list = document.getElementById('txList');
-    list.innerHTML = '<div style="color:#e74c3c;text-align:center;padding:20px 0;font-size:12px;">Ошибка загрузки</div>';
+// ═══════════════════════════════
+//  ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК
+// ═══════════════════════════════
+function switchTab(tab) {
+  activeTab = tab;
+  ['game','inv','upgrades','floors','rating','wallet','friends','boss'].forEach(t => {
+    const btnId = 'nav' + t.charAt(0).toUpperCase() + t.slice(1);
+    const btn = document.getElementById(btnId);
+    if (btn) btn.classList.toggle('active', t === tab);
   });
+  document.getElementById('panelInv').classList.toggle('visible',      tab === 'inv');
+  document.getElementById('panelUpgrades').classList.toggle('visible', tab === 'upgrades');
+  document.getElementById('panelFloors').classList.toggle('visible',   tab === 'floors');
+  document.getElementById('panelRating').classList.toggle('visible',   tab === 'rating');
+  document.getElementById('panelWallet').classList.toggle('visible',   tab === 'wallet');
+  document.getElementById('panelFriends').classList.toggle('visible',  tab === 'friends');
+  var bossPanel = document.getElementById('panelBoss');
+  if (bossPanel) bossPanel.classList.toggle('visible', tab === 'boss');
+  var hudEl = document.getElementById('skillsHud');
+  if (hudEl) hudEl.classList.toggle('visible', tab === 'game' && !!G_CHAR);
+  var isGame = tab === 'game' && !!G_CHAR;
+  var bpBtn   = document.getElementById('bpHudBtn');
+  var premBtn = document.querySelector('.prem-hud-btn');
+  var taskBtn = document.getElementById('taskHudBtn');
+  var bossBtn = document.getElementById('bossHudBtn');
+  if (bpBtn)   bpBtn.style.display   = isGame ? 'flex' : 'none';
+  if (premBtn) premBtn.style.display = isGame ? 'flex' : 'none';
+  if (taskBtn) taskBtn.style.display = isGame ? 'flex' : 'none';
+  if (bossBtn) bossBtn.style.display = isGame ? 'flex' : 'none';
+
+  if (tab === 'inv')      { _invSelectMode = false; _invSelected = {}; renderInventory(); }
+  if (tab === 'upgrades') renderUpgrades();
+  if (tab === 'floors')   renderFloors();
+  if (tab === 'rating')   renderRating();
+  if (tab === 'wallet')   renderWallet();
+  if (tab === 'friends')  renderFriends();
+  if (tab === 'boss')     renderBossTab();
 }
 
 // ═══════════════════════════════
-//  МОДАЛКИ ПОПОЛНЕНИЯ/ВЫВОДА
+//  ВКЛАДКА ДРУЗЕЙ (Socket.io)
+// ═══════════════════════════════
+var _friendsLoading = false;
+
+function renderFriends() {
+  var body = document.getElementById('friendsBody');
+  if (!body) return;
+
+  if (!window.GameSocket || !window.GameSocket.isConnected()) {
+    body.innerHTML = '<div style="text-align:center;padding:40px 16px;color:#556;font-size:12px;">' +
+      '<div style="font-size:32px;margin-bottom:12px;">📱</div>' +
+      'Подключение...</div>';
+    return;
+  }
+
+  if (_friendsLoading) return;
+  _friendsLoading = true;
+  body.innerHTML = '<div style="text-align:center;padding:40px 0;color:#445;font-size:12px;">Загрузка...</div>';
+
+  var _flTimeout = setTimeout(function () {
+    if (_friendsLoading) {
+      _friendsLoading = false;
+      body.innerHTML = '<div style="color:#f44;text-align:center;padding:30px 0;font-size:12px;">Нет соединения</div>';
+    }
+  }, 10000);
+
+  window.GameSocket.getRefFriends(function(response) {
+    clearTimeout(_flTimeout);
+    _friendsLoading = false;
+    
+    if (!response || !response.ok) {
+      body.innerHTML = '<div style="color:#f44;text-align:center;padding:30px 0;font-size:12px;">Ошибка загрузки</div>';
+      return;
+    }
+    renderFriendsData(response, body);
+  });
+}
+
+function renderFriendsData(r, body) {
+  var coinSvg = '<svg width="14" height="14" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>';
+  var charColors = { fire: '#ff6030', light: '#ffd040', water: '#40d0ff' };
+  var charNames  = { fire: 'Пирокан', light: 'Люмос', water: 'Аквас' };
+
+  var linkHtml =
+    '<div style="margin-bottom:14px;padding:12px;background:rgba(245,197,66,0.06);border:1.5px solid #3a3a1a;border-radius:10px;">' +
+    '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:8px;">ТВОЯ РЕФЕРАЛЬНАЯ ССЫЛКА</div>' +
+    '<div style="font-size:11px;color:#f5c542;word-break:break-all;margin-bottom:10px;padding:6px 8px;background:#0d0d1a;border-radius:5px;border:1px solid #2a2a5a;">' +
+      r.refLink +
+    '</div>' +
+    '<div style="display:flex;gap:8px;">' +
+    '<button onclick="friendsCopyLink(\'' + r.refLink + '\')" style="flex:1;padding:9px;font-size:11px;font-family:Courier New,monospace;border-radius:7px;border:1.5px solid #f5c542;background:rgba(245,197,66,0.1);color:#f5c542;cursor:pointer;">📋 Скопировать</button>' +
+    '<button onclick="friendsShare(\'' + r.refLink + '\')" style="flex:1;padding:9px;font-size:11px;font-family:Courier New,monospace;border-radius:7px;border:1.5px solid #2ecc71;background:rgba(46,204,113,0.1);color:#2ecc71;cursor:pointer;">✈️ Поделиться</button>' +
+    '</div></div>';
+
+  var rewardHtml =
+    '<div style="margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid #2a2a5a;border-radius:8px;font-size:10px;color:#667;">' +
+    coinSvg + ' <span style="color:#f5c542;font-weight:bold">500 золота</span> за каждые 5 уровней друга · ' +
+    '<span style="color:#aaa">Уровни 5, 10, 15, 20...</span></div>';
+
+  var claimHtml = '';
+  if (r.pendingGold > 0) {
+    claimHtml =
+      '<button onclick="friendsClaim(this)" style="width:100%;margin-bottom:14px;padding:13px;font-size:14px;font-weight:bold;' +
+      'font-family:Courier New,monospace;border-radius:9px;border:1.5px solid #f5c542;' +
+      'background:linear-gradient(180deg,rgba(245,197,66,0.2),rgba(245,197,66,0.05));' +
+      'color:#f5c542;cursor:pointer;letter-spacing:1px;">' +
+      coinSvg + ' Забрать ' + r.pendingGold + ' золота</button>';
+  }
+
+  var friendsHtml = '';
+  if (!r.friends || r.friends.length === 0) {
+    friendsHtml =
+      '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">' +
+      '<div style="font-size:28px;margin-bottom:10px;">👥</div>' +
+      'Пока нет друзей<br><span style="font-size:10px;color:#334;">Поделись ссылкой — за каждого<br>получишь золото!</span></div>';
+  } else {
+    var totalEarned = 0;
+    r.friends.forEach(function(f) { totalEarned += f.paid * (500 / 5); });
+    friendsHtml = '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:8px;">ДРУЗЬЯ (' + r.friends.length + ')</div>';
+    r.friends.forEach(function(f) {
+      var col = charColors[f.charId] || '#aaa';
+      var cls = charNames[f.charId]  || 'Неизвестный';
+      var nextLv = f.nextMilestone || (Math.floor(f.level / 5) * 5 + 5);
+      var toNext = nextLv - f.level;
+      var progressPct = toNext > 0 ? Math.min(100, ((5 - toNext) / 5 * 100)) : 100;
+      friendsHtml +=
+        '<div style="margin-bottom:10px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid #1a1a35;border-radius:9px;">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:7px;">' +
+        '<div style="width:36px;height:36px;border-radius:6px;background:rgba(255,255,255,0.06);border:1.5px solid ' + col + '33;' +
+        'display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">👤</div>' +
+        '<div style="flex:1;">' +
+        '<div style="font-size:13px;color:#ddd;font-weight:bold;">' + (f.name || 'Игрок') + '</div>' +
+        '<div style="font-size:10px;color:' + col + ';margin-top:1px;">' + cls + '</div>' +
+        '</div>' +
+        '<div style="text-align:right;">' +
+        '<div style="font-size:14px;font-weight:bold;color:#f5c542;">Lv.' + f.level + '</div>' +
+        '<div style="font-size:9px;color:#556;margin-top:1px;">след. ' + coinSvg + ' на Lv.' + nextLv + '</div>' +
+        '</div></div>' +
+        '<div style="height:4px;background:#111;border-radius:2px;">' +
+        '<div style="height:4px;background:' + col + ';border-radius:2px;width:' + progressPct + '%;transition:width .3s"></div>' +
+        '</div>' +
+        '<div style="font-size:9px;color:#445;margin-top:4px;text-align:right;">' +
+        (toNext > 0 ? 'ещё ' + toNext + ' ур. до награды' : 'награда готова!') +
+        '</div></div>';
+    });
+    if (totalEarned > 0) {
+      friendsHtml += '<div style="text-align:center;font-size:10px;color:#556;padding:8px 0;">Всего заработано: ' + coinSvg + ' <span style="color:#f5c542">' + totalEarned + '</span></div>';
+    }
+  }
+
+  body.innerHTML = linkHtml + rewardHtml + claimHtml + friendsHtml;
+}
+
+function friendsCopyLink(link) {
+  var copied = false;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(link).then(function() {
+      showFriendsToast('Ссылка скопирована!');
+    }).catch(function() { friendsCopyFallback(link); });
+  } else {
+    friendsCopyFallback(link);
+  }
+}
+function friendsCopyFallback(link) {
+  try {
+    var ta = document.createElement('textarea');
+    ta.value = link; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showFriendsToast('Ссылка скопирована!');
+  } catch(e) { showFriendsToast('Скопируй вручную'); }
+}
+function friendsShare(link) {
+  var text = 'Играю в Pixel Runner RPG! Заходи по моей ссылке — получишь бонус!';
+  var shareUrl = 'https://t.me/share/url?url=' + encodeURIComponent(link) + '&text=' + encodeURIComponent(text);
+  if (window.Telegram && window.Telegram.WebApp) {
+    try { window.Telegram.WebApp.openTelegramLink(shareUrl); return; } catch(e) {}
+  }
+  window.open(shareUrl, '_blank');
+}
+
+function friendsClaim(btn) {
+  if (!window.GameSocket) return;
+  btn.disabled = true;
+  btn.textContent = 'Получение...';
+  
+  window.GameSocket.claimRefReward(function(response) {
+    if (response && response.ok && response.goldEarned > 0) {
+      G.gold += response.goldEarned;
+      updateHUD();
+      if (window.GameSocket && window.GameSocket.saveInstant) {
+        window.GameSocket.saveInstant({ gold: G.gold });
+      }
+      showFriendsToast('+' + response.goldEarned + ' золота получено!');
+      setTimeout(function() { renderFriends(); }, 800);
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Забрать';
+    }
+  });
+}
+
+function showFriendsToast(msg) {
+  var el = document.getElementById('floorUnlock');
+  var sub = document.getElementById('fuText');
+  if (!el || !sub) return;
+  sub.textContent = msg;
+  el.querySelector('.fu-title').textContent = '🎉 ' + msg;
+  el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+  setTimeout(function() { el.classList.remove('show'); }, 2500);
+}
+
+// ═══════════════════════════════
+//  ЭКРАН ВЫБОРА ПЕРСОНАЖА
+// ═══════════════════════════════
+let _csSelected      = null;
+let _csParticleTimer = null;
+let _csSpriteTimers  = {};
+let _csIdleImgs      = {};
+let G_CHAR           = null;
+
+function selectChar(id) {
+  _csSelected = id;
+  ['fire','light','water'].forEach(function(c) {
+    document.getElementById('card-' + c).classList.toggle('selected', c === id);
+  });
+  var btn = document.getElementById('csConfirm');
+  btn.textContent = '▶  НАЧАТЬ ЗА ' + CHARS[id].name.toUpperCase();
+  btn.classList.add('ready');
+}
+
+function confirmChar() {
+  if (!_csSelected) return;
+  Object.values(_csSpriteTimers).forEach(clearInterval);
+  if (_csParticleTimer) cancelAnimationFrame(_csParticleTimer);
+  G_CHAR = CHARS[_csSelected];
+  applyCharacter(G_CHAR);
+  document.getElementById('charSelect').classList.add('hidden');
+  
+  // Сохраняем выбор персонажа через Socket.io
+  if (window.GameSocket && window.GameSocket.selectCharacter) {
+    window.GameSocket.selectCharacter(_csSelected, function(response) {
+      if (response && response.ok) {
+        console.log('✅ [char] Персонаж сохранён на сервере');
+      } else {
+        console.warn('⚠️ [char] Офлайн режим, сохранено локально');
+      }
+    });
+  }
+  
+  startGame();
+  updateHudAvatar();
+}
+
+function applyCharacterSprites(ch) {
+  spriteRun.src  = ch.runSrc;
+  spriteAtk.src  = ch.atkSrc;
+  spriteIdle.src = ch.idleSrc;
+  window.RUN_FRAMES_CUR  = ch.runFrames;
+  window.RUN_FW_CUR      = ch.runFW;
+  window.ATK_FRAMES_CUR  = ch.atkFrames;
+  window.ATK_FW_CUR      = ch.atkFW;
+  window.IDLE_FRAMES_CUR = ch.idleFrames;
+  window.IDLE_FW_CUR     = ch.idleFW;
+}
+
+function applyCharacter(ch) {
+  applyCharacterSprites(ch);
+  G.baseStats = Object.assign({}, ch.baseStats);
+  Object.assign(G.stats, ch.baseStats);
+  G.hp = G.stats.hp; G.maxHp = G.stats.hp;
+  G.charId = ch.id;
+}
+
+function startGame() {
+  resize(); 
+  updateHUD(); 
+  initSkillsHud(); 
+  updatePotionHud();
+  updateAvatarOnStart();
+  switchTab('game');
+  spawnMonster(player.worldX + W * 0.65);
+  requestAnimationFrame(function(ts) { lastTime = ts; loop(ts); });
+}
+
+// ═══════════════════════════════
+//  ОБНОВЛЕНИЕ АВАТАРКИ В HUD
+// ═══════════════════════════════
+
+function updateHudAvatar() {
+  var avatarEl = document.getElementById('hudAvatar');
+  var imgEl = document.getElementById('hudAvatarImg');
+  if (!avatarEl || !imgEl) return;
+
+  var tgId = window.GameSocket ? window.GameSocket.getTgId() : null;
+
+  if (!tgId) {
+    imgEl.style.display = 'none';
+    var charEmoji = G_CHAR ? G_CHAR.avatar : '👤';
+    var fb = avatarEl.querySelector('.avatar-fallback');
+    if (!fb) {
+      fb = document.createElement('div');
+      fb.className = 'avatar-fallback';
+      fb.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:20px;';
+      avatarEl.appendChild(fb);
+    }
+    fb.textContent = charEmoji;
+    return;
+  }
+
+  // 1. photo_url из initDataUnsafe (Telegram иногда передаёт напрямую)
+  var photoUrl = null;
+  try {
+    var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
+    if (unsafe && unsafe.user && unsafe.user.photo_url) {
+      photoUrl = unsafe.user.photo_url;
+    }
+  } catch (e) {}
+
+  // 2. Серверный прокси через Bot API
+  if (!photoUrl && window.GameSocket && window.GameSocket._API) {
+    photoUrl = window.GameSocket._API + '/api/avatar/' + tgId;
+  }
+
+  if (!photoUrl) return;
+
+  var fb = avatarEl.querySelector('.avatar-fallback');
+  if (fb) fb.remove();
+
+  imgEl.style.display = 'block';
+  imgEl.src = photoUrl;
+
+  imgEl.onerror = function() {
+    this.style.display = 'none';
+    var name = '';
+    try {
+      var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
+      if (unsafe && unsafe.user) name = unsafe.user.first_name || '';
+    } catch(e) {}
+    var fb2 = avatarEl.querySelector('.avatar-fallback');
+    if (!fb2) {
+      fb2 = document.createElement('div');
+      fb2.className = 'avatar-fallback';
+      fb2.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:' + (name ? '16px' : '20px') + ';font-weight:bold;color:#f5c542;border-radius:50%;background:rgba(245,197,66,0.15);';
+      avatarEl.appendChild(fb2);
+    }
+    fb2.textContent = name ? name.charAt(0).toUpperCase() : (G_CHAR ? G_CHAR.avatar : '👤');
+  };
+}
+
+// Ждём пока GameSocket._API будет готов, потом загружаем аватарку
+function updateAvatarOnStart() {
+  var attempts = 0;
+  var maxAttempts = 20; // до 10 секунд
+  function tryLoad() {
+    attempts++;
+    var tgId = window.GameSocket && window.GameSocket.getTgId ? window.GameSocket.getTgId() : null;
+    var api  = window.GameSocket && window.GameSocket._API;
+    // photo_url не требует _API — грузим сразу если есть tgId
+    var hasPhotoUrl = false;
+    try {
+      var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
+      if (unsafe && unsafe.user && unsafe.user.photo_url) hasPhotoUrl = true;
+    } catch(e) {}
+
+    if (tgId && (api || hasPhotoUrl)) {
+      updateHudAvatar();
+    } else if (attempts < maxAttempts) {
+      setTimeout(tryLoad, 500);
+    }
+  }
+  tryLoad();
+}
+
+function initCharSelectSprites() {
+  ['fire','light','water'].forEach(function(id) {
+    var ch  = CHARS[id];
+    var img = new Image();
+    _csIdleImgs[id] = img;
+    img.src = ch.idleSrc;
+    var cv = document.getElementById('cs-canvas-' + id);
+    cv.width = 90; cv.height = 100;
+    var frame = 0;
+    _csSpriteTimers[id] = setInterval(function() {
+      var ctx2 = cv.getContext('2d');
+      ctx2.clearRect(0, 0, 90, 100);
+      ctx2.imageSmoothingEnabled = false;
+      var fw = ch.idleFW, fh = ch.idleFH;
+      var scale = Math.min(90/fw, 100/fh);
+      var dw = fw*scale, dh = fh*scale;
+      var dx = (90-dw)/2, dy = (100-dh);
+      if (img.complete && img.naturalWidth > 0) ctx2.drawImage(img, frame*fw, 0, fw, fh, dx, dy, dw, dh);
+      frame = (frame + 1) % ch.idleFrames;
+    }, 130);
+  });
+}
+
+function initCsParticles() {
+  var cv = document.getElementById('csParticles');
+  cv.width  = window.innerWidth;
+  cv.height = window.innerHeight;
+  var ctx2 = cv.getContext('2d');
+  var pts  = [];
+  for (var i = 0; i < 60; i++) {
+    pts.push({
+      x: Math.random() * cv.width, y: Math.random() * cv.height,
+      r: 0.5 + Math.random() * 1.5,
+      vx: (Math.random()-0.5)*0.3, vy: -0.2 - Math.random()*0.5,
+      hue: 220 + Math.random()*120, a: 0.2 + Math.random()*0.5,
+    });
+  }
+  function tick() {
+    if (document.getElementById('charSelect').classList.contains('hidden')) return;
+    ctx2.clearRect(0, 0, cv.width, cv.height);
+    pts.forEach(function(p) {
+      p.x += p.vx; p.y += p.vy;
+      if (p.y < -5) { p.y = cv.height+5; p.x = Math.random()*cv.width; }
+      ctx2.beginPath(); ctx2.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      ctx2.fillStyle = 'hsla('+p.hue+',80%,75%,'+p.a+')'; ctx2.fill();
+    });
+    _csParticleTimer = requestAnimationFrame(tick);
+  }
+  tick();
+}
+
+window.addEventListener('load', function() {
+  initCharSelectSprites();
+  initCsParticles();
+});
+
+window.addEventListener('resize', resize);
+
+// ═══════════════════════════════
+//  ЗАДАНИЯ (Socket.io версия)
+// ═══════════════════════════════
+
+var DAILY_MILESTONES = [
+  { id: 0, minutes: 10, rewardType: 'potions', amount: 50,   icon: '<svg width="18" height="18" viewBox="0 0 12 14" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="4" height="2" fill="#aaa"/><rect x="3" y="1" width="6" height="2" fill="#ccc"/><rect x="2" y="3" width="8" height="1" fill="#e74c3c"/><rect x="1" y="4" width="10" height="7" fill="#e74c3c"/><rect x="2" y="11" width="8" height="2" fill="#c0392b"/><rect x="3" y="13" width="6" height="1" fill="#c0392b"/><rect x="2" y="5" width="4" height="4" fill="#ff8888"/><rect x="3" y="4" width="2" height="2" fill="#ffbbbb"/></svg>', label: '50 зелий' },
+  { id: 1, minutes: 20, rewardType: 'gold',    amount: 1000, icon: '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>', label: '1000 золота' },
+  { id: 2, minutes: 30, rewardType: 'pixr',    amount: 5,    icon: '<img src="images/pixr.png" style="width:18px;height:18px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">', label: '5 PIXR' },
+  { id: 3, minutes: 60, rewardType: 'gold',    amount: 2000, icon: '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>', label: '2000 золота' },
+];
+
+var _specialTaskTimers = {};
+
+function openTaskModal() {
+  document.getElementById('taskModal').classList.remove('hidden');
+  renderTaskModal();
+}
+function closeTaskModal() {
+  document.getElementById('taskModal').classList.add('hidden');
+}
+
+function renderTaskModal() {
+  var body = document.getElementById('taskModalBody');
+  if (!body) return;
+
+  var today = new Date().toISOString().slice(0, 10);
+  if (!G.dailyTasks || G.dailyTasks.date !== today) {
+    G.dailyTasks = { date: today, seconds: 0, claimed: [] };
+  }
+  var mins    = Math.floor((G.dailyTasks.seconds || 0) / 60);
+  var claimed = G.dailyTasks.claimed || [];
+
+  var html = '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">ЕЖЕДНЕВНЫЕ (сброс в полночь)</div>';
+
+  DAILY_MILESTONES.forEach(function(m) {
+    var done  = claimed.indexOf(m.id) !== -1;
+    var avail = !done && mins >= m.minutes;
+    var pct   = Math.min(100, Math.floor((mins / m.minutes) * 100));
+    html +=
+      '<div class="task-row' + (done ? ' task-done' : avail ? ' task-avail' : '') + '">' +
+        '<div class="task-row-left">' +
+          '<div class="task-title">⏱ ' + m.minutes + ' мин в игре</div>' +
+          '<div class="task-progress-wrap">' +
+            '<div class="task-progress-bar"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>' +
+            '<span class="task-progress-lbl">' + Math.min(mins, m.minutes) + '/' + m.minutes + 'м</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="task-row-right">' +
+          '<div class="task-reward-lbl">' + m.icon + ' ' + m.amount + '</div>' +
+          (done ? '<span class="task-done-lbl">✓</span>' :
+           avail ? '<button class="task-claim-btn" onclick="claimDailyTask(' + m.id + ')">Забрать</button>' :
+           '<span class="task-locked-lbl">' + m.minutes + 'м</span>') +
+        '</div>' +
+      '</div>';
+  });
+
+  html += '<div id="specialTasksSection" style="margin-top:16px;">' +
+    '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">СПЕЦИАЛЬНЫЕ</div>' +
+    '<div style="text-align:center;padding:16px;color:#445;font-size:11px;">Загрузка...</div></div>';
+
+  body.innerHTML = html;
+
+  if (!window.GameSocket || !window.GameSocket.isConnected()) {
+    document.getElementById('specialTasksSection').innerHTML =
+      '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">СПЕЦИАЛЬНЫЕ</div>' +
+      '<div style="text-align:center;padding:16px;color:#445;font-size:11px;">Доступно только онлайн</div>';
+    return;
+  }
+
+  window.GameSocket.getTasks(function(response) {
+    if (!response || !response.ok) {
+      var sec = document.getElementById('specialTasksSection');
+      if (sec) sec.innerHTML = '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">СПЕЦИАЛЬНЫЕ</div>' +
+        '<div style="color:#f44;text-align:center;padding:16px;font-size:11px;">Ошибка загрузки</div>';
+      return;
+    }
+    var sec = document.getElementById('specialTasksSection');
+    if (!sec) return;
+    sec.innerHTML = _buildSpecialHtml(response.tasks, response.specialTasksClaimed || {});
+  });
+}
+
+function _buildSpecialHtml(tasks, claimed) {
+  var head = '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">СПЕЦИАЛЬНЫЕ</div>';
+  if (!tasks || !tasks.length) {
+    return head + '<div style="text-align:center;padding:16px;color:#445;font-size:11px;">Нет активных заданий</div>';
+  }
+  var _svgCoin  = '<svg width="16" height="16" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>';
+  var _imgPixr  = '<img src="images/pixr.png" style="width:16px;height:16px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">';
+  var _imgGram  = '<img src="images/gram.png" style="width:16px;height:16px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">';
+  var _svgPotion= '<svg width="16" height="16" viewBox="0 0 12 14" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="4" height="2" fill="#aaa"/><rect x="3" y="1" width="6" height="2" fill="#ccc"/><rect x="2" y="3" width="8" height="1" fill="#e74c3c"/><rect x="1" y="4" width="10" height="7" fill="#e74c3c"/><rect x="2" y="11" width="8" height="2" fill="#c0392b"/><rect x="3" y="13" width="6" height="1" fill="#c0392b"/><rect x="2" y="5" width="4" height="4" fill="#ff8888"/><rect x="3" y="4" width="2" height="2" fill="#ffbbbb"/></svg>';
+  var _svgGift  = '<svg width="16" height="16" viewBox="0 0 12 12" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="1" y="4" width="10" height="7" fill="#9b59b6"/><rect x="2" y="5" width="8" height="5" fill="#c080ff"/><rect x="0" y="3" width="12" height="3" fill="#7d3c98"/><rect x="5" y="0" width="2" height="4" fill="#f5c542"/><rect x="3" y="1" width="2" height="2" fill="#f5c542"/><rect x="7" y="1" width="2" height="2" fill="#f5c542"/><rect x="5" y="3" width="2" height="8" fill="#f5c542"/></svg>';
+  var icons = { gold: _svgCoin, pixr: _imgPixr, potions: _svgPotion, gram: _imgGram };
+  var html  = head;
+  tasks.forEach(function(task) {
+    var done  = !!(claimed[task.taskId]);
+    var timer = _specialTaskTimers[task.taskId];
+    var ic    = icons[task.rewardType] || _svgGift;
+    var action;
+    if (done) {
+      action = '<span class="task-done-lbl">✓</span>';
+    } else if (timer && timer.remaining > 0) {
+      action = '<span class="task-timer-lbl" id="stTimer_' + task.taskId + '">⏱ ' + timer.remaining + 'с</span>';
+    } else if (timer && timer.remaining <= 0) {
+      action = '<button class="task-claim-btn" onclick="claimSpecialTask(\'' + task.taskId + '\')">Забрать</button>';
+    } else if (task.link) {
+      action = '<button class="task-go-btn" onclick="startSpecialTask(\'' + task.taskId + '\',\'' + task.link.replace(/'/g,"\\'") + '\')">' + (task.linkText || 'Перейти') + '</button>';
+    } else {
+      action = '<button class="task-claim-btn" onclick="claimSpecialTask(\'' + task.taskId + '\')">Забрать</button>';
+    }
+    html +=
+      '<div class="task-row' + (done ? ' task-done' : '') + '">' +
+        '<div class="task-row-left">' +
+          '<div class="task-title">' + task.title + '</div>' +
+          (task.description ? '<div class="task-desc">' + task.description + '</div>' : '') +
+        '</div>' +
+        '<div class="task-row-right">' +
+          '<div class="task-reward-lbl">' + ic + ' ' + task.rewardAmount + '</div>' +
+          action +
+        '</div>' +
+      '</div>';
+  });
+  return html;
+}
+
+function startSpecialTask(taskId, link) {
+  if (link) {
+    try {
+      if (window.Telegram && window.Telegram.WebApp && link.startsWith('https://t.me/')) {
+        window.Telegram.WebApp.openTelegramLink(link);
+      } else { window.open(link, '_blank'); }
+    } catch(e) { window.open(link, '_blank'); }
+  }
+  if (_specialTaskTimers[taskId] && _specialTaskTimers[taskId].remaining > 0) return;
+  _specialTaskTimers[taskId] = { remaining: 20 };
+  var iv = setInterval(function() {
+    var t = _specialTaskTimers[taskId];
+    if (!t) { clearInterval(iv); return; }
+    t.remaining--;
+    var el = document.getElementById('stTimer_' + taskId);
+    if (t.remaining > 0) {
+      if (el) el.textContent = '⏱ ' + t.remaining + 'с';
+    } else {
+      clearInterval(iv);
+      if (el) {
+        var btn = document.createElement('button');
+        btn.className = 'task-claim-btn';
+        btn.textContent = 'Забрать';
+        btn.onclick = function() { claimSpecialTask(taskId); };
+        el.parentNode.replaceChild(btn, el);
+      }
+    }
+  }, 1000);
+}
+
+function claimDailyTask(milestoneId) {
+  if (!window.GameSocket || !window.GameSocket.isConnected()) {
+    _taskToast('Нет соединения');
+    return;
+  }
+  
+  window.GameSocket.claimDailyTask(milestoneId, function(response) {
+    if (!response || !response.ok) {
+      _taskToast('Ошибка: ' + (response?.error || '?'));
+      return;
+    }
+    var rw = response.reward;
+    if (rw.type === 'gold')    G.gold    = (G.gold    || 0) + rw.amount;
+    if (rw.type === 'potions') G.potions = (G.potions || 0) + rw.amount;
+    if (rw.type === 'pixr')    G.pixr    = (G.pixr    || 0) + rw.amount;
+    if (rw.type === 'gram')    G.gram    = (G.gram    || 0) + rw.amount;
+    if (!G.dailyTasks) G.dailyTasks = { date: new Date().toISOString().slice(0,10), seconds:0, claimed:[] };
+    if (G.dailyTasks.claimed.indexOf(milestoneId) === -1) G.dailyTasks.claimed.push(milestoneId);
+    updateHUD();
+    _taskToast('+' + rw.amount + ' ' + (rw.type==='gold'?'золота':rw.type==='potions'?'зелий':'PIXR') + ' получено!');
+    renderTaskModal();
+  });
+}
+
+function claimSpecialTask(taskId) {
+  if (!window.GameSocket || !window.GameSocket.isConnected()) {
+    _taskToast('Нет соединения');
+    return;
+  }
+  
+  window.GameSocket.claimSpecialTask(taskId, function(response) {
+    if (!response || !response.ok) {
+      _taskToast('Ошибка: ' + (response?.error || '?'));
+      return;
+    }
+    var rw = response.reward;
+    if (rw.type === 'gold')    G.gold    = (G.gold    || 0) + rw.amount;
+    if (rw.type === 'potions') G.potions = (G.potions || 0) + rw.amount;
+    if (rw.type === 'pixr')    G.pixr    = (G.pixr    || 0) + rw.amount;
+    if (rw.type === 'gram')    G.gram    = (G.gram    || 0) + rw.amount;
+    if (!G.specialTasksClaimed) G.specialTasksClaimed = {};
+    G.specialTasksClaimed[taskId] = Date.now();
+    delete _specialTaskTimers[taskId];
+    updateHUD();
+    _taskToast('+' + rw.amount + ' ' + rw.type + ' получено!');
+    renderTaskModal();
+  });
+}
+
+function _taskToast(msg) {
+  var fu = document.getElementById('floorUnlock');
+  var sub = document.getElementById('fuText');
+  if (!fu || !sub) return;
+  fu.querySelector('.fu-title').textContent = '📋 ' + msg;
+  sub.textContent = '';
+  fu.classList.remove('show'); void fu.offsetWidth; fu.classList.add('show');
+  setTimeout(function() { fu.classList.remove('show'); }, 2500);
+}
+
+// ═══════════════════════════════
+//  ВКЛАДКА БОССОВ
+// ═══════════════════════════════
+function renderBossTab() {
+  var body = document.getElementById('bossBody');
+  if (!body) return;
+  var cp       = calcCP();
+  var boss     = G.boss || { floor: 1, lastFightTime: 0 };
+  var canFight = typeof bossCanFight === 'function' ? bossCanFight() : true;
+  var nextIn   = typeof bossNextFightIn === 'function' ? bossNextFightIn() : null;
+  var html     = '';
+
+  html += '<div style="font-size:11px;color:#778;margin-bottom:12px;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid #2a2a5a;display:flex;justify-content:space-between;align-items:center;">';
+  html += '<span>CP: <strong style="color:#fa0">' + cp + '</strong></span>';
+  if (canFight) {
+    html += '<span style="color:#2ecc71;font-size:10px;">✅ Можно вызвать</span>';
+  } else {
+    html += '<span style="color:#e74c3c;font-size:10px;">⏳ ' + nextIn + '</span>';
+  }
+  html += '</div>';
+
+  BOSS_DEFS.forEach(function(b) {
+    var isUnlocked = cp >= b.cpReq;
+    var isCurrent  = boss.floor === b.id;
+    var isPast     = boss.floor > b.id;
+    var pixr  = Math.floor(Math.pow(2, b.id - 1));
+    var gold  = Math.floor(1000 * Math.pow(2, b.id - 1));
+    var rarNames = ['Обычный','Необычный','Редкий','Эпический','Легендарный'];
+    var rarName  = rarNames[Math.min(b.id - 1, 4)];
+
+    var borderColor = '#2a2a5a', extraStyle = '';
+    if (isCurrent && isUnlocked) { borderColor = '#e74c3c'; extraStyle = 'box-shadow:0 0 12px rgba(231,76,60,0.2);'; }
+    else if (isPast)             { borderColor = '#2a4a3a'; }
+    else if (!isUnlocked)        { extraStyle = 'opacity:0.5;'; }
+
+    html += '<div style="margin-bottom:12px;border-radius:10px;border:1.5px solid ' + borderColor + ';' + extraStyle + 'overflow:hidden;">';
+    // Заголовок
+    html += '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.04);border-bottom:1px solid #1a1a35;">';
+    html += '<span style="font-size:26px;line-height:1;">' + b.emoji + '</span>';
+    html += '<div style="flex:1;"><div style="font-size:13px;font-weight:bold;color:' + (isCurrent ? '#e74c3c' : '#ccc') + ';">Босс ' + b.id + ': ' + b.name;
+    if (isCurrent) html += ' <span style="font-size:9px;color:#e74c3c;border:1px solid #e74c3c44;padding:1px 4px;border-radius:3px;margin-left:4px;">ТЕКУЩИЙ</span>';
+    html += '</div><div style="font-size:10px;color:#778;margin-top:2px;">HP: ' + b.hp.toLocaleString() + ' · ATK: ' + b.atk + ' · CP: ' + b.cpReq.toLocaleString() + '</div></div>';
+    if (!isUnlocked) html += '<div style="font-size:9px;color:#f88;text-align:right;min-width:44px;">🔒<br>+' + (b.cpReq - cp) + ' CP</div>';
+    html += '</div>';
+    // Награды
+    html += '<div style="padding:8px 12px 10px;background:rgba(0,0,0,0.15);">';
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:8px;">';
+    html += '<div style="background:rgba(255,68,204,0.07);border:1px solid #4a2a5a;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">PIXR</div><div style="font-size:13px;font-weight:bold;color:#ff44cc;">' + pixr + '</div></div>';
+    html += '<div style="background:rgba(245,197,66,0.07);border:1px solid #4a3a10;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">Золото</div><div style="font-size:11px;font-weight:bold;color:#f5c542;">' + (gold >= 1000 ? (gold/1000).toFixed(0)+'K' : gold) + '</div></div>';
+    html += '<div style="background:rgba(167,139,250,0.07);border:1px solid #3a2a6a;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">Предмет</div><div style="font-size:9px;font-weight:bold;color:#a78bfa;">' + rarName + '</div></div>';
+    html += '</div>';
+    // Кнопка
+    if (!isUnlocked) {
+      html += '<div style="padding:9px;font-size:11px;border-radius:8px;border:1px solid #333;background:rgba(255,255,255,0.02);color:#446;text-align:center;">🔒 Нужно ' + b.cpReq.toLocaleString() + ' CP</div>';
+    } else if (canFight) {
+      html += '<button onclick="callBoss(' + b.id + ')" style="width:100%;padding:10px;font-size:13px;font-family:Courier New,monospace;border-radius:8px;border:1.5px solid #e74c3c;background:rgba(231,76,60,0.15);color:#e74c3c;cursor:pointer;font-weight:bold;">⚔️ Вызвать босса</button>';
+    } else {
+      html += '<div style="padding:9px;font-size:11px;border-radius:8px;border:1px solid #e74c3c44;background:rgba(231,76,60,0.05);color:#e74c3c;text-align:center;">⏳ Следующий бой через ' + nextIn + '</div>';
+    }
+    html += '</div></div>';
+  });
+
+  body.innerHTML = html;
+}
+
+function callBoss(bossId) {
+  if (typeof spawnBoss === 'function') {
+    switchTab('game');
+    setTimeout(function() { spawnBoss(bossId); }, 100);
+  }
+}
+
+// ═══════════════════════════════
+//  МОДАЛКИ ПОПОЛНЕНИЯ/ВЫВОДА (Socket.io)
 // ═══════════════════════════════
 
 function openDepositModal() {
@@ -767,7 +1392,7 @@ function createDepositModal() {
   div.innerHTML = html;
   document.getElementById('app').appendChild(div.firstElementChild);
 
-  var tgId = window.GameSync ? window.GameSync.getTgId() : 'user';
+  var tgId = window.GameSocket ? window.GameSocket.getTgId() : 'user';
   document.getElementById('depositMemo').textContent = tgId + '_' + Date.now().toString(36);
 }
 
@@ -868,34 +1493,27 @@ function submitDeposit() {
   const amount = parseInt(document.getElementById('depositAmount').value);
   const result = document.getElementById('depositResult');
   
-  if (!amount || amount < 1 || amount > 100) {
-    result.innerHTML = '<span style="color:#e74c3c;">Сумма от 1 до 100 GRAM</span>';
+  if (!amount || amount < 1) {
+    result.innerHTML = '<span style="color:#e74c3c;">Сумма от 1 GRAM</span>';
+    return;
+  }
+  
+  if (!window.GameSocket || !window.GameSocket.isConnected()) {
+    result.innerHTML = '<span style="color:#e74c3c;">❌ Нет соединения</span>';
     return;
   }
   
   result.innerHTML = '<span style="color:#f5c542;">Отправка...</span>';
   
-  fetch(window.GameSync._API + '/api/wallet/deposit', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      initData: window.GameSync._INIT,
-      amount: amount
-    })
-  })
-  .then(r => r.json())
-  .then(r => {
-    if (r.ok) {
-      result.innerHTML = '<span style="color:#2ecc71;">✅ Заявка создана! Ожидайте подтверждения админом.</span>';
+  window.GameSocket.deposit(amount, function(response) {
+    if (response && response.ok) {
+      result.innerHTML = '<span style="color:#2ecc71;">✅ Заявка создана! Ожидайте подтверждения.</span>';
       document.getElementById('depositAmount').value = '1';
       loadTransactions();
       setTimeout(closeWalletModal, 3000);
     } else {
-      result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (r.error || 'Ошибка') + '</span>';
+      result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (response?.error || 'Ошибка') + '</span>';
     }
-  })
-  .catch(() => {
-    result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка соединения</span>';
   });
 }
 
@@ -905,761 +1523,31 @@ function submitWithdraw() {
   const result = document.getElementById('withdrawResult');
   
   if (!amount || amount < 1 || amount > Math.floor(G.gram || 0)) {
-    result.innerHTML = '<span style="color:#e74c3c;">Недостаточно средств или неверная сумма</span>';
+    result.innerHTML = '<span style="color:#e74c3c;">Недостаточно средств</span>';
     return;
   }
   
   if (!wallet || wallet.length < 10) {
-    result.innerHTML = '<span style="color:#e74c3c;">Введите корректный адрес кошелька</span>';
+    result.innerHTML = '<span style="color:#e74c3c;">Введите корректный адрес</span>';
+    return;
+  }
+  
+  if (!window.GameSocket || !window.GameSocket.isConnected()) {
+    result.innerHTML = '<span style="color:#e74c3c;">❌ Нет соединения</span>';
     return;
   }
   
   result.innerHTML = '<span style="color:#f5c542;">Отправка...</span>';
   
-  fetch(window.GameSync._API + '/api/wallet/withdraw', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      initData: window.GameSync._INIT,
-      amount: amount,
-      wallet: wallet
-    })
-  })
-  .then(r => r.json())
-  .then(r => {
-    if (r.ok) {
-      result.innerHTML = '<span style="color:#2ecc71;">✅ Заявка создана! Ожидайте подтверждения админом.</span>';
+  window.GameSocket.withdraw({ amount, wallet }, function(response) {
+    if (response && response.ok) {
+      result.innerHTML = '<span style="color:#2ecc71;">✅ Заявка создана! Ожидайте подтверждения.</span>';
       document.getElementById('withdrawAmount').value = '1';
       document.getElementById('withdrawWallet').value = '';
       loadTransactions();
       setTimeout(closeWalletModal, 3000);
     } else {
-      result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (r.error || 'Ошибка') + '</span>';
+      result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (response?.error || 'Ошибка') + '</span>';
     }
-  })
-  .catch(() => {
-    result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка соединения</span>';
   });
-}
-
-// ═══════════════════════════════
-//  ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК
-// ═══════════════════════════════
-function switchTab(tab) {
-  activeTab = tab;
-  ['game','inv','upgrades','floors','rating','wallet','friends'].forEach(t => {
-    const btn = document.getElementById('nav' + t.charAt(0).toUpperCase() + t.slice(1));
-    if (btn) btn.classList.toggle('active', t === tab);
-  });
-  document.getElementById('panelInv').classList.toggle('visible',      tab === 'inv');
-  document.getElementById('panelUpgrades').classList.toggle('visible', tab === 'upgrades');
-  document.getElementById('panelFloors').classList.toggle('visible',   tab === 'floors');
-  document.getElementById('panelRating').classList.toggle('visible',   tab === 'rating');
-  document.getElementById('panelWallet').classList.toggle('visible',   tab === 'wallet');
-  document.getElementById('panelFriends').classList.toggle('visible',  tab === 'friends');
-  var bossPanel = document.getElementById('panelBoss');
-  if (bossPanel) bossPanel.classList.toggle('visible', tab === 'boss');
-  var hudEl = document.getElementById('skillsHud');
-  if (hudEl) hudEl.classList.toggle('visible', tab === 'game' && !!G_CHAR);
-  var isGame = tab === 'game' && !!G_CHAR;
-  var bpBtn   = document.getElementById('bpHudBtn');
-  var premBtn = document.querySelector('.prem-hud-btn');
-  var taskBtn = document.getElementById('taskHudBtn');
-  var bossBtn = document.getElementById('bossHudBtn');
-  if (bpBtn)   bpBtn.style.display   = isGame ? 'flex' : 'none';
-  if (premBtn) premBtn.style.display = isGame ? 'flex' : 'none';
-  if (taskBtn) taskBtn.style.display = isGame ? 'flex' : 'none';
-  if (bossBtn) bossBtn.style.display = isGame ? 'flex' : 'none';
-
-  if (tab === 'inv')      { _invSelectMode = false; _invSelected = {}; renderInventory(); }
-  if (tab === 'upgrades') renderUpgrades();
-  if (tab === 'floors')   renderFloors();
-  if (tab === 'rating')   renderRating();
-  if (tab === 'wallet')   renderWallet();
-  if (tab === 'friends')  renderFriends();
-  if (tab === 'boss')     renderBossTab();
-}
-
-// ═══════════════════════════════
-//  ВКЛАДКА ДРУЗЕЙ
-// ═══════════════════════════════
-var _friendsLoading = false;
-
-function renderFriends() {
-  var body = document.getElementById('friendsBody');
-  if (!body) return;
-
-  if (!window.GameSync || !window.GameSync.state.online) {
-    body.innerHTML = '<div style="text-align:center;padding:40px 16px;color:#556;font-size:12px;">' +
-      '<div style="font-size:32px;margin-bottom:12px;">📱</div>' +
-      'Реферальная программа<br>доступна только в Telegram</div>';
-    return;
-  }
-
-  if (_friendsLoading) return;
-  _friendsLoading = true;
-  body.innerHTML = '<div style="text-align:center;padding:40px 0;color:#445;font-size:12px;">Загрузка...</div>';
-
-  var _flTimeout = setTimeout(function () {
-    if (_friendsLoading) {
-      _friendsLoading = false;
-      body.innerHTML = '<div style="color:#f44;text-align:center;padding:30px 0;font-size:12px;">Нет соединения</div>';
-    }
-  }, 10000);
-
-  fetch(window.GameSync._API + '/api/ref/friends', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT }),
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(r) {
-    clearTimeout(_flTimeout);
-    _friendsLoading = false;
-    if (!r.ok) { body.innerHTML = '<div style="color:#f44;text-align:center;padding:30px 0;font-size:12px;">Ошибка загрузки</div>'; return; }
-    renderFriendsData(r, body);
-  })
-  .catch(function() {
-    clearTimeout(_flTimeout);
-    _friendsLoading = false;
-    body.innerHTML = '<div style="color:#f44;text-align:center;padding:30px 0;font-size:12px;">Нет соединения</div>';
-  });
-}
-
-function renderFriendsData(r, body) {
-  var coinSvg = '<svg width="14" height="14" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>';
-  var charColors = { fire: '#ff6030', light: '#ffd040', water: '#40d0ff' };
-  var charNames  = { fire: 'Пирокан', light: 'Люмос', water: 'Аквас' };
-
-  var linkHtml =
-    '<div style="margin-bottom:14px;padding:12px;background:rgba(245,197,66,0.06);border:1.5px solid #3a3a1a;border-radius:10px;">' +
-    '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:8px;">ТВОЯ РЕФЕРАЛЬНАЯ ССЫЛКА</div>' +
-    '<div style="font-size:11px;color:#f5c542;word-break:break-all;margin-bottom:10px;padding:6px 8px;background:#0d0d1a;border-radius:5px;border:1px solid #2a2a5a;">' +
-      r.refLink +
-    '</div>' +
-    '<div style="display:flex;gap:8px;">' +
-    '<button onclick="friendsCopyLink(\'' + r.refLink + '\')" style="flex:1;padding:9px;font-size:11px;font-family:Courier New,monospace;border-radius:7px;border:1.5px solid #f5c542;background:rgba(245,197,66,0.1);color:#f5c542;cursor:pointer;">📋 Скопировать</button>' +
-    '<button onclick="friendsShare(\'' + r.refLink + '\')" style="flex:1;padding:9px;font-size:11px;font-family:Courier New,monospace;border-radius:7px;border:1.5px solid #2ecc71;background:rgba(46,204,113,0.1);color:#2ecc71;cursor:pointer;">✈️ Поделиться</button>' +
-    '</div></div>';
-
-  var rewardHtml =
-    '<div style="margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid #2a2a5a;border-radius:8px;font-size:10px;color:#667;">' +
-    coinSvg + ' <span style="color:#f5c542;font-weight:bold">500 золота</span> за каждые 5 уровней друга · ' +
-    '<span style="color:#aaa">Уровни 5, 10, 15, 20...</span></div>';
-
-  var claimHtml = '';
-  if (r.pendingGold > 0) {
-    claimHtml =
-      '<button onclick="friendsClaim(this)" style="width:100%;margin-bottom:14px;padding:13px;font-size:14px;font-weight:bold;' +
-      'font-family:Courier New,monospace;border-radius:9px;border:1.5px solid #f5c542;' +
-      'background:linear-gradient(180deg,rgba(245,197,66,0.2),rgba(245,197,66,0.05));' +
-      'color:#f5c542;cursor:pointer;letter-spacing:1px;">' +
-      coinSvg + ' Забрать ' + r.pendingGold + ' золота</button>';
-  }
-
-  var friendsHtml = '';
-  if (!r.friends || r.friends.length === 0) {
-    friendsHtml =
-      '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">' +
-      '<div style="font-size:28px;margin-bottom:10px;">👥</div>' +
-      'Пока нет друзей<br><span style="font-size:10px;color:#334;">Поделись ссылкой — за каждого<br>получишь золото!</span></div>';
-  } else {
-    var totalEarned = 0;
-    r.friends.forEach(function(f) { totalEarned += f.paid * (500 / 5); });
-    friendsHtml = '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:8px;">ДРУЗЬЯ (' + r.friends.length + ')</div>';
-    r.friends.forEach(function(f) {
-      var col = charColors[f.charId] || '#aaa';
-      var cls = charNames[f.charId]  || 'Неизвестный';
-      var nextLv = f.nextMilestone;
-      var toNext = nextLv - f.level;
-      var progressPct = toNext > 0 ? Math.min(100, ((5 - toNext) / 5 * 100)) : 100;
-      friendsHtml +=
-        '<div style="margin-bottom:10px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid #1a1a35;border-radius:9px;">' +
-        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:7px;">' +
-        '<div style="width:36px;height:36px;border-radius:6px;background:rgba(255,255,255,0.06);border:1.5px solid ' + col + '33;' +
-        'display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">👤</div>' +
-        '<div style="flex:1;">' +
-        '<div style="font-size:13px;color:#ddd;font-weight:bold;">' + (f.name || 'Игрок') + '</div>' +
-        '<div style="font-size:10px;color:' + col + ';margin-top:1px;">' + cls + '</div>' +
-        '</div>' +
-        '<div style="text-align:right;">' +
-        '<div style="font-size:14px;font-weight:bold;color:#f5c542;">Lv.' + f.level + '</div>' +
-        '<div style="font-size:9px;color:#556;margin-top:1px;">след. ' + coinSvg + ' на Lv.' + nextLv + '</div>' +
-        '</div></div>' +
-        '<div style="height:4px;background:#111;border-radius:2px;">' +
-        '<div style="height:4px;background:' + col + ';border-radius:2px;width:' + progressPct + '%;transition:width .3s"></div>' +
-        '</div>' +
-        '<div style="font-size:9px;color:#445;margin-top:4px;text-align:right;">' +
-        (toNext > 0 ? 'ещё ' + toNext + ' ур. до награды' : 'награда готова!') +
-        '</div></div>';
-    });
-    if (totalEarned > 0) {
-      friendsHtml += '<div style="text-align:center;font-size:10px;color:#556;padding:8px 0;">Всего заработано: ' + coinSvg + ' <span style="color:#f5c542">' + totalEarned + '</span></div>';
-    }
-  }
-
-  body.innerHTML = linkHtml + rewardHtml + claimHtml + friendsHtml;
-}
-
-function friendsCopyLink(link) {
-  var copied = false;
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(link).then(function() {
-      showFriendsToast('Ссылка скопирована!');
-    }).catch(function() { friendsCopyFallback(link); });
-  } else {
-    friendsCopyFallback(link);
-  }
-}
-function friendsCopyFallback(link) {
-  try {
-    var ta = document.createElement('textarea');
-    ta.value = link; ta.style.position = 'fixed'; ta.style.opacity = '0';
-    document.body.appendChild(ta); ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    showFriendsToast('Ссылка скопирована!');
-  } catch(e) { showFriendsToast('Скопируй вручную'); }
-}
-function friendsShare(link) {
-  var text = 'Играю в Pixel Runner RPG! Заходи по моей ссылке — получишь бонус!';
-  var shareUrl = 'https://t.me/share/url?url=' + encodeURIComponent(link) + '&text=' + encodeURIComponent(text);
-  if (window.Telegram && window.Telegram.WebApp) {
-    try { window.Telegram.WebApp.openTelegramLink(shareUrl); return; } catch(e) {}
-  }
-  window.open(shareUrl, '_blank');
-}
-function friendsClaim(btn) {
-  if (!window.GameSync) return;
-  btn.disabled = true;
-  btn.textContent = 'Получение...';
-  fetch(window.GameSync._API + '/api/ref/claim', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT }),
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(r) {
-    if (r.ok && r.goldEarned > 0) {
-      G.gold += r.goldEarned;
-      updateHUD();
-      if (typeof window.GameSync.touch === 'function') window.GameSync.touch();
-      showFriendsToast('+' + r.goldEarned + ' золота получено!');
-      setTimeout(function() { renderFriends(); }, 800);
-    } else {
-      btn.disabled = false;
-      btn.textContent = 'Забрать';
-    }
-  })
-  .catch(function() {
-    btn.disabled = false;
-    btn.textContent = 'Забрать';
-  });
-}
-function showFriendsToast(msg) {
-  var el = document.getElementById('floorUnlock');
-  var sub = document.getElementById('fuText');
-  if (!el || !sub) return;
-  sub.textContent = msg;
-  el.querySelector('.fu-title').textContent = '🎉 ' + msg;
-  el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
-  setTimeout(function() { el.classList.remove('show'); }, 2500);
-}
-
-// ═══════════════════════════════
-//  ЭКРАН ВЫБОРА ПЕРСОНАЖА
-// ═══════════════════════════════
-let _csSelected      = null;
-let _csParticleTimer = null;
-let _csSpriteTimers  = {};
-let _csIdleImgs      = {};
-let G_CHAR           = null;
-
-function selectChar(id) {
-  _csSelected = id;
-  ['fire','light','water'].forEach(function(c) {
-    document.getElementById('card-' + c).classList.toggle('selected', c === id);
-  });
-  var btn = document.getElementById('csConfirm');
-  btn.textContent = '▶  НАЧАТЬ ЗА ' + CHARS[id].name.toUpperCase();
-  btn.classList.add('ready');
-}
-
-function confirmChar() {
-  if (!_csSelected) return;
-  Object.values(_csSpriteTimers).forEach(clearInterval);
-  if (_csParticleTimer) cancelAnimationFrame(_csParticleTimer);
-  G_CHAR = CHARS[_csSelected];
-  applyCharacter(G_CHAR);
-  document.getElementById('charSelect').classList.add('hidden');
-  startGame();
-  updateHudAvatar();
-}
-
-function applyCharacterSprites(ch) {
-  spriteRun.src  = ch.runSrc;
-  spriteAtk.src  = ch.atkSrc;
-  spriteIdle.src = ch.idleSrc;
-  window.RUN_FRAMES_CUR  = ch.runFrames;
-  window.RUN_FW_CUR      = ch.runFW;
-  window.ATK_FRAMES_CUR  = ch.atkFrames;
-  window.ATK_FW_CUR      = ch.atkFW;
-  window.IDLE_FRAMES_CUR = ch.idleFrames;
-  window.IDLE_FW_CUR     = ch.idleFW;
-}
-
-function applyCharacter(ch) {
-  applyCharacterSprites(ch);
-  G.baseStats = Object.assign({}, ch.baseStats);
-  Object.assign(G.stats, ch.baseStats);
-  G.hp = G.stats.hp; G.maxHp = G.stats.hp;
-  G.charId = ch.id;
-}
-
-function startGame() {
-  resize(); 
-  updateHUD(); 
-  initSkillsHud(); 
-  updatePotionHud();
-  updateAvatarOnStart();
-  switchTab('game');
-  spawnMonster(player.worldX + W * 0.65);
-  requestAnimationFrame(function(ts) { lastTime = ts; loop(ts); });
-}
-
-// ═══════════════════════════════
-//  ОБНОВЛЕНИЕ АВАТАРКИ В HUD
-// ═══════════════════════════════
-
-function updateHudAvatar() {
-  var avatarEl = document.getElementById('hudAvatar');
-  var imgEl = document.getElementById('hudAvatarImg');
-  if (!avatarEl || !imgEl) return;
-
-  var tgId = window.GameSync ? window.GameSync.getTgId() : null;
-
-  if (!tgId) {
-    imgEl.style.display = 'none';
-    var charEmoji = G_CHAR ? G_CHAR.avatar : '👤';
-    var fb = avatarEl.querySelector('.avatar-fallback');
-    if (!fb) {
-      fb = document.createElement('div');
-      fb.className = 'avatar-fallback';
-      fb.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:20px;';
-      avatarEl.appendChild(fb);
-    }
-    fb.textContent = charEmoji;
-    return;
-  }
-
-  // 1. photo_url из initDataUnsafe (Telegram иногда передаёт напрямую)
-  var photoUrl = null;
-  try {
-    var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
-    if (unsafe && unsafe.user && unsafe.user.photo_url) {
-      photoUrl = unsafe.user.photo_url;
-    }
-  } catch (e) {}
-
-  // 2. Серверный прокси через Bot API
-  if (!photoUrl && window.GameSync && window.GameSync._API) {
-    photoUrl = window.GameSync._API + '/api/avatar/' + tgId;
-  }
-
-  if (!photoUrl) return;
-
-  var fb = avatarEl.querySelector('.avatar-fallback');
-  if (fb) fb.remove();
-
-  imgEl.style.display = 'block';
-  imgEl.src = photoUrl;
-
-  imgEl.onerror = function() {
-    this.style.display = 'none';
-    var name = '';
-    try {
-      var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
-      if (unsafe && unsafe.user) name = unsafe.user.first_name || '';
-    } catch(e) {}
-    var fb2 = avatarEl.querySelector('.avatar-fallback');
-    if (!fb2) {
-      fb2 = document.createElement('div');
-      fb2.className = 'avatar-fallback';
-      fb2.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:' + (name ? '16px' : '20px') + ';font-weight:bold;color:#f5c542;border-radius:50%;background:rgba(245,197,66,0.15);';
-      avatarEl.appendChild(fb2);
-    }
-    fb2.textContent = name ? name.charAt(0).toUpperCase() : (G_CHAR ? G_CHAR.avatar : '👤');
-  };
-}
-
-// Ждём пока GameSync._API будет готов, потом загружаем аватарку
-function updateAvatarOnStart() {
-  var attempts = 0;
-  var maxAttempts = 20; // до 10 секунд
-  function tryLoad() {
-    attempts++;
-    var tgId = window.GameSync && window.GameSync.getTgId ? window.GameSync.getTgId() : null;
-    var api  = window.GameSync && window.GameSync._API;
-    // photo_url не требует _API — грузим сразу если есть tgId
-    var hasPhotoUrl = false;
-    try {
-      var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
-      if (unsafe && unsafe.user && unsafe.user.photo_url) hasPhotoUrl = true;
-    } catch(e) {}
-
-    if (tgId && (api || hasPhotoUrl)) {
-      updateHudAvatar();
-    } else if (attempts < maxAttempts) {
-      setTimeout(tryLoad, 500);
-    }
-  }
-  tryLoad();
-}
-
-function initCharSelectSprites() {
-  ['fire','light','water'].forEach(function(id) {
-    var ch  = CHARS[id];
-    var img = new Image();
-    _csIdleImgs[id] = img;
-    img.src = ch.idleSrc;
-    var cv = document.getElementById('cs-canvas-' + id);
-    cv.width = 90; cv.height = 100;
-    var frame = 0;
-    _csSpriteTimers[id] = setInterval(function() {
-      var ctx2 = cv.getContext('2d');
-      ctx2.clearRect(0, 0, 90, 100);
-      ctx2.imageSmoothingEnabled = false;
-      var fw = ch.idleFW, fh = ch.idleFH;
-      var scale = Math.min(90/fw, 100/fh);
-      var dw = fw*scale, dh = fh*scale;
-      var dx = (90-dw)/2, dy = (100-dh);
-      if (img.complete && img.naturalWidth > 0) ctx2.drawImage(img, frame*fw, 0, fw, fh, dx, dy, dw, dh);
-      frame = (frame + 1) % ch.idleFrames;
-    }, 130);
-  });
-}
-
-function initCsParticles() {
-  var cv = document.getElementById('csParticles');
-  cv.width  = window.innerWidth;
-  cv.height = window.innerHeight;
-  var ctx2 = cv.getContext('2d');
-  var pts  = [];
-  for (var i = 0; i < 60; i++) {
-    pts.push({
-      x: Math.random() * cv.width, y: Math.random() * cv.height,
-      r: 0.5 + Math.random() * 1.5,
-      vx: (Math.random()-0.5)*0.3, vy: -0.2 - Math.random()*0.5,
-      hue: 220 + Math.random()*120, a: 0.2 + Math.random()*0.5,
-    });
-  }
-  function tick() {
-    if (document.getElementById('charSelect').classList.contains('hidden')) return;
-    ctx2.clearRect(0, 0, cv.width, cv.height);
-    pts.forEach(function(p) {
-      p.x += p.vx; p.y += p.vy;
-      if (p.y < -5) { p.y = cv.height+5; p.x = Math.random()*cv.width; }
-      ctx2.beginPath(); ctx2.arc(p.x, p.y, p.r, 0, Math.PI*2);
-      ctx2.fillStyle = 'hsla('+p.hue+',80%,75%,'+p.a+')'; ctx2.fill();
-    });
-    _csParticleTimer = requestAnimationFrame(tick);
-  }
-  tick();
-}
-
-window.addEventListener('load', function() {
-  initCharSelectSprites();
-  initCsParticles();
-});
-
-window.addEventListener('resize', resize);
-// ═══════════════════════════════
-//  ЗАДАНИЯ
-// ═══════════════════════════════
-
-var DAILY_MILESTONES = [
-  { id: 0, minutes: 10, rewardType: 'potions', amount: 50,   icon: '<svg width="18" height="18" viewBox="0 0 12 14" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="4" height="2" fill="#aaa"/><rect x="3" y="1" width="6" height="2" fill="#ccc"/><rect x="2" y="3" width="8" height="1" fill="#e74c3c"/><rect x="1" y="4" width="10" height="7" fill="#e74c3c"/><rect x="2" y="11" width="8" height="2" fill="#c0392b"/><rect x="3" y="13" width="6" height="1" fill="#c0392b"/><rect x="2" y="5" width="4" height="4" fill="#ff8888"/><rect x="3" y="4" width="2" height="2" fill="#ffbbbb"/></svg>', label: '50 зелий' },
-  { id: 1, minutes: 20, rewardType: 'gold',    amount: 1000, icon: '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>', label: '1000 золота' },
-  { id: 2, minutes: 30, rewardType: 'pixr',    amount: 5,    icon: '<img src="images/pixr.png" style="width:18px;height:18px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">', label: '5 PIXR' },
-  { id: 3, minutes: 60, rewardType: 'gold',    amount: 2000, icon: '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>', label: '2000 золота' },
-];
-
-var _specialTaskTimers = {};
-
-function openTaskModal() {
-  document.getElementById('taskModal').classList.remove('hidden');
-  renderTaskModal();
-}
-function closeTaskModal() {
-  document.getElementById('taskModal').classList.add('hidden');
-}
-
-function renderTaskModal() {
-  var body = document.getElementById('taskModalBody');
-  if (!body) return;
-
-  var today = new Date().toISOString().slice(0, 10);
-  if (!G.dailyTasks || G.dailyTasks.date !== today) {
-    G.dailyTasks = { date: today, seconds: 0, claimed: [] };
-  }
-  var mins    = Math.floor((G.dailyTasks.seconds || 0) / 60);
-  var claimed = G.dailyTasks.claimed || [];
-
-  var html = '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">ЕЖЕДНЕВНЫЕ (сброс в полночь)</div>';
-
-  DAILY_MILESTONES.forEach(function(m) {
-    var done  = claimed.indexOf(m.id) !== -1;
-    var avail = !done && mins >= m.minutes;
-    var pct   = Math.min(100, Math.floor((mins / m.minutes) * 100));
-    html +=
-      '<div class="task-row' + (done ? ' task-done' : avail ? ' task-avail' : '') + '">' +
-        '<div class="task-row-left">' +
-          '<div class="task-title">⏱ ' + m.minutes + ' мин в игре</div>' +
-          '<div class="task-progress-wrap">' +
-            '<div class="task-progress-bar"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>' +
-            '<span class="task-progress-lbl">' + Math.min(mins, m.minutes) + '/' + m.minutes + 'м</span>' +
-          '</div>' +
-        '</div>' +
-        '<div class="task-row-right">' +
-          '<div class="task-reward-lbl">' + m.icon + ' ' + m.amount + '</div>' +
-          (done ? '<span class="task-done-lbl">✓</span>' :
-           avail ? '<button class="task-claim-btn" onclick="claimDailyTask(' + m.id + ')">Забрать</button>' :
-           '<span class="task-locked-lbl">' + m.minutes + 'м</span>') +
-        '</div>' +
-      '</div>';
-  });
-
-  html += '<div id="specialTasksSection" style="margin-top:16px;">' +
-    '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">СПЕЦИАЛЬНЫЕ</div>' +
-    '<div style="text-align:center;padding:16px;color:#445;font-size:11px;">Загрузка...</div></div>';
-
-  body.innerHTML = html;
-
-  if (!window.GameSync || !window.GameSync.state.online) {
-    document.getElementById('specialTasksSection').innerHTML =
-      '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">СПЕЦИАЛЬНЫЕ</div>' +
-      '<div style="text-align:center;padding:16px;color:#445;font-size:11px;">Доступно только онлайн</div>';
-    return;
-  }
-
-  fetch(window.GameSync._API + '/api/tasks', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT }),
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(r) {
-    if (!r.ok) return;
-    var sec = document.getElementById('specialTasksSection');
-    if (!sec) return;
-    sec.innerHTML = _buildSpecialHtml(r.tasks, r.specialTasksClaimed || {});
-  })
-  .catch(function() {
-    var sec = document.getElementById('specialTasksSection');
-    if (sec) sec.innerHTML = '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">СПЕЦИАЛЬНЫЕ</div>' +
-      '<div style="color:#f44;text-align:center;padding:16px;font-size:11px;">Нет соединения</div>';
-  });
-}
-
-function _buildSpecialHtml(tasks, claimed) {
-  var head = '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">СПЕЦИАЛЬНЫЕ</div>';
-  if (!tasks || !tasks.length) {
-    return head + '<div style="text-align:center;padding:16px;color:#445;font-size:11px;">Нет активных заданий</div>';
-  }
-  var _svgCoin  = '<svg width="16" height="16" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>';
-  var _imgPixr  = '<img src="images/pixr.png" style="width:16px;height:16px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">';
-  var _imgGram  = '<img src="images/gram.png" style="width:16px;height:16px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">';
-  var _svgPotion= '<svg width="16" height="16" viewBox="0 0 12 14" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="4" height="2" fill="#aaa"/><rect x="3" y="1" width="6" height="2" fill="#ccc"/><rect x="2" y="3" width="8" height="1" fill="#e74c3c"/><rect x="1" y="4" width="10" height="7" fill="#e74c3c"/><rect x="2" y="11" width="8" height="2" fill="#c0392b"/><rect x="3" y="13" width="6" height="1" fill="#c0392b"/><rect x="2" y="5" width="4" height="4" fill="#ff8888"/><rect x="3" y="4" width="2" height="2" fill="#ffbbbb"/></svg>';
-  var _svgGift  = '<svg width="16" height="16" viewBox="0 0 12 12" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="1" y="4" width="10" height="7" fill="#9b59b6"/><rect x="2" y="5" width="8" height="5" fill="#c080ff"/><rect x="0" y="3" width="12" height="3" fill="#7d3c98"/><rect x="5" y="0" width="2" height="4" fill="#f5c542"/><rect x="3" y="1" width="2" height="2" fill="#f5c542"/><rect x="7" y="1" width="2" height="2" fill="#f5c542"/><rect x="5" y="3" width="2" height="8" fill="#f5c542"/></svg>';
-  var icons = { gold: _svgCoin, pixr: _imgPixr, potions: _svgPotion, gram: _imgGram };
-  var html  = head;
-  tasks.forEach(function(task) {
-    var done  = !!(claimed[task.taskId]);
-    var timer = _specialTaskTimers[task.taskId];
-    var ic    = icons[task.rewardType] || _svgGift;
-    var action;
-    if (done) {
-      action = '<span class="task-done-lbl">✓</span>';
-    } else if (timer && timer.remaining > 0) {
-      action = '<span class="task-timer-lbl" id="stTimer_' + task.taskId + '">⏱ ' + timer.remaining + 'с</span>';
-    } else if (timer && timer.remaining <= 0) {
-      action = '<button class="task-claim-btn" onclick="claimSpecialTask(\'' + task.taskId + '\')">Забрать</button>';
-    } else if (task.link) {
-      action = '<button class="task-go-btn" onclick="startSpecialTask(\'' + task.taskId + '\',\'' + task.link.replace(/'/g,"\\'") + '\')">' + (task.linkText || 'Перейти') + '</button>';
-    } else {
-      action = '<button class="task-claim-btn" onclick="claimSpecialTask(\'' + task.taskId + '\')">Забрать</button>';
-    }
-    html +=
-      '<div class="task-row' + (done ? ' task-done' : '') + '">' +
-        '<div class="task-row-left">' +
-          '<div class="task-title">' + task.title + '</div>' +
-          (task.description ? '<div class="task-desc">' + task.description + '</div>' : '') +
-        '</div>' +
-        '<div class="task-row-right">' +
-          '<div class="task-reward-lbl">' + ic + ' ' + task.rewardAmount + '</div>' +
-          action +
-        '</div>' +
-      '</div>';
-  });
-  return html;
-}
-
-function startSpecialTask(taskId, link) {
-  if (link) {
-    try {
-      if (window.Telegram && window.Telegram.WebApp && link.startsWith('https://t.me/')) {
-        window.Telegram.WebApp.openTelegramLink(link);
-      } else { window.open(link, '_blank'); }
-    } catch(e) { window.open(link, '_blank'); }
-  }
-  if (_specialTaskTimers[taskId] && _specialTaskTimers[taskId].remaining > 0) return;
-  _specialTaskTimers[taskId] = { remaining: 20 };
-  var iv = setInterval(function() {
-    var t = _specialTaskTimers[taskId];
-    if (!t) { clearInterval(iv); return; }
-    t.remaining--;
-    var el = document.getElementById('stTimer_' + taskId);
-    if (t.remaining > 0) {
-      if (el) el.textContent = '⏱ ' + t.remaining + 'с';
-    } else {
-      clearInterval(iv);
-      if (el) {
-        var btn = document.createElement('button');
-        btn.className = 'task-claim-btn';
-        btn.textContent = 'Забрать';
-        btn.onclick = function() { claimSpecialTask(taskId); };
-        el.parentNode.replaceChild(btn, el);
-      }
-    }
-  }, 1000);
-}
-
-function claimDailyTask(milestoneId) {
-  if (!window.GameSync || !window.GameSync.state.online) return;
-  fetch(window.GameSync._API + '/api/tasks/daily/claim', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT, milestoneId: milestoneId }),
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(r) {
-    if (!r.ok) { _taskToast('Ошибка: ' + (r.error || '?')); return; }
-    var rw = r.reward;
-    if (rw.type === 'gold')    G.gold    = (G.gold    || 0) + rw.amount;
-    if (rw.type === 'potions') G.potions = (G.potions || 0) + rw.amount;
-    if (rw.type === 'pixr')    G.pixr    = (G.pixr    || 0) + rw.amount;
-    if (rw.type === 'gram')    G.gram    = (G.gram    || 0) + rw.amount;
-    if (!G.dailyTasks) G.dailyTasks = { date: new Date().toISOString().slice(0,10), seconds:0, claimed:[] };
-    if (G.dailyTasks.claimed.indexOf(milestoneId) === -1) G.dailyTasks.claimed.push(milestoneId);
-    updateHUD();
-    _taskToast('+' + rw.amount + ' ' + (rw.type==='gold'?'золота':rw.type==='potions'?'зелий':'PIXR') + ' получено!');
-    renderTaskModal();
-  })
-  .catch(function() { _taskToast('Нет соединения'); });
-}
-
-function claimSpecialTask(taskId) {
-  if (!window.GameSync || !window.GameSync.state.online) return;
-  fetch(window.GameSync._API + '/api/tasks/special/claim', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT, taskId: taskId }),
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(r) {
-    if (!r.ok) { _taskToast('Ошибка: ' + (r.error || '?')); return; }
-    var rw = r.reward;
-    if (rw.type === 'gold')    G.gold    = (G.gold    || 0) + rw.amount;
-    if (rw.type === 'potions') G.potions = (G.potions || 0) + rw.amount;
-    if (rw.type === 'pixr')    G.pixr    = (G.pixr    || 0) + rw.amount;
-    if (rw.type === 'gram')    G.gram    = (G.gram    || 0) + rw.amount;
-    if (!G.specialTasksClaimed) G.specialTasksClaimed = {};
-    G.specialTasksClaimed[taskId] = Date.now();
-    delete _specialTaskTimers[taskId];
-    updateHUD();
-    _taskToast('+' + rw.amount + ' ' + rw.type + ' получено!');
-    renderTaskModal();
-  })
-  .catch(function() { _taskToast('Нет соединения'); });
-}
-
-function _taskToast(msg) {
-  var fu = document.getElementById('floorUnlock');
-  var sub = document.getElementById('fuText');
-  if (!fu || !sub) return;
-  fu.querySelector('.fu-title').textContent = '📋 ' + msg;
-  sub.textContent = '';
-  fu.classList.remove('show'); void fu.offsetWidth; fu.classList.add('show');
-  setTimeout(function() { fu.classList.remove('show'); }, 2500);
-}
-// ═══════════════════════════════
-//  ВКЛАДКА БОССОВ
-// ═══════════════════════════════
-function renderBossTab() {
-  var body = document.getElementById('bossBody');
-  if (!body) return;
-  var cp       = calcCP();
-  var boss     = G.boss || { floor: 1, lastFightTime: 0 };
-  var canFight = typeof bossCanFight === 'function' ? bossCanFight() : true;
-  var nextIn   = typeof bossNextFightIn === 'function' ? bossNextFightIn() : null;
-  var html     = '';
-
-  html += '<div style="font-size:11px;color:#778;margin-bottom:12px;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid #2a2a5a;display:flex;justify-content:space-between;align-items:center;">';
-  html += '<span>CP: <strong style="color:#fa0">' + cp + '</strong></span>';
-  if (canFight) {
-    html += '<span style="color:#2ecc71;font-size:10px;">✅ Можно вызвать</span>';
-  } else {
-    html += '<span style="color:#e74c3c;font-size:10px;">⏳ ' + nextIn + '</span>';
-  }
-  html += '</div>';
-
-  BOSS_DEFS.forEach(function(b) {
-    var isUnlocked = cp >= b.cpReq;
-    var isCurrent  = boss.floor === b.id;
-    var isPast     = boss.floor > b.id;
-    var pixr  = Math.floor(Math.pow(2, b.id - 1));
-    var gold  = Math.floor(1000 * Math.pow(2, b.id - 1));
-    var rarNames = ['Обычный','Необычный','Редкий','Эпический','Легендарный'];
-    var rarName  = rarNames[Math.min(b.id - 1, 4)];
-
-    var borderColor = '#2a2a5a', extraStyle = '';
-    if (isCurrent && isUnlocked) { borderColor = '#e74c3c'; extraStyle = 'box-shadow:0 0 12px rgba(231,76,60,0.2);'; }
-    else if (isPast)             { borderColor = '#2a4a3a'; }
-    else if (!isUnlocked)        { extraStyle = 'opacity:0.5;'; }
-
-    html += '<div style="margin-bottom:12px;border-radius:10px;border:1.5px solid ' + borderColor + ';' + extraStyle + 'overflow:hidden;">';
-    // Заголовок
-    html += '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.04);border-bottom:1px solid #1a1a35;">';
-    html += '<span style="font-size:26px;line-height:1;">' + b.emoji + '</span>';
-    html += '<div style="flex:1;"><div style="font-size:13px;font-weight:bold;color:' + (isCurrent ? '#e74c3c' : '#ccc') + ';">Босс ' + b.id + ': ' + b.name;
-    if (isCurrent) html += ' <span style="font-size:9px;color:#e74c3c;border:1px solid #e74c3c44;padding:1px 4px;border-radius:3px;margin-left:4px;">ТЕКУЩИЙ</span>';
-    html += '</div><div style="font-size:10px;color:#778;margin-top:2px;">HP: ' + b.hp.toLocaleString() + ' · ATK: ' + b.atk + ' · CP: ' + b.cpReq.toLocaleString() + '</div></div>';
-    if (!isUnlocked) html += '<div style="font-size:9px;color:#f88;text-align:right;min-width:44px;">🔒<br>+' + (b.cpReq - cp) + ' CP</div>';
-    html += '</div>';
-    // Награды
-    html += '<div style="padding:8px 12px 10px;background:rgba(0,0,0,0.15);">';
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:8px;">';
-    html += '<div style="background:rgba(255,68,204,0.07);border:1px solid #4a2a5a;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">PIXR</div><div style="font-size:13px;font-weight:bold;color:#ff44cc;">' + pixr + '</div></div>';
-    html += '<div style="background:rgba(245,197,66,0.07);border:1px solid #4a3a10;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">Золото</div><div style="font-size:11px;font-weight:bold;color:#f5c542;">' + (gold >= 1000 ? (gold/1000).toFixed(0)+'K' : gold) + '</div></div>';
-    html += '<div style="background:rgba(167,139,250,0.07);border:1px solid #3a2a6a;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">Предмет</div><div style="font-size:9px;font-weight:bold;color:#a78bfa;">' + rarName + '</div></div>';
-    html += '</div>';
-    // Кнопка
-    if (!isUnlocked) {
-      html += '<div style="padding:9px;font-size:11px;border-radius:8px;border:1px solid #333;background:rgba(255,255,255,0.02);color:#446;text-align:center;">🔒 Нужно ' + b.cpReq.toLocaleString() + ' CP</div>';
-    } else if (canFight) {
-      html += '<button onclick="callBoss(' + b.id + ')" style="width:100%;padding:10px;font-size:13px;font-family:Courier New,monospace;border-radius:8px;border:1.5px solid #e74c3c;background:rgba(231,76,60,0.15);color:#e74c3c;cursor:pointer;font-weight:bold;">⚔️ Вызвать босса</button>';
-    } else {
-      html += '<div style="padding:9px;font-size:11px;border-radius:8px;border:1px solid #e74c3c44;background:rgba(231,76,60,0.05);color:#e74c3c;text-align:center;">⏳ Следующий бой через ' + nextIn + '</div>';
-    }
-    html += '</div></div>';
-  });
-
-  body.innerHTML = html;
-}
-
-function callBoss(bossId) {
-  if (typeof spawnBoss === 'function') {
-    switchTab('game');
-    setTimeout(function() { spawnBoss(bossId); }, 100);
-  }
 }

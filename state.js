@@ -50,11 +50,18 @@ G.baseStats = { atk: 10, def: 5, spd: 3, hp: 100, crit: 5, dodge: 3, atkSpd: 1.0
 // ── Расчёт боевой мощи (CP) ──
 function calcCP() {
   const s = G.stats;
-  return Math.floor(
+  const cp = Math.floor(
     s.atk * 4 + s.def * 3 + s.hp * 0.5 + s.spd * 6 + s.crit * 8 + s.dodge * 8
     + ((s.atkSpd || 1.0) - 1.0) * 200
     + G.level * 20
   );
+  
+  // Мгновенное сохранение CP (для лидерборда)
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ cp: cp });
+  }
+  
+  return cp;
 }
 
 // ── Конфигурации этажей ──
