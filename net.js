@@ -327,6 +327,8 @@
   //  ИНИЦИАЛИЗАЦИЯ
   // ═══════════════════════════════
   function init() {
+    console.log('🔄 [net] Инициализация...');
+    
     // Получаем initData из Telegram
     if (window.Telegram && window.Telegram.WebApp) {
       try {
@@ -336,18 +338,48 @@
         var unsafe = window.Telegram.WebApp.initDataUnsafe;
         if (unsafe && unsafe.user) {
           currentTgId = String(unsafe.user.id);
+          console.log('✅ [net] Пользователь:', currentTgId);
         }
       } catch (e) {
         console.error('❌ Ошибка Telegram:', e.message);
       }
     }
 
+    // Функция для скрытия загрузки
+    function hideLoading() {
+      var loading = document.getElementById('loadingScreen');
+      if (loading) {
+        loading.classList.add('fade-out');
+        setTimeout(function() { 
+          loading.style.display = 'none'; 
+        }, 500);
+      }
+    }
+
     if (!TG_INIT) {
-      console.warn('⚠️ Нет initData — демо-режим');
+      console.warn('⚠️ [net] Нет initData — демо-режим');
       currentTgId = 'demo_' + Date.now();
       var emptySave = createEmptySave();
       applyServerData(emptySave);
-      if (typeof startGame === 'function') startGame();
+      
+      // Показываем экран выбора персонажа если нет персонажа
+      if (!G.charId) {
+        var cs = document.getElementById('charSelect');
+        if (cs) cs.classList.remove('hidden');
+        hideLoading();
+      }
+      
+      if (typeof startGame === 'function' && G.charId && !window._gameStarted) {
+        window._gameStarted = true;
+        setTimeout(function() {
+          try {
+            startGame();
+            hideLoading();
+          } catch(e) {
+            console.error('❌ [net] Ошибка старта игры:', e.message);
+          }
+        }, 100);
+      }
       return;
     }
 
@@ -355,10 +387,20 @@
     loadFromServer()
       .then(function() {
         if (G.charId) {
-          if (typeof startGame === 'function') startGame();
+          if (typeof startGame === 'function' && !window._gameStarted) {
+            window._gameStarted = true;
+            setTimeout(function() {
+              try {
+                startGame();
+              } catch(e) {
+                console.error('❌ [net] Ошибка старта игры:', e.message);
+              }
+            }, 100);
+          }
         } else {
           var cs = document.getElementById('charSelect');
           if (cs) cs.classList.remove('hidden');
+          hideLoading();
         }
         startSaveLoop();
       })
@@ -369,6 +411,10 @@
           status.textContent = '❌ Ошибка подключения к серверу';
           status.style.color = '#e74c3c';
         }
+        // Показываем экран выбора персонажа в случае ошибки
+        var cs = document.getElementById('charSelect');
+        if (cs) cs.classList.remove('hidden');
+        hideLoading();
       });
   }
 
