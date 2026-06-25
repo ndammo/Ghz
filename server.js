@@ -414,8 +414,19 @@ app.post('/api/save', async (req, res) => {
       const serverUpdatedAt = currentDoc.data.updatedAt || 0;
       
       if (serverUpdatedAt > clientUpdatedAt) {
-        console.log(`⚠️ [save] Игнорируем устаревшие данные для ${tg.id} (сервер: ${serverUpdatedAt}, клиент: ${clientUpdatedAt})`);
+        console.log(`⚠️ [save] Игнорируем устаревшие данные для ${tg.id}`);
         return res.json({ ok: true, updatedAt: serverUpdatedAt, ignored: true });
+      }
+
+      // ✅ Защита от перезаписи админских изменений
+      const adminUpdatedAt = (currentDoc.data._adminUpdatedAt) || 0;
+      if (adminUpdatedAt > clientUpdatedAt) {
+        console.log(`🛡️ [save] Мёрж с админскими изменениями для ${tg.id}`);
+        if (currentDoc.data.gram      !== undefined) data.gram      = currentDoc.data.gram;
+        if (currentDoc.data.gold      !== undefined) data.gold      = currentDoc.data.gold;
+        if (currentDoc.data.pixr      !== undefined) data.pixr      = currentDoc.data.pixr;
+        if (currentDoc.data.inventory !== undefined) data.inventory = currentDoc.data.inventory;
+        data._adminUpdatedAt = adminUpdatedAt;
       }
     }
 
@@ -425,21 +436,17 @@ app.post('/api/save', async (req, res) => {
       { tgId: tg.id },
       { 
         $set: {
-          username: tg.username, 
+          username:  tg.username, 
           firstName: tg.firstName,
-          charId: data.charId || null, 
-          data: data,
-          level: Number(data.level) || 1,
-          cp:    Number(data.cp)    || 0,
-          floor: Number(data.floor) || 1,
+          charId:    data.charId || null, 
+          data:      data,
+          level:     Number(data.level) || 1,
+          cp:        Number(data.cp)    || 0,
+          floor:     Number(data.floor) || 1,
           updatedAt: data.updatedAt,
         }
       },
-      { 
-        upsert: true,
-        new: false,
-        lean: true,
-      }
+      { upsert: true, new: false, lean: true }
     );
 
     const duration = Date.now() - startTime;
@@ -455,6 +462,98 @@ app.post('/api/save', async (req, res) => {
       error: 'server_error',
       message: e.message
     });
+  }
+});
+
+
+// ═══════════════════════════════
+//  ДЕЛЬТА-СОХРАНЕНИЕ — только изменившиеся поля
+// ═══════════════════════════════
+app.post('/api/save/delta', async (req, res) => {
+  const startTime = Date.now();
+
+  try {
+    const tg = authUser(req, res);
+    if (!tg) return;
+
+    if (rateLimit(tg.id, 10, 10000)) {
+      return res.status(429).json({ ok: false, error: 'rate_limit' });
+    }
+
+    const delta = req.body && req.body.delta;
+    if (!delta || typeof delta !== 'object') {
+      return res.status(400).json({ ok: false, error: 'bad_delta' });
+    }
+
+    if (delta.tgId && delta.tgId !== tg.id) {
+      return res.status(403).json({ ok: false, error: 'user_mismatch' });
+    }
+
+    // Загружаем текущий документ
+    const currentDoc = await Save.findOne({ tgId: tg.id }).lean();
+    if (!currentDoc || !currentDoc.data) {
+      return res.status(404).json({ ok: false, error: 'no_save' });
+    }
+
+    const srv = currentDoc.data;
+    const clientUpdatedAt = delta.updatedAt || 0;
+    const serverUpdatedAt = srv.updatedAt || 0;
+
+    // Если сервер свежее клиента — игнорируем дельту
+    if (serverUpdatedAt > clientUpdatedAt) {
+      console.log(`⚠️ [delta] Игнорируем устаревшую дельту для ${tg.id}`);
+      return res.json({ ok: true, updatedAt: serverUpdatedAt, ignored: true });
+    }
+
+    // ✅ Мёржим дельту с текущими данными
+    const merged = Object.assign({}, srv);
+    const ALLOWED_DELTA_FIELDS = [
+      'hp', 'gold', 'xp', 'xpNeeded', 'killCount', 'potions',
+      'level', 'floor', 'maxFloor', 'pixr', 'cp', 'charId'
+    ];
+    ALLOWED_DELTA_FIELDS.forEach(function(field) {
+      if (delta[field] !== undefined) merged[field] = delta[field];
+    });
+    merged.updatedAt = Date.now();
+    merged.tgId = tg.id;
+
+    // ✅ Если были админские изменения — клиент не знал, берём серверные значения
+    const adminUpdatedAt = srv._adminUpdatedAt || 0;
+    const syncToClient = {};
+    if (adminUpdatedAt > clientUpdatedAt) {
+      console.log(`🛡️ [delta] Мёрж с админскими изменениями для ${tg.id}`);
+      if (srv.gram      !== undefined) { merged.gram      = srv.gram;      syncToClient.gram      = srv.gram; }
+      if (srv.gold      !== undefined) { merged.gold      = srv.gold;      syncToClient.gold      = srv.gold; }
+      if (srv.pixr      !== undefined) { merged.pixr      = srv.pixr;      syncToClient.pixr      = srv.pixr; }
+      if (srv.inventory !== undefined) { merged.inventory = srv.inventory; syncToClient.inventory = srv.inventory; }
+      merged._adminUpdatedAt = adminUpdatedAt;
+    }
+
+    await Save.findOneAndUpdate(
+      { tgId: tg.id },
+      {
+        $set: {
+          data: merged,
+          level:     Number(merged.level) || 1,
+          cp:        Number(merged.cp)    || 0,
+          floor:     Number(merged.floor) || 1,
+          updatedAt: merged.updatedAt,
+        }
+      },
+      { upsert: false, new: false, lean: true }
+    );
+
+    const duration = Date.now() - startTime;
+    console.log(`✅ [delta] Сохранено для ${tg.id} (${duration}ms), полей: ${Object.keys(delta).length}`);
+
+    const response = { ok: true, updatedAt: merged.updatedAt };
+    if (Object.keys(syncToClient).length > 0) response.sync = syncToClient;
+    res.json(response);
+
+  } catch (e) {
+    const duration = Date.now() - startTime;
+    console.error(`❌ [delta] ОШИБКА (${duration}ms):`, e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
