@@ -1189,7 +1189,6 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     
     updateData.updatedAt = Date.now();
     
-    // 🔥 Используем $set для точечного обновления
     const result = await Save.findOneAndUpdate(
       { tgId: tgId },
       { $set: updateData },
@@ -1204,7 +1203,20 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     
     await logAdminAction(req.admin.login, 'update_user', tgId, updates);
     
-    res.json({ ok: true });
+    // 🔥 ИЗМЕНЕНИЕ: возвращаем полные данные пользователя
+    res.json({ 
+      ok: true, 
+      user: {
+        tgId: result.tgId,
+        username: result.username,
+        firstName: result.firstName,
+        charId: result.charId,
+        level: result.level,
+        cp: result.cp,
+        floor: result.floor,
+        data: result.data
+      }
+    });
   } catch (e) {
     console.error('❌ [admin] update error:', e.message);
     res.status(500).json({ ok: false, error: e.message });
