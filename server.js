@@ -916,6 +916,11 @@ app.post('/api/wallet/exchange', async (req, res) => {
 //  POST /bot/transaction/:txId/:action
 //  Защищён BOT_TOKEN в заголовке x-bot-secret
 // ═══════════════════════════════
+// ═══════════════════════════════
+//  БОТ: подтверждение/отклонение транзакций
+//  POST /bot/transaction/:txId/:action
+//  Защищён BOT_TOKEN в заголовке x-bot-secret
+// ═══════════════════════════════
 app.post('/bot/transaction/:txId/:action', async (req, res) => {
   const secret = req.headers['x-bot-secret'];
   if (!secret || secret !== process.env.BOT_TOKEN) {
@@ -936,10 +941,20 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
       tx.status = 'approved';
       tx.approvedAt = Date.now();
       const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
-      await Save.findOneAndUpdate(
+      
+      console.log(`💰 [bot] Начисление ${gramDelta} GRAM пользователю ${tx.userId} (tx: ${txId})`);
+      
+      // 🔥 ИСПРАВЛЕНИЕ: добавляем updatedAt и new: true
+      const result = await Save.findOneAndUpdate(
         { tgId: tx.userId },
-        { $inc: { 'data.gram': gramDelta } }
+        { 
+          $inc: { 'data.gram': gramDelta },
+          $set: { updatedAt: Date.now() }
+        },
+        { new: true }
       );
+      
+      console.log(`💰 [bot] Новый баланс пользователя ${tx.userId}: ${result?.data?.gram || 0} GRAM`);
     } else {
       tx.status = 'rejected';
       tx.rejectedAt = Date.now();
@@ -948,9 +963,10 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
     await tx.save();
     await logAdminAction('bot', action + '_transaction', tx.userId, { txId, amount: tx.amount });
 
+    // Уведомляем пользователя
     if (bot) {
       const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
-      const msg = `💰 *Транзакция ${statusText}*\n\n*Тип:* ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}\n*Сумма:* ${tx.amount} GRAM\n${action === 'approve' ? '✅ Баланс обновлён!' : '❌ Средства не зачислены.'}`;
+      const msg = `💰 *Транзакция ${statusText}*\n\n*Тип:* ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}\n*Сумма:* ${tx.amount} GRAM\n${action === 'approve' ? '✅ Баланс обновлён!' : '❌ Средства не зачислены.'}\n\n🔄 *Для обновления баланса перезапустите игру!*`;
       try { await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' }); } catch (e) {}
     }
 
@@ -960,7 +976,6 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
-
 // ═══════════════════════════════
 //  АДМИН-ПАНЕЛЬ
 // ═══════════════════════════════
