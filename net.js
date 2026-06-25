@@ -220,17 +220,21 @@
   }
 
   // 🔥 ИСПРАВЛЕНИЕ: данные могут быть на корневом уровне или внутри data
-  var data = s.data || s;
+  // В server.js данные приходят как { data: {...} } через /api/load
+  // Но также могут приходить как корневой объект
+  var d = s.data || s;  // ← универсальный доступ к данным
 
-  if (data.charId && typeof CHARS !== 'undefined' && CHARS[data.charId]) {
-    G_CHAR = CHARS[data.charId];
-    G.charId = data.charId;
+  // --- ПЕРСОНАЖ ---
+  if (d.charId && typeof CHARS !== 'undefined' && CHARS[d.charId]) {
+    G_CHAR = CHARS[d.charId];
+    G.charId = d.charId;
     if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
   }
 
+  // --- БАЗОВЫЕ СТАТЫ ---
   G.upg = Object.assign(
     { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 },
-    data.upg || {}
+    d.upg || {}
   );
 
   if (G_CHAR && typeof UPG_DEFS !== 'undefined') {
@@ -243,7 +247,7 @@
         );
       }
     });
-    var lvBonuses = num(data.level, 1) - 1;
+    var lvBonuses = num(d.level, 1) - 1;
     if (lvBonuses > 0) {
       G.baseStats.atk    = (G.baseStats.atk    || 0) + lvBonuses * 2;
       G.baseStats.def    = (G.baseStats.def    || 0) + lvBonuses * 1;
@@ -252,56 +256,70 @@
         ((G.baseStats.atkSpd || 1.0) + lvBonuses * 0.02).toFixed(4)
       );
     }
-  } else if (data.baseStats) {
-    G.baseStats = Object.assign({}, data.baseStats);
+  } else if (d.baseStats) {
+    G.baseStats = Object.assign({}, d.baseStats);
   }
 
-  G.skills = data.skills || {};
-  G.potionLv = num(data.potionLv, 0);
-  G.potionThreshold = num(data.potionThreshold, 30);
-  G.floor = num(data.floor, G.floor);
-  G.level = num(data.level, G.level);
-  G.maxFloor = num(data.maxFloor, G.maxFloor);
-  
-  // 🔥 ИСПРАВЛЕНИЕ: берем pixr/gram/gold из data
-  G.pixr = num(data.pixr, G.pixr);
-  G.gram = num(data.gram, G.gram);
-  G.gold = num(data.gold, G.gold);
-  G.xp = num(data.xp, G.xp);
-  G.killCount = num(data.killCount, G.killCount);
-  G.potions = num(data.potions, G.potions);
+  // --- НАВЫКИ И УЛУЧШЕНИЯ ---
+  G.skills = d.skills || {};
+  G.potionLv = num(d.potionLv, 0);
+  G.potionThreshold = num(d.potionThreshold, 30);
 
-  G.bp = data.bp || { active: false, claimed: [] };
+  // --- ПРОГРЕСС ---
+  G.floor = num(d.floor, G.floor);
+  G.level = num(d.level, G.level);
+  G.maxFloor = num(d.maxFloor, G.maxFloor);
+
+  // 🔥 ВАЖНО: все валюты берём из d (который может быть d.data или корневой объект)
+  G.pixr = num(d.pixr, G.pixr);
+  G.gram = num(d.gram, G.gram);
+  G.gold = num(d.gold, G.gold);
+  G.xp = num(d.xp, G.xp);
+  G.killCount = num(d.killCount, G.killCount);
+  G.potions = num(d.potions, G.potions);
+
+  // --- ПРЕМИУМ И БП ---
+  G.bp = d.bp || { active: false, claimed: [] };
   if (!G.bp.claimed) G.bp.claimed = [];
-  G.prem = data.prem || { tier: null, expiresAt: 0 };
-  G.boss = data.boss || { floor: 1, lastFightTime: 0 };
+  G.prem = d.prem || { tier: null, expiresAt: 0 };
+  G.boss = d.boss || { floor: 1, lastFightTime: 0 };
   if (!G.boss.floor) G.boss.floor = 1;
-  G.invFilter = data.invFilter || 'all';
-  G.dailyTasks = data.dailyTasks || { date: '', seconds: 0, claimed: [] };
-  G.specialTasksClaimed = data.specialTasksClaimed || {};
 
-  G.inventory = (data.inventory || []).map(function (it) {
-    var c = clone(it); c._equipped = false; return c;
+  // --- ИНВЕНТАРЬ ---
+  G.invFilter = d.invFilter || 'all';
+  G.dailyTasks = d.dailyTasks || { date: '', seconds: 0, claimed: [] };
+  G.specialTasksClaimed = d.specialTasksClaimed || {};
+
+  G.inventory = (d.inventory || []).map(function (it) {
+    var c = clone(it);
+    c._equipped = false;
+    return c;
   });
 
-  if (typeof data.invIdCounter === 'number') _invIdCounter = data.invIdCounter;
+  if (typeof d.invIdCounter === 'number') _invIdCounter = d.invIdCounter;
   G.inventory.forEach(function (i) {
     if (typeof i.id === 'number' && i.id > _invIdCounter) _invIdCounter = i.id;
   });
 
+  // --- ЭКИПИРОВКА ---
   G.equipped = { weapon: null, armor: null, ring: null, boots: null, helmet: null };
-  var eq = data.equipped || {};
+  var eq = d.equipped || {};
   EQUIP_SLOTS.forEach(function (slot) {
     var id = eq[slot];
     if (id == null) return;
     var it = G.inventory.find(function (i) { return i.id === id; });
-    if (it) { it._equipped = true; G.equipped[slot] = it; }
+    if (it) {
+      it._equipped = true;
+      G.equipped[slot] = it;
+    }
   });
 
+  // --- ПЕРЕСЧЁТ СТАТОВ ---
   if (typeof recalcStats === 'function') recalcStats();
-  
-  G.maxHp = num(data.maxHp, G.maxHp);
-  G.xpNeeded = num(data.xpNeeded, 0);
+
+  // --- HP И XP ---
+  G.maxHp = num(d.maxHp, G.maxHp);
+  G.xpNeeded = num(d.xpNeeded, 0);
   if (!G.xpNeeded || G.xpNeeded < 100) {
     var _xp = 100;
     for (var _lv = 1; _lv < G.level; _lv++) {
@@ -309,18 +327,19 @@
     }
     G.xpNeeded = _xp;
   }
-  
-  var hp = num(data.hp, G.maxHp);
+
+  var hp = num(d.hp, G.maxHp);
   if (hp <= 0) hp = Math.floor(G.maxHp * 0.3);
   G.hp = Math.max(1, Math.min(hp, G.maxHp));
 
+  // --- СИНХРОНИЗАЦИЯ ---
   SYNC.lastHp = G.hp;
   SYNC.lastGold = G.gold;
   SYNC.lastXp = G.xp;
   SYNC.lastKillCount = G.killCount;
   SYNC.lastPotions = G.potions;
 
-  console.log('✅ [applySnapshot] Загружено: gram=' + G.gram + ', gold=' + G.gold + ', pixr=' + G.pixr);
+  console.log('✅ [applySnapshot] Загружено: gram=' + G.gram + ', gold=' + G.gold + ', pixr=' + G.pixr + ', hp=' + G.hp);
   return true;
 }
 
