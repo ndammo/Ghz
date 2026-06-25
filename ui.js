@@ -99,76 +99,53 @@ function renderUpgrades() {
     '<span style="color:#445;font-size:9px;margin-left:auto">Шанс: ~1%</span></div>';
 
   var skillsHtml = skills.map(function(sk) {
-  var st      = getSkillState(sk.id);
-  var have    = countBooksInInv(sk.id);
-  
-  // ====== ВЫЧИСЛЯЕМ СТОИМОСТЬ ======
-  var isMax   = st.unlocked && st.level >= 5;
-  var costForDisplay;
-  var costForCheck;
-  
-  if (isMax) {
-    costForDisplay = 'MAX';
-    costForCheck = Infinity;
-  } else if (!st.unlocked) {
-    costForDisplay = '1';
-    costForCheck = 1;
-  } else {
-    var costMap = { 0: 5, 1: 10, 2: 20, 3: 40, 4: 100 };
-    costForDisplay = costMap[st.level] || '?';
-    costForCheck = costMap[st.level] || 999;
-  }
-  
-  var canUse  = have >= costForCheck && !isMax;
-  // ===================================
-  
-  var statusText = !st.unlocked ? '🔒 Заблокирован' : 'Lv.' + st.level + '/5';
-  var statusCol  = !st.unlocked ? '#554' : col;
-  var barPct     = st.unlocked ? (st.level / 5 * 100) : 0;
-  
-  // Текст кнопки
-  var nextAction;
-  if (isMax) {
-    nextAction = '✨ МАКС';
-  } else if (!st.unlocked) {
-    nextAction = '📖 Открыть (1 книга)';
-  } else {
-    var costMap = { 0: 5, 1: 10, 2: 20, 3: 40, 4: 100 };
-    var costForLevel = costMap[st.level] || '?';
-    nextAction = '⬆ Lv.' + st.level + '→' + (st.level+1) + ' (' + costForLevel + ' книг)';
-  }
-  
-  var btnStyle;
-  if (isMax)       btnStyle = 'border:1px solid #444;background:rgba(255,255,255,0.02);color:#555;cursor:not-allowed;opacity:0.5;';
-  else if (canUse) btnStyle = 'border:1.5px solid ' + (st.unlocked ? col : '#a78bfa') + ';background:rgba(167,139,250,0.12);color:' + (st.unlocked ? col : '#a78bfa') + ';cursor:pointer;';
-  else             btnStyle = 'border:1px solid #333;background:rgba(255,255,255,0.02);color:#445;cursor:not-allowed;';
-  
-  var bonusDesc = '';
-  if      (sk.id === 'fire_fireball' || sk.id === 'light_smite') bonusDesc = '+10% урон / ур.';
-  else if (sk.id === 'fire_curse')    bonusDesc = '+3% снижение защиты / ур.';
-  else if (sk.id === 'fire_haste')    bonusDesc = '+0.5с длительность / ур.';
-  else if (sk.id === 'light_shield')  bonusDesc = '+3% защита / ур.';
-  else if (sk.id === 'light_reflect') bonusDesc = '+1% отражение / ур.';
-  else if (sk.id === 'water_burst')   bonusDesc = '+1 выстрел / 2 ур.';
-  else if (sk.id === 'water_critup')  bonusDesc = '+3% крит / ур.';
-  else if (sk.id === 'water_freeze')  bonusDesc = '+0.4с заморозка / ур.';
-  
-  return '<div style="margin-bottom:12px;border-radius:10px;border:1.5px solid ' + (st.unlocked ? col + '55' : '#2a2a3a') + ';overflow:hidden;background:rgba(255,255,255,0.02);">' +
-    '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.04);">' +
-    '<img src="' + sk.icon + '" style="width:44px;height:44px;object-fit:contain;image-rendering:pixelated;flex-shrink:0;" onerror="this.style.opacity=0.3">' +
-    '<div style="flex:1;"><div style="font-size:13px;font-weight:bold;color:' + (st.unlocked ? '#ddd' : '#556') + '">' + sk.name + '</div>' +
-    '<div style="font-size:10px;color:#667;margin-top:2px;">' + sk.desc + ' · КД: ' + sk.cd + 'с</div>' +
-    '<div style="font-size:9px;color:#445;margin-top:2px;">' + bonusDesc + '</div></div>' +
-    '<div style="text-align:right;"><div style="font-size:12px;font-weight:bold;color:' + statusCol + '">' + statusText + '</div>' +
-    // ====== НОВОЕ ОТОБРАЖЕНИЕ КНИГ ======
-    '<div style="font-size:10px;color:' + (canUse ? '#a78bfa' : '#445') + ';margin-top:2px;">📖 ' + have + ' / ' + costForDisplay + '</div>' +
-    // ===================================
-    '</div></div>' +
-    '<div style="padding:8px 12px;"><div style="height:4px;background:#111;border-radius:2px;margin-bottom:8px;">' +
-    '<div style="height:4px;background:' + col + ';border-radius:2px;width:' + barPct + '%;transition:width .3s"></div></div>' +
-    '<button onclick="useSkillBook(\'' + sk.id + '\')" ' + (canUse ? '' : 'disabled') +
-    ' style="width:100%;padding:8px;font-size:11px;font-family:Courier New,monospace;border-radius:6px;' + btnStyle + '">' + nextAction + '</button></div></div>';
-}).join('');
+    var st      = getSkillState(sk.id);
+    var have    = countBooksInInv(sk.id);
+    var cost    = skillBookCost(st);
+    var isMax   = st.unlocked && st.level >= 5;
+    var canUse  = have >= cost && !isMax;
+    var statusText = !st.unlocked ? '🔒 Заблокирован' : 'Lv.' + st.level + '/5';
+    var statusCol  = !st.unlocked ? '#554' : col;
+    var barPct     = st.unlocked ? (st.level / 5 * 100) : 0;
+   
+ // ✅ НОВОЕ
+var nextAction;
+if (isMax) {
+  nextAction = '✨ МАКС';
+} else if (!st.unlocked) {
+  nextAction = '📖 Открыть (1 книга)';
+} else {
+  // Прогрессивная шкала: 5, 10, 20, 40, 100
+  var costMap = { 0: 5, 1: 10, 2: 20, 3: 40, 4: 100 };
+  var costForLevel = costMap[st.level] || '?';
+  nextAction = '⬆ Lv.' + st.level + '→' + (st.level+1) + ' (' + costForLevel + ' книг)';
+}
+    var btnStyle;
+    if (isMax)       btnStyle = 'border:1px solid #444;background:rgba(255,255,255,0.02);color:#555;cursor:not-allowed;opacity:0.5;';
+    else if (canUse) btnStyle = 'border:1.5px solid ' + (st.unlocked ? col : '#a78bfa') + ';background:rgba(167,139,250,0.12);color:' + (st.unlocked ? col : '#a78bfa') + ';cursor:pointer;';
+    else             btnStyle = 'border:1px solid #333;background:rgba(255,255,255,0.02);color:#445;cursor:not-allowed;';
+    var bonusDesc = '';
+    if      (sk.id === 'fire_fireball' || sk.id === 'light_smite') bonusDesc = '+10% урон / ур.';
+    else if (sk.id === 'fire_curse')    bonusDesc = '+3% снижение защиты / ур.';
+    else if (sk.id === 'fire_haste')    bonusDesc = '+0.5с длительность / ур.';
+    else if (sk.id === 'light_shield')  bonusDesc = '+3% защита / ур.';
+    else if (sk.id === 'light_reflect') bonusDesc = '+1% отражение / ур.';
+    else if (sk.id === 'water_burst')   bonusDesc = '+1 выстрел / 2 ур.';
+    else if (sk.id === 'water_critup')  bonusDesc = '+3% крит / ур.';
+    else if (sk.id === 'water_freeze')  bonusDesc = '+0.4с заморозка / ур.';
+    return '<div style="margin-bottom:12px;border-radius:10px;border:1.5px solid ' + (st.unlocked ? col + '55' : '#2a2a3a') + ';overflow:hidden;background:rgba(255,255,255,0.02);">' +
+      '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.04);">' +
+      '<img src="' + sk.icon + '" style="width:44px;height:44px;object-fit:contain;image-rendering:pixelated;flex-shrink:0;" onerror="this.style.opacity=0.3">' +
+      '<div style="flex:1;"><div style="font-size:13px;font-weight:bold;color:' + (st.unlocked ? '#ddd' : '#556') + '">' + sk.name + '</div>' +
+      '<div style="font-size:10px;color:#667;margin-top:2px;">' + sk.desc + ' · КД: ' + sk.cd + 'с</div>' +
+      '<div style="font-size:9px;color:#445;margin-top:2px;">' + bonusDesc + '</div></div>' +
+      '<div style="text-align:right;"><div style="font-size:12px;font-weight:bold;color:' + statusCol + '">' + statusText + '</div>' +
+      '<div style="font-size:10px;color:' + (have >= cost && !isMax ? '#a78bfa' : '#445') + ';margin-top:2px;">📖 ' + have + ' / ' + (isMax ? '—' : cost) + '</div></div></div>' +
+      '<div style="padding:8px 12px;"><div style="height:4px;background:#111;border-radius:2px;margin-bottom:8px;">' +
+      '<div style="height:4px;background:' + col + ';border-radius:2px;width:' + barPct + '%;transition:width .3s"></div></div>' +
+      '<button onclick="useSkillBook(\'' + sk.id + '\')" ' + (canUse ? '' : 'disabled') +
+      ' style="width:100%;padding:8px;font-size:11px;font-family:Courier New,monospace;border-radius:6px;' + btnStyle + '">📖 ' + nextAction + '</button></div></div>';
+  }).join('');
 
   body.innerHTML = header + tabBar + booksInfo + skillsHtml;
 }
