@@ -20,7 +20,7 @@
     return url.replace(/\/$/, '');
   })();
 
-  var EQUIP_SLOTS = ['weapon', 'armor', 'ring', 'boots', 'helmet'];
+  var EQUIP_SLOTS = ['weapon', 'body', 'legs', 'gloves', 'belt', 'ring', 'boots', 'helmet'];
   
   var INSTANT_FIELDS = [
     'inventory', 'equipped', 'upg', 'skills', 
