@@ -1065,15 +1065,15 @@ function initBot() {
     });
 
     // ── /ref ──
-    bot.onText(/\/ref/, (msg) => {
-      const userId = msg.from.id;
-      const refLink = 'https://t.me/' + BOT_USERNAME + '?startapp=' + userId;
-      bot.sendMessage(msg.chat.id,
-        '👥 **Твоя реферальная ссылка:**\n\n' +
-        '`' + refLink + '`',
-        { parse_mode: 'Markdown' }
-      );
-    });
+bot.onText(/\/ref/, (msg) => {
+  const userId = msg.from.id;
+  const refLink = 'https://t.me/' + BOT_USERNAME + '?start=' + userId;
+  bot.sendMessage(msg.chat.id,
+    '👥 **Твоя реферальная ссылка:**\n\n' +
+    '`' + refLink + '`',
+    { parse_mode: 'Markdown' }
+  );
+});
 
     // ── /profile ──
     bot.onText(/\/profile/, (msg) => {
@@ -1108,14 +1108,10 @@ function initBot() {
         bot.answerCallbackQuery(query.id).catch(() => {});
 
         if (data === 'ref') {
-          const refLink = 'https://t.me/' + BOT_USERNAME + '?startapp=' + userId;
-          bot.sendMessage(chatId,
-            '👥 **Твоя реферальная ссылка:**\n\n' +
-            '`' + refLink + '`',
-            { parse_mode: 'Markdown' }
-          );
-          return;
-        }
+  const refLink = 'https://t.me/' + BOT_USERNAME + '?start=' + userId;
+  bot.sendMessage(chatId, '👥 **Твоя реферальная ссылка:**\n\n`' + refLink + '`', { parse_mode: 'Markdown' });
+  return;
+}
 
         if (data === 'profile') {
           getPlayerProfile(userId).then((profile) => {
