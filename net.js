@@ -211,112 +211,118 @@
   // ═══════════════════════════════
 
   function applySnapshot(s) {
-    if (!s || typeof s !== 'object') return false;
+  if (!s || typeof s !== 'object') return false;
 
-    var currentTgId = getTgId();
-    if (s.tgId && currentTgId && s.tgId !== currentTgId) {
-      console.warn('⚠️ Игнорируем снапшот другого пользователя:', s.tgId);
-      return false;
-    }
+  var currentTgId = getTgId();
+  if (s.tgId && currentTgId && s.tgId !== currentTgId) {
+    console.warn('⚠️ Игнорируем снапшот другого пользователя:', s.tgId);
+    return false;
+  }
 
-    if (s.charId && typeof CHARS !== 'undefined' && CHARS[s.charId]) {
-      G_CHAR = CHARS[s.charId];
-      G.charId = s.charId;
-      if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
-    }
+  // 🔥 ИСПРАВЛЕНИЕ: данные могут быть на корневом уровне или внутри data
+  var data = s.data || s;
 
-    G.upg = Object.assign(
-      { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 },
-      s.upg || {}
-    );
+  if (data.charId && typeof CHARS !== 'undefined' && CHARS[data.charId]) {
+    G_CHAR = CHARS[data.charId];
+    G.charId = data.charId;
+    if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
+  }
 
-    if (G_CHAR && typeof UPG_DEFS !== 'undefined') {
-      G.baseStats = Object.assign({}, G_CHAR.baseStats);
-      UPG_DEFS.forEach(function(u) {
-        var lv = G.upg[u.id] || 0;
-        if (lv > 0) {
-          G.baseStats[u.stat] = parseFloat(
-            ((G.baseStats[u.stat] || 0) + u.bonus * lv).toFixed(4)
-          );
-        }
-      });
-      var lvBonuses = num(s.level, 1) - 1;
-      if (lvBonuses > 0) {
-        G.baseStats.atk    = (G.baseStats.atk    || 0) + lvBonuses * 2;
-        G.baseStats.def    = (G.baseStats.def    || 0) + lvBonuses * 1;
-        G.baseStats.hp     = (G.baseStats.hp     || 0) + lvBonuses * 10;
-        G.baseStats.atkSpd = parseFloat(
-          ((G.baseStats.atkSpd || 1.0) + lvBonuses * 0.02).toFixed(4)
+  G.upg = Object.assign(
+    { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 },
+    data.upg || {}
+  );
+
+  if (G_CHAR && typeof UPG_DEFS !== 'undefined') {
+    G.baseStats = Object.assign({}, G_CHAR.baseStats);
+    UPG_DEFS.forEach(function(u) {
+      var lv = G.upg[u.id] || 0;
+      if (lv > 0) {
+        G.baseStats[u.stat] = parseFloat(
+          ((G.baseStats[u.stat] || 0) + u.bonus * lv).toFixed(4)
         );
       }
-    } else if (s.baseStats) {
-      G.baseStats = Object.assign({}, s.baseStats);
+    });
+    var lvBonuses = num(data.level, 1) - 1;
+    if (lvBonuses > 0) {
+      G.baseStats.atk    = (G.baseStats.atk    || 0) + lvBonuses * 2;
+      G.baseStats.def    = (G.baseStats.def    || 0) + lvBonuses * 1;
+      G.baseStats.hp     = (G.baseStats.hp     || 0) + lvBonuses * 10;
+      G.baseStats.atkSpd = parseFloat(
+        ((G.baseStats.atkSpd || 1.0) + lvBonuses * 0.02).toFixed(4)
+      );
     }
-
-    G.skills = s.skills || {};
-    G.potionLv = num(s.potionLv, 0);
-    G.potionThreshold = num(s.potionThreshold, 30);
-    G.floor = num(s.floor, G.floor);
-    G.level = num(s.level, G.level);
-    G.maxFloor = num(s.maxFloor, G.maxFloor);
-    G.pixr = num(s.pixr, G.pixr);
-    G.gram = num(s.gram, G.gram);
-    G.bp = s.bp || { active: false, claimed: [] };
-    if (!G.bp.claimed) G.bp.claimed = [];
-    G.prem = s.prem || { tier: null, expiresAt: 0 };
-    G.boss = s.boss || { floor: 1, lastFightTime: 0 };
-    if (!G.boss.floor) G.boss.floor = 1;
-    G.invFilter = s.invFilter || 'all';
-    G.dailyTasks          = s.dailyTasks          || { date: '', seconds: 0, claimed: [] };
-    G.specialTasksClaimed = s.specialTasksClaimed || {};
-
-    G.gold = num(s.gold, G.gold);
-    G.xp = num(s.xp, G.xp);
-    G.killCount = num(s.killCount, G.killCount);
-    G.potions = num(s.potions, G.potions);
-
-    G.inventory = (s.inventory || []).map(function (it) {
-      var c = clone(it); c._equipped = false; return c;
-    });
-
-    if (typeof s.invIdCounter === 'number') _invIdCounter = s.invIdCounter;
-    G.inventory.forEach(function (i) {
-      if (typeof i.id === 'number' && i.id > _invIdCounter) _invIdCounter = i.id;
-    });
-
-    G.equipped = { weapon: null, armor: null, ring: null, boots: null, helmet: null };
-    var eq = s.equipped || {};
-    EQUIP_SLOTS.forEach(function (slot) {
-      var id = eq[slot];
-      if (id == null) return;
-      var it = G.inventory.find(function (i) { return i.id === id; });
-      if (it) { it._equipped = true; G.equipped[slot] = it; }
-    });
-
-    if (typeof recalcStats === 'function') recalcStats();
-    
-    G.maxHp = num(s.maxHp, G.maxHp);
-    G.xpNeeded = num(s.xpNeeded, 0);
-    if (!G.xpNeeded || G.xpNeeded < 100) {
-      var _xp = 100;
-      for (var _lv = 1; _lv < G.level; _lv++) {
-        _xp = Math.floor(_xp * (_lv < 7 ? 2.5 : 1.1));
-      }
-      G.xpNeeded = _xp;
-    }
-    
-    var hp = num(s.hp, G.maxHp);
-    if (hp <= 0) hp = Math.floor(G.maxHp * 0.3);
-    G.hp = Math.max(1, Math.min(hp, G.maxHp));
-
-    SYNC.lastHp = G.hp;
-    SYNC.lastGold = G.gold;
-    SYNC.lastXp = G.xp;
-    SYNC.lastKillCount = G.killCount;
-    SYNC.lastPotions = G.potions;
-
-    return true;
+  } else if (data.baseStats) {
+    G.baseStats = Object.assign({}, data.baseStats);
   }
+
+  G.skills = data.skills || {};
+  G.potionLv = num(data.potionLv, 0);
+  G.potionThreshold = num(data.potionThreshold, 30);
+  G.floor = num(data.floor, G.floor);
+  G.level = num(data.level, G.level);
+  G.maxFloor = num(data.maxFloor, G.maxFloor);
+  
+  // 🔥 ИСПРАВЛЕНИЕ: берем pixr/gram/gold из data
+  G.pixr = num(data.pixr, G.pixr);
+  G.gram = num(data.gram, G.gram);
+  G.gold = num(data.gold, G.gold);
+  G.xp = num(data.xp, G.xp);
+  G.killCount = num(data.killCount, G.killCount);
+  G.potions = num(data.potions, G.potions);
+
+  G.bp = data.bp || { active: false, claimed: [] };
+  if (!G.bp.claimed) G.bp.claimed = [];
+  G.prem = data.prem || { tier: null, expiresAt: 0 };
+  G.boss = data.boss || { floor: 1, lastFightTime: 0 };
+  if (!G.boss.floor) G.boss.floor = 1;
+  G.invFilter = data.invFilter || 'all';
+  G.dailyTasks = data.dailyTasks || { date: '', seconds: 0, claimed: [] };
+  G.specialTasksClaimed = data.specialTasksClaimed || {};
+
+  G.inventory = (data.inventory || []).map(function (it) {
+    var c = clone(it); c._equipped = false; return c;
+  });
+
+  if (typeof data.invIdCounter === 'number') _invIdCounter = data.invIdCounter;
+  G.inventory.forEach(function (i) {
+    if (typeof i.id === 'number' && i.id > _invIdCounter) _invIdCounter = i.id;
+  });
+
+  G.equipped = { weapon: null, armor: null, ring: null, boots: null, helmet: null };
+  var eq = data.equipped || {};
+  EQUIP_SLOTS.forEach(function (slot) {
+    var id = eq[slot];
+    if (id == null) return;
+    var it = G.inventory.find(function (i) { return i.id === id; });
+    if (it) { it._equipped = true; G.equipped[slot] = it; }
+  });
+
+  if (typeof recalcStats === 'function') recalcStats();
+  
+  G.maxHp = num(data.maxHp, G.maxHp);
+  G.xpNeeded = num(data.xpNeeded, 0);
+  if (!G.xpNeeded || G.xpNeeded < 100) {
+    var _xp = 100;
+    for (var _lv = 1; _lv < G.level; _lv++) {
+      _xp = Math.floor(_xp * (_lv < 7 ? 2.5 : 1.1));
+    }
+    G.xpNeeded = _xp;
+  }
+  
+  var hp = num(data.hp, G.maxHp);
+  if (hp <= 0) hp = Math.floor(G.maxHp * 0.3);
+  G.hp = Math.max(1, Math.min(hp, G.maxHp));
+
+  SYNC.lastHp = G.hp;
+  SYNC.lastGold = G.gold;
+  SYNC.lastXp = G.xp;
+  SYNC.lastKillCount = G.killCount;
+  SYNC.lastPotions = G.potions;
+
+  console.log('✅ [applySnapshot] Загружено: gram=' + G.gram + ', gold=' + G.gold + ', pixr=' + G.pixr);
+  return true;
+}
 
   // ═══════════════════════════════
   //  СЕРВЕРНЫЕ ЗАПРОСЫ
@@ -465,12 +471,14 @@
   // ═══════════════════════════════
 
   function bootFromSnapshot(snap) {
-    if (SYNC.started) return;
-    if (!applySnapshot(snap)) return;
-    hideCharSelect();
-    SYNC.started = true;
-    if (typeof startGame === 'function') startGame();
-  }
+  if (SYNC.started) return;
+  // 🔥 Используем data из snap
+  var data = snap.data || snap;
+  if (!applySnapshot(data)) return;
+  hideCharSelect();
+  SYNC.started = true;
+  if (typeof startGame === 'function') startGame();
+}
 
   function hotApply(snap) {
     if (!applySnapshot(snap)) return;
