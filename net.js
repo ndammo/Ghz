@@ -815,14 +815,11 @@
     };
   }
 
-  var _hudSaveTimer = null;
-  function saveToServerDebounced() {
-    if (_hudSaveTimer) return;
-    _hudSaveTimer = setTimeout(function () { 
-      _hudSaveTimer = null; 
-      serverSaveBatch(); 
-    }, 500);
-  }
+  // ═══════════════════════════════
+  //  ❌ УБРАНО: сохранение при обновлении HUD
+  //  var _hudSaveTimer = null;
+  //  function saveToServerDebounced() { ... }
+  // ═══════════════════════════════
 
   function hookActions() {
     var instantActions = [
@@ -848,15 +845,54 @@
       };
     });
 
-    var origHUD = window.updateHUD;
-    if (typeof origHUD === 'function') {
-      window.updateHUD = function () {
-        var r = origHUD.apply(this, arguments);
-        if (SYNC.started) saveToServerDebounced();
-        return r;
-      };
-    }
+    // ❌ УБРАНО: сохранение при обновлении HUD
+    // var origHUD = window.updateHUD;
+    // if (typeof origHUD === 'function') {
+    //   window.updateHUD = function () {
+    //     var r = origHUD.apply(this, arguments);
+    //     if (SYNC.started) saveToServerDebounced();
+    //     return r;
+    //   };
+    // }
   }
+
+  // ═══════════════════════════════
+  //  ЭКСПОРТ ДЛЯ ИГРОВЫХ СОБЫТИЙ
+  // ═══════════════════════════════
+
+  window.onPixrDrop = function(amount) {
+    G.pixr = (G.pixr || 0) + amount;
+    saveInstant({ pixr: G.pixr });
+  };
+
+  window.onExchangePixr = function() {
+    saveInstant({ pixr: G.pixr, gram: G.gram });
+  };
+
+  window.onItemDrop = function(item) {
+    G.inventory.push(item);
+    saveInstant({ inventory: G.inventory });
+  };
+
+  window.onEquip = function(item) {
+    saveInstant({ equipped: G.equipped });
+  };
+
+  window.onUpgrade = function(upgId, newLevel) {
+    saveInstant({ upg: G.upg });
+  };
+
+  window.onSkillUpgrade = function(skillId, newLevel) {
+    saveInstant({ skills: G.skills });
+  };
+
+  window.onLevelUp = function() {
+    saveInstant({ level: G.level, xpNeeded: G.xpNeeded });
+  };
+
+  window.onFloorChange = function(newFloor) {
+    saveInstant({ floor: G.floor, maxFloor: G.maxFloor });
+  };
 
   // ═══════════════════════════════
   //  ИНИЦИАЛИЗАЦИЯ
