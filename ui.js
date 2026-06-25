@@ -197,10 +197,16 @@ function renderFloors() {
     var isCurrent = G.floor === f.n;
     var visited   = G.maxFloor >= f.n;
     var locked    = !unlocked;
-    var avgXp   = Math.round(f.baseXp.reduce(function(a,b){return a+b;},0) / f.baseXp.length * f.xpMult);
-    var maxXp   = Math.round(Math.max.apply(null, f.baseXp) * f.xpMult);
-    var avgGold = Math.round(f.baseGold.reduce(function(a,b){return a+b;},0) / f.baseGold.length * f.goldMult);
-    var maxGold = Math.round(Math.max.apply(null, f.baseGold) * f.goldMult);
+    
+    // ✅ ИСПРАВЛЕННЫЙ РАСЧЁТ XP и Gold
+    var allXp = f.baseXp.map(function(xp) { return Math.round(xp * f.xpMult); });
+    var allGold = f.baseGold.map(function(gold) { return Math.round(gold * f.goldMult); });
+    
+    var avgXp   = Math.round(allXp.reduce(function(a,b){return a+b;},0) / allXp.length);
+    var maxXp   = Math.round(Math.max.apply(null, allXp));
+    var avgGold = Math.round(allGold.reduce(function(a,b){return a+b;},0) / allGold.length);
+    var maxGold = Math.round(Math.max.apply(null, allGold));
+    
     var cpLeft  = f.cpReq - cp;
     var borderColor = '#2a2a5a', extraStyle = '';
     if (isCurrent)                { borderColor = '#f5c542'; extraStyle = 'box-shadow:0 0 14px rgba(245,197,66,0.22);'; }
