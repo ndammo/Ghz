@@ -849,6 +849,7 @@ function boot() {
 
   function hookActions() {
     var instantActions = [
+      'buyUpgrade',
       'equipItem', 'unequipItem', 'destroyItem', 'refineItem',
       'useSkillBook', 'buyBattlePass', 'claimBpReward', 'buyPrem',
       'upgPotion', 'goToFloor', 'buyPotions'
