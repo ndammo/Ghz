@@ -239,49 +239,34 @@ function setLeaderboardCache(data) {
 }
 
 // ═══════════════════════════════
-//  LONG POLLING — уведомления клиентов
+//  ПОЛЛИНГ — простой опрос (без долгого ожидания)
 // ═══════════════════════════════
 
 const pendingNotifications = new Map();
 
+// ── Простой опрос (без Long Polling) ──
 app.post('/api/poll', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
 
-  const { lastEventId } = req.body || {};
   const tgId = tg.id;
-
-  const TIMEOUT = 30000;
-  let timeoutId = null;
-
-  const sendResponse = (notifications) => {
-    if (timeoutId) clearTimeout(timeoutId);
-    res.json({
+  const notifs = pendingNotifications.get(tgId) || [];
+  
+  if (notifs.length > 0) {
+    pendingNotifications.set(tgId, []);
+    console.log(`📨 [Poll] Отдано ${notifs.length} уведомлений для ${tgId}`);
+    return res.json({
       ok: true,
-      notifications: notifications || [],
+      notifications: notifs,
       timestamp: Date.now()
     });
-  };
-
-  const checkNotifications = () => {
-    const notifs = pendingNotifications.get(tgId) || [];
-    
-    if (notifs.length > 0) {
-      pendingNotifications.set(tgId, []);
-      sendResponse(notifs);
-      return true;
-    }
-    return false;
-  };
-
-  if (checkNotifications()) return;
-
-  timeoutId = setTimeout(() => {
-    sendResponse([]);
-  }, TIMEOUT);
-
-  req.on('close', () => {
-    if (timeoutId) clearTimeout(timeoutId);
+  }
+  
+  // Просто возвращаем пустой ответ
+  res.json({
+    ok: true,
+    notifications: [],
+    timestamp: Date.now()
   });
 });
 
@@ -299,7 +284,7 @@ function notifyClient(tgId, eventType, data) {
   }
   pendingNotifications.get(tgId).push(notification);
 
-  console.log(`📨 [Poll] Уведомление поставлено в очередь для ${tgId}: ${eventType}`);
+  console.log(`📨 [Poll] Уведомление для ${tgId}: ${eventType}`);
   return true;
 }
 
