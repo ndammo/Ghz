@@ -804,6 +804,7 @@ app.get('/api/avatar/:tgId', async (req, res) => {
 
   const cached = _avatarCache.get(tgId);
   if (cached && Date.now() - cached.ts < AVATAR_CACHE_TTL) {
+    if (!cached.url) return res.status(404).json({ ok: false, error: 'no_photo' });
     return res.redirect(302, cached.url);
   }
 
@@ -817,6 +818,7 @@ app.get('/api/avatar/:tgId', async (req, res) => {
     const photosData = await photosRes.json();
 
     if (!photosData.ok || !photosData.result.total_count) {
+      _avatarCache.set(tgId, { url: null, ts: Date.now() });
       return res.status(404).json({ ok: false, error: 'no_photo' });
     }
 
