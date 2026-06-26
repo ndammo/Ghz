@@ -483,6 +483,7 @@ monsters = monsters.filter(m => {
 // ── Получение опыта и повышение уровня ──
 function gainXP(amount) {
   G.xp += amount;
+  var levelled = false;
   while (G.xp >= G.xpNeeded) {
     G.xp -= G.xpNeeded;
     G.level++;
@@ -495,8 +496,10 @@ function gainXP(amount) {
     G.hp = G.maxHp;
     showDmgPop('LV UP!', W * 0.4, GROUND * 0.5, '#fa0');
     updateHUD();
+    levelled = true;
   }
-  if (typeof window.onLevelUp === 'function') window.onLevelUp();
+  // ✅ onLevelUp только при реальном повышении уровня
+  if (levelled && typeof window.onLevelUp === 'function') window.onLevelUp();
 }
 
 // ── Проверка открытия следующего этажа ──
