@@ -693,20 +693,28 @@ function saveInstant(data) {
       START_PARAM = (window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.start_param) || '';
     } catch (e) { START_PARAM = ''; }
   }
+  
+  // ✅ ИСПРАВЛЕНО: ищем ПРАВИЛЬНЫЙ параметр
   if (!START_PARAM) {
     try {
-      var urlRef = new URLSearchParams(window.location.search).get('ref') || '';
-      if (urlRef) START_PARAM = urlRef;
+      var urlParams = new URLSearchParams(window.location.search);
+      // Проверяем оба варианта
+      var startapp = urlParams.get('startapp');
+      var ref = urlParams.get('ref');
+      if (startapp) START_PARAM = startapp;
+      else if (ref) START_PARAM = ref;
+      console.log('🔍 [initTelegram] startParam из URL:', START_PARAM || 'none');
     } catch (e) {}
   }
+  
   SYNC.online = !!TG_INIT;
   
   var tgId = getTgId();
   if (tgId) {
     SYNC.currentTgId = tgId;
   }
-  console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online);
-}
+  console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online, 'startParam:', START_PARAM || 'none');
+  }
 
   // ═══════════════════════════════
 //  БУТ — с задержкой
