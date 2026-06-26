@@ -631,7 +631,7 @@ function saveInstant(data) {
 
   function startSyncLoops() {
     if (SYNC.booted) return; // ✅ защита от дублирования слушателей
-    SYNC.batchTimer = setInterval(serverSaveBatch, 10000);
+    SYNC.batchTimer = setInterval(serverSaveBatch, 60000);
 
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) flush();
