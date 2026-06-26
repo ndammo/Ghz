@@ -543,14 +543,12 @@ function submitExchange() {
 }
 
 // ── ЗАГРУЗКА ТРАНЗАКЦИЙ (ИСПРАВЛЕННАЯ) ──
+// ✅ Единственная версия loadTransactions (дубликат удалён)
 function loadTransactions() {
+  if (!window.GameSync || !window.GameSync._INIT) return;
+  
   var list = document.getElementById('txList');
   if (!list) return;
-  
-  if (!window.GameSync || !window.GameSync._INIT) {
-    list.innerHTML = '<div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">Авторизуйтесь в Telegram</div>';
-    return;
-  }
   
   list.innerHTML = '<div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">Загрузка...</div>';
   
@@ -644,69 +642,6 @@ function renderStats() {
   `;
 }
 
-function loadTransactions() {
-  if (!window.GameSync || !window.GameSync._INIT) return;
-  
-  fetch(window.GameSync._API + '/api/wallet/transactions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT })
-  })
-  .then(r => r.json())
-  .then(r => {
-    const list = document.getElementById('txList');
-    if (!r.ok || !r.transactions || r.transactions.length === 0) {
-      list.innerHTML = `
-        <div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">
-          <div style="font-size:24px;margin-bottom:8px;">📭</div>
-          Нет транзакций
-        </div>
-      `;
-      return;
-    }
-    
-    let html = '';
-    r.transactions.slice(0, 10).forEach(tx => {
-      const statusColors = {
-        pending: '#f5c542',
-        approved: '#2ecc71',
-        rejected: '#e74c3c'
-      };
-      const statusLabels = {
-        pending: '⏳ Ожидание',
-        approved: '✅ Подтверждено',
-        rejected: '❌ Отклонено'
-      };
-      const typeLabels = {
-        deposit: '📥 Пополнение',
-        withdraw: '📤 Вывод'
-      };
-      const date = new Date(tx.createdAt).toLocaleDateString('ru-RU');
-      
-      html += `
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #0a0a1a;font-size:11px;">
-          <div>
-            <div style="color:#ddd;">${typeLabels[tx.type] || tx.type}</div>
-            <div style="color:#556;font-size:9px;">${date}</div>
-          </div>
-          <div style="text-align:right;">
-            <div style="color:${tx.type === 'deposit' ? '#2ecc71' : '#e74c3c'};font-weight:bold;display:flex;align-items:center;gap:3px;justify-content:flex-end;">
-              ${tx.type === 'deposit' ? '+' : '-'} ${tx.amount} <img src="images/gram.png" style="width:13px;height:13px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">
-            </div>
-            <div style="color:${statusColors[tx.status] || '#556'};font-size:9px;">
-              ${statusLabels[tx.status] || tx.status}
-            </div>
-          </div>
-        </div>
-      `;
-    });
-    list.innerHTML = html;
-  })
-  .catch(() => {
-    const list = document.getElementById('txList');
-    list.innerHTML = '<div style="color:#e74c3c;text-align:center;padding:20px 0;font-size:12px;">Ошибка загрузки</div>';
-  });
-}
 
 // ═══════════════════════════════
 //  МОДАЛКИ ПОПОЛНЕНИЯ/ВЫВОДА

@@ -423,9 +423,20 @@ G.equipped = {
       .then(function () { SYNC.pushing = false; });
   }
 
+  var _instantTimer = null;
+  var _instantData  = {};
+
   function saveInstant(data) {
     if (!SYNC.started || !SYNC.online) return;
-    serverSaveInstant(data).catch(function() {});
+    // ✅ debounce 400мс — несколько быстрых вызовов схлопываются в один запрос
+    Object.assign(_instantData, data);
+    clearTimeout(_instantTimer);
+    _instantTimer = setTimeout(function() {
+      if (Object.keys(_instantData).length === 0) return;
+      var toSend = _instantData;
+      _instantData = {};
+      serverSaveInstant(toSend).catch(function() {});
+    }, 400);
   }
 
   function touch() {
@@ -852,7 +863,8 @@ function boot() {
       'buyUpgrade',
       'equipItem', 'unequipItem', 'destroyItem', 'refineItem',
       'useSkillBook', 'buyBattlePass', 'claimBpReward', 'buyPrem',
-      'upgPotion', 'goToFloor', 'buyPotions'
+      'upgPotion', 'goToFloor', 'buyPotions',
+      'savePotionThreshold' // ✅ порог зелья тоже нужно сохранять мгновенно
     ];
     
     instantActions.forEach(function (name) {
@@ -893,6 +905,9 @@ function boot() {
   };
 
   window.onExchangePixr = function() {
+    // ✅ Обновляем SYNC.last* чтобы delta-батч не отправил устаревшие значения
+    SYNC.lastPixr = G.pixr;
+    SYNC.lastGold = G.gold;
     saveInstant({ pixr: G.pixr, gram: G.gram });
   };
 

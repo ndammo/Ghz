@@ -798,6 +798,13 @@ app.post('/api/tasks/special/claim', async (req, res) => {
 const _avatarCache = new Map();
 const AVATAR_CACHE_TTL = 3600 * 1000;
 
+
+// ✅ Очистка устаревших аватаров (утечка памяти)
+setInterval(() => {
+  const now = Date.now();
+  _avatarCache.forEach((v, k) => { if (now - v.ts > AVATAR_CACHE_TTL) _avatarCache.delete(k); });
+}, AVATAR_CACHE_TTL);
+
 app.get('/api/avatar/:tgId', async (req, res) => {
   const tgId = req.params.tgId;
   if (!tgId || !/^\d+$/.test(tgId)) return res.status(400).json({ ok: false });
@@ -1585,8 +1592,10 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     if (updates.level !== undefined) updateData.level = updates.level;
     if (updates.floor !== undefined) updateData.floor = updates.floor;
     if (updates.charId !== undefined) updateData.charId = updates.charId;
-    
-    updateData.updatedAt = Date.now();
+
+    const _adminNow = Date.now();
+    updateData['data._adminUpdatedAt'] = _adminNow; // ✅ защита от перезаписи клиентом
+    updateData.updatedAt = _adminNow;
     
     const result = await Save.findOneAndUpdate(
       { tgId: tgId },
@@ -1673,11 +1682,15 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
     
     if (forClass) item.forClass = forClass;
     
+    const _giveNow = Date.now();
     const result = await Save.findOneAndUpdate(
       { tgId: tgId },
       { 
         $push: { 'data.inventory': item },
-        $set: { updatedAt: Date.now() }
+        $set: {
+          'data._adminUpdatedAt': _giveNow, // ✅ защита от перезаписи клиентом
+          updatedAt: _giveNow
+        }
       },
       { new: true }
     );
@@ -1735,6 +1748,7 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
           $inc: { 'data.gram': gramDelta },
           $set: { 
             'data.updatedAt': newUpdatedAt,
+            'data._adminUpdatedAt': newUpdatedAt, // ✅
             updatedAt: newUpdatedAt 
           }
         },
@@ -1949,6 +1963,8 @@ app.get('/admin', (req, res) => {
 
 // ═══════════════════════════════
 //  ПОКУПКА УЛУЧШЕНИЙ (атомарно)
+//  ⚠️ DEPRECATED — не используется клиентом
+//  buyUpgrade() работает через /api/save
 // ═══════════════════════════════
 app.post('/api/upgrade', async (req, res) => {
   const tg = authUser(req, res);
@@ -2060,6 +2076,7 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
           $inc: { 'data.gram': gramDelta },
           $set: { 
             'data.updatedAt': newUpdatedAt,
+            'data._adminUpdatedAt': newUpdatedAt, // ✅
             updatedAt: newUpdatedAt 
           }
         },
