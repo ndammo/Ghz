@@ -329,14 +329,18 @@ G.equipped = {
 
   function serverSaveInstant(data) {
     if (!SYNC.online || !SYNC.serverConfirmed) return Promise.resolve({ ok: false });
-    // ✅ Только нужные поля через /api/save/delta
-    var delta = Object.assign({ tgId: getTgId(), updatedAt: Date.now() }, data);
-    return fetch(API + '/api/save/delta', {
+    
+    var snap = serializeState();
+    Object.keys(data).forEach(function(key) {
+      snap[key] = data[key];
+    });
+    snap.updatedAt = Date.now();
+    
+    return fetch(API + '/api/save', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Save-Source': 'instant:' + Object.keys(data).join(',') },
-      body: JSON.stringify({ initData: TG_INIT, delta: delta }),
-    }).then(function (r) { return r.json(); })
-      .catch(function() { return { ok: false }; });
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData: TG_INIT, data: snap }),
+    }).then(function (r) { return r.json(); });
   }
 
   // ⚡ БАТЧ-СОХРАНЕНИЕ — КАЖДЫЕ 10 СЕКУНД (только дельта изменений)
@@ -376,10 +380,9 @@ G.equipped = {
 
     SYNC.pushing = true;
 
-    var _bsrc = 'batch:' + Object.keys(delta).filter(function(k){return !['tgId','updatedAt','charId','cp'].includes(k);}).join(',');
     fetch(API + '/api/save/delta', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Save-Source': _bsrc },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ initData: TG_INIT, delta: delta }),
     }).then(function (r) { return r.json(); })
       .then(function (r) {
@@ -420,20 +423,9 @@ G.equipped = {
       .then(function () { SYNC.pushing = false; });
   }
 
-  var _instantTimer = null;
-  var _instantData  = {};
-
   function saveInstant(data) {
     if (!SYNC.started || !SYNC.online) return;
-    // ✅ debounce 1000мс — схлопываем несколько вызовов в один запрос
-    Object.assign(_instantData, data);
-    clearTimeout(_instantTimer);
-    _instantTimer = setTimeout(function() {
-      if (Object.keys(_instantData).length === 0) return;
-      var toSend = _instantData;
-      _instantData = {};
-      serverSaveInstant(toSend).catch(function() {});
-    }, 1000);
+    serverSaveInstant(data).catch(function() {});
   }
 
   function touch() {
@@ -442,21 +434,15 @@ G.equipped = {
     SYNC.dirtyTimer = setTimeout(serverSaveBatch, 500);
   }
 
-  var _lastFlushAt = 0;
-
   function flush() {
     if (!SYNC.started) return;
     if (!SYNC.online || !SYNC.serverConfirmed) return;
-    // ✅ throttle 5с — не флашим слишком часто
-    var now = Date.now();
-    if (now - _lastFlushAt < 5000) return;
-    _lastFlushAt = now;
     var snap = serializeState();
     snap.updatedAt = Date.now();
     try {
       fetch(API + '/api/save', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Save-Source': 'flush' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ initData: TG_INIT, data: snap }),
         keepalive: true,
       });
@@ -639,8 +625,7 @@ G.equipped = {
     SYNC.batchTimer = setInterval(serverSaveBatch, 10000);
 
     document.addEventListener('visibilitychange', function () {
-      // ✅ лёгкий батч вместо тяжёлого flush при сворачивании
-      if (document.hidden) serverSaveBatch();
+      if (document.hidden) flush();
     });
 
     if (window.Telegram && window.Telegram.WebApp) {
@@ -876,31 +861,12 @@ function boot() {
       window[name] = function () {
         var r = fn.apply(this, arguments);
         try {
-          // ✅ Берём поля из G напрямую — не вызываем тяжёлый serializeState()
-          var eq = {};
-          EQUIP_SLOTS.forEach(function(slot) {
-            var it = G.equipped && G.equipped[slot];
-            eq[slot] = it ? it.id : null;
+          var snap = serializeState();
+          var data = {};
+          INSTANT_FIELDS.forEach(function(field) {
+            if (snap[field] !== undefined) data[field] = snap[field];
           });
-          var inv = (G.inventory || []).map(function(it) {
-            var c = Object.assign({}, it);
-            delete c._equipped;
-            return c;
-          });
-          saveInstant({
-            inventory:       inv,
-            equipped:        eq,
-            upg:             Object.assign({}, G.upg),
-            skills:          Object.assign({}, G.skills || {}),
-            potionLv:        G.potionLv,
-            potionThreshold: G.potionThreshold,
-            floor:           G.floor,
-            level:           G.level,
-            pixr:            G.pixr,
-            gram:            G.gram,
-            bp:              Object.assign({}, G.bp   || { active: false, claimed: [] }),
-            prem:            Object.assign({}, G.prem || { tier: null, expiresAt: 0 }),
-          });
+          saveInstant(data);
         } catch (e) {}
         return r;
       };
