@@ -710,8 +710,8 @@ function boot() {
 
   function _bootFinalize() {
     try {
-      SYNC.booted = true;
       startSyncLoops();
+SYNC.booted = true;
       if (SYNC.online && SYNC.started && SYNC.serverConfirmed) {
         serverSaveBatch();
       }
