@@ -27,7 +27,7 @@ const REF_MILESTONE_STEP     = 5;
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS,DELETE,PATCH');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Save-Source');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
   res.header('Vary', 'Origin');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -450,10 +450,7 @@ app.post('/api/save', async (req, res) => {
     );
 
     const duration = Date.now() - startTime;
-    var _sf = Object.keys(data).filter(function(k){ return !['tgId','updatedAt','v','cp'].includes(k); });
-    const saveSource = req.headers['x-save-source'] || 'UNKNOWN-OLD-CLIENT';
-    console.log(`✅ [save] ${tg.id} (${duration}ms) SOURCE=${saveSource}`);
-
+    console.log(`✅ [save] Сохранено для ${tg.id} (${duration}ms)`);
     res.json({ ok: true, updatedAt: data.updatedAt });
 
   } catch (e) {
@@ -547,10 +544,7 @@ app.post('/api/save/delta', async (req, res) => {
     );
 
     const duration = Date.now() - startTime;
-    var _df = Object.keys(delta).filter(function(k){ return !['tgId','updatedAt','charId','cp'].includes(k); });
-    const deltaSource = req.headers['x-save-source'] || 'UNKNOWN-OLD-CLIENT';
-    console.log(`✅ [delta] ${tg.id} (${duration}ms) SOURCE=${deltaSource} fields=${_df.join(',')}`);
-
+    console.log(`✅ [delta] Сохранено для ${tg.id} (${duration}ms), полей: ${Object.keys(delta).length}`);
 
     const response = { ok: true, updatedAt: merged.updatedAt };
     if (Object.keys(syncToClient).length > 0) response.sync = syncToClient;
@@ -803,13 +797,6 @@ app.post('/api/tasks/special/claim', async (req, res) => {
 // ═══════════════════════════════
 const _avatarCache = new Map();
 const AVATAR_CACHE_TTL = 3600 * 1000;
-
-
-// ✅ Очистка устаревших аватаров (утечка памяти)
-setInterval(() => {
-  const now = Date.now();
-  _avatarCache.forEach((v, k) => { if (now - v.ts > AVATAR_CACHE_TTL) _avatarCache.delete(k); });
-}, AVATAR_CACHE_TTL);
 
 app.get('/api/avatar/:tgId', async (req, res) => {
   const tgId = req.params.tgId;
@@ -1598,10 +1585,8 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     if (updates.level !== undefined) updateData.level = updates.level;
     if (updates.floor !== undefined) updateData.floor = updates.floor;
     if (updates.charId !== undefined) updateData.charId = updates.charId;
-
-    const _adminNow = Date.now();
-    updateData['data._adminUpdatedAt'] = _adminNow; // ✅ защита от перезаписи клиентом
-    updateData.updatedAt = _adminNow;
+    
+    updateData.updatedAt = Date.now();
     
     const result = await Save.findOneAndUpdate(
       { tgId: tgId },
@@ -1688,15 +1673,11 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
     
     if (forClass) item.forClass = forClass;
     
-    const _giveNow = Date.now();
     const result = await Save.findOneAndUpdate(
       { tgId: tgId },
       { 
         $push: { 'data.inventory': item },
-        $set: {
-          'data._adminUpdatedAt': _giveNow, // ✅ защита от перезаписи клиентом
-          updatedAt: _giveNow
-        }
+        $set: { updatedAt: Date.now() }
       },
       { new: true }
     );
@@ -1754,7 +1735,6 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
           $inc: { 'data.gram': gramDelta },
           $set: { 
             'data.updatedAt': newUpdatedAt,
-            'data._adminUpdatedAt': newUpdatedAt, // ✅
             updatedAt: newUpdatedAt 
           }
         },
@@ -1969,8 +1949,6 @@ app.get('/admin', (req, res) => {
 
 // ═══════════════════════════════
 //  ПОКУПКА УЛУЧШЕНИЙ (атомарно)
-//  ⚠️ DEPRECATED — не используется клиентом
-//  buyUpgrade() работает через /api/save
 // ═══════════════════════════════
 app.post('/api/upgrade', async (req, res) => {
   const tg = authUser(req, res);
@@ -2082,7 +2060,6 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
           $inc: { 'data.gram': gramDelta },
           $set: { 
             'data.updatedAt': newUpdatedAt,
-            'data._adminUpdatedAt': newUpdatedAt, // ✅
             updatedAt: newUpdatedAt 
           }
         },

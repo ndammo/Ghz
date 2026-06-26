@@ -329,15 +329,18 @@ G.equipped = {
 
   function serverSaveInstant(data) {
     if (!SYNC.online || !SYNC.serverConfirmed) return Promise.resolve({ ok: false });
-    // ✅ Шлём через /api/save/delta — только нужные поля, не весь снапшот
-    var delta = Object.assign({ tgId: getTgId(), updatedAt: Date.now() }, data);
-    var _src = 'instant:' + Object.keys(data).join(',');
-    return fetch(API + '/api/save/delta', {
+    
+    var snap = serializeState();
+    Object.keys(data).forEach(function(key) {
+      snap[key] = data[key];
+    });
+    snap.updatedAt = Date.now();
+    
+    return fetch(API + '/api/save', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Save-Source': _src },
-      body: JSON.stringify({ initData: TG_INIT, delta: delta }),
-    }).then(function (r) { return r.json(); })
-      .catch(function() { return { ok: false }; });
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData: TG_INIT, data: snap }),
+    }).then(function (r) { return r.json(); });
   }
 
   // ⚡ БАТЧ-СОХРАНЕНИЕ — КАЖДЫЕ 10 СЕКУНД (только дельта изменений)
@@ -377,10 +380,9 @@ G.equipped = {
 
     SYNC.pushing = true;
 
-    var _bsrc = 'batch:' + Object.keys(delta).filter(function(k){return !['tgId','updatedAt','charId','cp'].includes(k);}).join(',');
     fetch(API + '/api/save/delta', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Save-Source': _bsrc },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ initData: TG_INIT, delta: delta }),
     }).then(function (r) { return r.json(); })
       .then(function (r) {
@@ -421,20 +423,9 @@ G.equipped = {
       .then(function () { SYNC.pushing = false; });
   }
 
-  var _instantTimer = null;
-  var _instantData  = {};
-
   function saveInstant(data) {
     if (!SYNC.started || !SYNC.online) return;
-    // ✅ debounce 400мс — несколько быстрых вызовов схлопываются в один запрос
-    Object.assign(_instantData, data);
-    clearTimeout(_instantTimer);
-    _instantTimer = setTimeout(function() {
-      if (Object.keys(_instantData).length === 0) return;
-      var toSend = _instantData;
-      _instantData = {};
-      serverSaveInstant(toSend).catch(function() {});
-    }, 1000);
+    serverSaveInstant(data).catch(function() {});
   }
 
   function touch() {
@@ -443,26 +434,15 @@ G.equipped = {
     SYNC.dirtyTimer = setTimeout(serverSaveBatch, 500);
   }
 
-  var _flushTimer = null;
-  var _lastFlushAt = 0;
-
   function flush() {
     if (!SYNC.started) return;
     if (!SYNC.online || !SYNC.serverConfirmed) return;
-    // ✅ Debounce flush — не чаще чем раз в 5 секунд
-    var now = Date.now();
-    if (now - _lastFlushAt < 5000) {
-      console.log('[flush] throttled, skip');
-      return;
-    }
-    _lastFlushAt = now;
-    console.log('[flush] TRIGGERED — visibilitychange/pagehide/close');
     var snap = serializeState();
     snap.updatedAt = Date.now();
     try {
       fetch(API + '/api/save', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Save-Source': 'flush' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ initData: TG_INIT, data: snap }),
         keepalive: true,
       });
@@ -645,7 +625,6 @@ G.equipped = {
     SYNC.batchTimer = setInterval(serverSaveBatch, 10000);
 
     document.addEventListener('visibilitychange', function () {
-      console.log('[visibilitychange] hidden=' + document.hidden);
       if (document.hidden) flush();
     });
 
@@ -842,9 +821,8 @@ function boot() {
           });
         } catch (e) {}
         var snap = serializeState();
-        // ✅ Через delta — только структурные поля нового персонажа
-        saveInstant({
-          charId: snap.charId,
+        serverSaveInstant({
+          charId: G.charId,
           inventory: snap.inventory,
           equipped: snap.equipped,
           upg: snap.upg,
@@ -874,8 +852,7 @@ function boot() {
       'buyUpgrade',
       'equipItem', 'unequipItem', 'destroyItem', 'refineItem',
       'useSkillBook', 'buyBattlePass', 'claimBpReward', 'buyPrem',
-      'upgPotion', 'goToFloor', 'buyPotions',
-      'savePotionThreshold' // ✅ порог зелья тоже нужно сохранять мгновенно
+      'upgPotion', 'goToFloor', 'buyPotions'
     ];
     
     instantActions.forEach(function (name) {
@@ -916,9 +893,6 @@ function boot() {
   };
 
   window.onExchangePixr = function() {
-    // ✅ Обновляем SYNC.last* чтобы delta-батч не отправил устаревшие значения
-    SYNC.lastPixr = G.pixr;
-    SYNC.lastGold = G.gold;
     saveInstant({ pixr: G.pixr, gram: G.gram });
   };
 
