@@ -423,10 +423,19 @@ G.equipped = {
       .then(function () { SYNC.pushing = false; });
   }
 
-  function saveInstant(data) {
-    if (!SYNC.started || !SYNC.online) return;
-    serverSaveInstant(data).catch(function() {});
-  }
+  var _instantPending = {};
+var _instantTimer = null;
+
+function saveInstant(data) {
+  if (!SYNC.started || !SYNC.online) return;
+  Object.assign(_instantPending, data);
+  clearTimeout(_instantTimer);
+  _instantTimer = setTimeout(function() {
+    var d = _instantPending;
+    _instantPending = {};
+    serverSaveInstant(d).catch(function() {});
+  }, 300);
+}
 
   function touch() {
     if (!SYNC.started || !SYNC.online) return;
