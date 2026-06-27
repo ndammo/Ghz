@@ -1793,40 +1793,91 @@ function renderMarketListings(listings, isMy) {
     return;
   }
 
+  var statLabels = { atk:'ATK', def:'DEF', hp:'HP', spd:'SPD', crit:'CRIT%', dodge:'DODGE%', atkSpd:'АТК SPD', critDmg:'КРИТ УРН' };
+  var statColors = { atk:'#ff8060', def:'#60aaff', hp:'#e74c3c', spd:'#2ecc71', crit:'#f5c542', dodge:'#a78bfa', atkSpd:'#ffa040', critDmg:'#ff6020' };
+  var classColors = { fire:'#ff7030', light:'#ffd040', water:'#40d0ff' };
+  var classLabels = { fire:'Пирокан', light:'Люмос', water:'Аквас' };
+  var slotLabels  = { body:'Нагрудник', legs:'Штаны', gloves:'Перчатки', boots:'Боты', helmet:'Шлем', ring:'Кольцо', belt:'Пояс', weapon:'Оружие' };
+
   var html = '';
   listings.forEach(function(lst) {
-    var item     = lst.item || {};
-    var r        = RARITIES.find(function(x) { return x.id === item.rarity; }) || { color: '#888', name: '—' };
-    var isBook   = item.isSkillBook;
+    var item = lst.item || {};
+    var r    = RARITIES.find(function(x) { return x.id === item.rarity; }) || { color: '#888', name: '—' };
+    var isBook = item.isSkillBook;
+
     var iconHtml = isBook
-      ? '<span style="font-size:22px;line-height:1;">📖</span>'
-      : '<img src="' + (item.icon || '') + '" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.display=\'none\'">';
+      ? '<span style="font-size:24px;line-height:1;">📖</span>'
+      : '<img src="' + (item.icon || '') + '" style="width:34px;height:34px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.display=\'none\'">';
 
-    var subParts = [r.name];
-    if (isBook && item.bookSkillName) subParts.push(item.bookSkillName);
-    if (item.forClass && item.classLabel) subParts.push(item.classLabel);
-    if (!isMy) subParts.push(lst.sellerName || 'Игрок');
+    // ── Строка под именем: редкость · слот · класс · продавец ──
+    var subParts = ['<span style="color:' + r.color + '">' + r.name + '</span>'];
+    if (!isBook && item.slot) subParts.push('<span style="color:#778">' + (slotLabels[item.slot] || item.slot) + '</span>');
+    if (isBook && item.bookSkillName) subParts.push('<span style="color:#a78bfa">' + item.bookSkillName + '</span>');
+    if (item.forClass) subParts.push('<span style="color:' + (classColors[item.forClass] || '#aaa') + '">' + (classLabels[item.forClass] || item.forClass) + '</span>');
+    if (!isMy) subParts.push('<span style="color:#556">' + (lst.sellerName || 'Игрок') + '</span>');
 
+    // ── Уровень и зачарование ──
+    var levelBadge = '';
+    if (item.level && item.level > 0) {
+      levelBadge = '<span style="font-size:9px;color:#f5c542;background:rgba(245,197,66,0.12);border:1px solid rgba(245,197,66,0.3);border-radius:4px;padding:1px 5px;margin-left:4px;">Lv.' + item.level + '</span>';
+    }
+    var refineBadge = item.refine
+      ? '<span style="color:#a78bfa;font-size:10px;"> +' + item.refine + '</span>'
+      : '';
+
+    // ── Статы предмета ──
+    var statsHtml = '';
+    if (!isBook && item.stats && Object.keys(item.stats).length > 0) {
+      var statParts = [];
+      Object.keys(item.stats).forEach(function(s) {
+        var val = item.stats[s];
+        if (!val) return;
+        var col  = statColors[s]  || '#aaa';
+        var lbl  = statLabels[s]  || s;
+        statParts.push('<span style="color:' + col + ';background:rgba(255,255,255,0.05);border-radius:4px;padding:1px 5px;font-size:9px;">+' + val + ' ' + lbl + '</span>');
+      });
+      if (statParts.length) {
+        statsHtml = '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:5px;">' + statParts.join('') + '</div>';
+      }
+    }
+    if (isBook && item.bookClass) {
+      statsHtml = '<div style="margin-top:4px;font-size:9px;color:#b88cf8;">Книга навыка · ' + (classLabels[item.bookClass] || item.bookClass) + '</div>';
+    }
+
+    // ── Таймер ──
+    var timeStr   = marketTimeLeft(lst.expiresAt);
+    var diff      = lst.expiresAt - Date.now();
+    var timerColor = diff < 3600000 ? '#e74c3c' : diff < 14400000 ? '#f5c542' : '#2ecc71';
+    var timerHtml = '<div style="display:flex;align-items:center;gap:4px;margin-top:4px;">' +
+      '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" style="flex-shrink:0"><circle cx="5" cy="5" r="4" stroke="' + timerColor + '" stroke-width="1.5" fill="none"/><rect x="4.5" y="2" width="1" height="3" fill="' + timerColor + '"/><rect x="4.5" y="4.5" width="2" height="1" fill="' + timerColor + '"/></svg>' +
+      '<span style="font-size:9px;color:' + timerColor + ';font-family:Courier New,monospace;">' + timeStr + '</span>' +
+    '</div>';
+
+    // ── Кнопка ──
     var actionBtn = '';
     if (isMy) {
       actionBtn = '<button class="market-cancel-btn" onclick="cancelListing(\'' + lst.listingId + '\')">Снять</button>';
     } else {
       var isSelf    = lst.sellerId === (window.GameSync && window.GameSync.getTgId ? window.GameSync.getTgId() : '');
       var canAfford = (G.pixr || 0) >= lst.price;
-      actionBtn = '<button class="market-buy-btn" ' +
-        (isSelf ? 'disabled title="Ваш лот"' : (!canAfford ? 'disabled title="Мало PIXR"' : '')) +
+      actionBtn = '<button class="market-buy-btn"' +
+        (isSelf ? ' disabled title="Ваш лот"' : (!canAfford ? ' disabled title="Мало PIXR"' : '')) +
         ' onclick="buyListing(\'' + lst.listingId + '\', ' + lst.price + ')">' +
         (isSelf ? 'Ваш' : 'Купить') + '</button>';
     }
 
-    html += '<div class="market-listing">' +
-      '<div class="market-listing-icon" style="border-color:' + r.color + '44;">' + iconHtml + '</div>' +
+    html += '<div class="market-listing" style="border-color:' + r.color + '28;">' +
+      '<div class="market-listing-icon" style="border-color:' + r.color + '55;background:rgba(0,0,0,0.35);">' + iconHtml + '</div>' +
       '<div class="market-listing-info">' +
-        '<div class="market-listing-name" style="color:' + r.color + ';">' + (item.name || '—') + (item.refine ? ' <span style="color:#a78bfa">+' + item.refine + '</span>' : '') + '</div>' +
-        '<div class="market-listing-sub">' + subParts.join(' · ') + '</div>' +
-        '<div class="market-lot-timer">⏱ ' + marketTimeLeft(lst.expiresAt) + '</div>' +
+        '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:2px;">' +
+          '<span class="market-listing-name" style="color:' + r.color + ';">' + (item.name || '—') + '</span>' +
+          refineBadge + levelBadge +
+        '</div>' +
+        '<div class="market-listing-sub" style="color:#667;margin-top:2px;">' + subParts.join(' · ') + '</div>' +
+        statsHtml +
+        timerHtml +
       '</div>' +
-      '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">' +
+      '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0;">' +
         '<div class="market-listing-price">' + lst.price.toLocaleString() + ' 💎</div>' +
         actionBtn +
       '</div>' +

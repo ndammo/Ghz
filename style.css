@@ -1430,22 +1430,23 @@ html, body {
 .market-filter-btn.active { border-color: #00c850; background: rgba(0,200,80,0.08); color: #00c850; }
 .market-body { flex: 1; overflow-y: auto; padding: 8px 10px 12px; }
 .market-listing {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: flex-start; gap: 10px;
   background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.07);
-  border-radius: 10px; padding: 8px 10px; margin-bottom: 6px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px; padding: 10px 10px; margin-bottom: 7px;
+  transition: border-color .15s;
 }
 .market-listing:last-child { margin-bottom: 0; }
 .market-listing-icon {
-  width: 40px; height: 40px; flex-shrink: 0;
+  width: 42px; height: 42px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  border-radius: 8px; border: 1.5px solid rgba(255,255,255,0.1);
+  border-radius: 8px; border: 1.5px solid rgba(255,255,255,0.12);
   background: rgba(0,0,0,0.3);
 }
 .market-listing-info { flex: 1; min-width: 0; }
-.market-listing-name { font-size: 11px; color: #ccc; font-family: 'Courier New', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.market-listing-sub { font-size: 9px; color: #445; margin-top: 2px; }
-.market-listing-price { font-size: 11px; font-weight: bold; color: #a78bfa; font-family: 'Courier New', monospace; white-space: nowrap; }
+.market-listing-name { font-size: 12px; font-weight: bold; color: #ddd; font-family: 'Courier New', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.market-listing-sub { font-size: 9px; color: #667; margin-top: 2px; }
+.market-listing-price { font-size: 12px; font-weight: bold; color: #a78bfa; font-family: 'Courier New', monospace; white-space: nowrap; }
 .market-buy-btn {
   flex-shrink: 0; padding: 5px 10px; font-size: 10px;
   font-family: 'Courier New', monospace; border-radius: 8px;
@@ -1461,9 +1462,9 @@ html, body {
   color: #e74c3c; cursor: pointer;
 }
 .market-cancel-btn:active { transform: scale(0.95); }
-.market-empty { text-align: center; color: #445; font-size: 12px; padding: 40px 0; }
-.market-loading { text-align: center; color: #445; font-size: 12px; padding: 30px 0; }
-.market-lot-timer { font-size: 8px; color: #445; margin-top: 1px; }
+.market-empty { text-align: center; color: #556; font-size: 12px; padding: 40px 0; }
+.market-loading { text-align: center; color: #556; font-size: 12px; padding: 30px 0; }
+.market-lot-timer { font-size: 9px; color: #2ecc71; margin-top: 3px; }
 
 /* Модалка продажи */
 .sell-modal {
