@@ -1952,6 +1952,27 @@ function renderMarketListings(listings, isMy) {
     if (item.forClass && item.classLabel) subParts.push(item.classLabel);
     if (!isMy) subParts.push(lst.sellerName || 'Игрок');
 
+    // Бейджи статов
+    var statBadgesHtml = '';
+    if (!isBook && item.stats) {
+      var statCols = { atk: '#ff6b6b', def: '#4ecdc4', hp: '#a8e063', spd: '#f5c542', crit: '#ff9f43', dodge: '#a78bfa' };
+      var statLabelsM = { atk: 'ATK', def: 'DEF', hp: 'HP', spd: 'SPD', crit: 'CRIT', dodge: 'DODGE' };
+      Object.keys(item.stats).forEach(function(s) {
+        if (!item.stats[s]) return;
+        var col = statCols[s] || '#aaa';
+        statBadgesHtml += '<span style="display:inline-block;font-size:9px;padding:1px 5px;border-radius:3px;border:1px solid ' + col + '44;background:' + col + '18;color:' + col + ';margin-right:3px;margin-top:3px;">' +
+          (statLabelsM[s] || s) + ' +' + item.stats[s] + '</span>';
+      });
+      if (item.level) {
+        statBadgesHtml = '<span style="display:inline-block;font-size:9px;padding:1px 5px;border-radius:3px;border:1px solid #55558888;background:rgba(255,255,255,0.04);color:#aaa;margin-right:3px;margin-top:3px;">Lv.' + item.level + '</span>' + statBadgesHtml;
+      }
+    }
+
+    // Таймер с цветом
+    var timeLeft  = lst.expiresAt - Date.now();
+    var timerCol  = timeLeft > 4 * 3600000 ? '#2ecc71' : timeLeft > 3600000 ? '#f5c542' : '#e74c3c';
+    var timerHtml = '<div style="font-size:9px;color:' + timerCol + ';margin-top:4px;">⏱ ' + marketTimeLeft(lst.expiresAt) + '</div>';
+
     var actionBtn = '';
     if (isMy) {
       actionBtn = '<button class="market-cancel-btn" onclick="cancelListing(\'' + lst.listingId + '\')">Снять</button>';
@@ -1969,7 +1990,8 @@ function renderMarketListings(listings, isMy) {
       '<div class="market-listing-info">' +
         '<div class="market-listing-name" style="color:' + r.color + ';">' + (item.name || '—') + (item.refine ? ' <span style="color:#a78bfa">+' + item.refine + '</span>' : '') + '</div>' +
         '<div class="market-listing-sub">' + subParts.join(' · ') + '</div>' +
-        '<div class="market-lot-timer">⏱ ' + marketTimeLeft(lst.expiresAt) + '</div>' +
+        (statBadgesHtml ? '<div style="line-height:1;">' + statBadgesHtml + '</div>' : '') +
+        timerHtml +
       '</div>' +
       '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">' +
         '<div class="market-listing-price">' + lst.price.toLocaleString() + ' 💎</div>' +
