@@ -2484,7 +2484,7 @@ const pvpRooms   = new Map();
 const pvpSockets = new Map();
 
 const PVP_TICK_MS         = 200;
-const PVP_ATK_INTERVAL    = 1.5;
+const PVP_ATK_INTERVAL    = 0.5; // фиксированный интервал атаки для всех
 const PVP_RECONNECT_GRACE = 60;
 const PVP_QUEUE_TIMEOUT   = 60;
 const PVP_WIN_HIGH        = 20;
@@ -2542,7 +2542,7 @@ function pvpTickBuffs(f, dt) {
 
 function pvpEffDef(f)  { var d=f.stats.def||5; if(f.buffs.shield)d=Math.floor(d*f.buffs.shield.defMult); if(f.debuffs.cursed)d=Math.floor(d*f.debuffs.cursed.defMult); return d; }
 function pvpEffCrit(f) { var c=f.stats.crit||5; if(f.buffs.critBoost)c+=f.buffs.critBoost.flat; return c; }
-function pvpAtkInterval(f) { var s=PVP_ATK_INTERVAL/(f.stats.atkSpd||1.0); if(f.buffs.haste)s/=f.buffs.haste.atkSpdMult; return Math.max(0.5,s); }
+function pvpAtkInterval(f) { var s=PVP_ATK_INTERVAL; if(f.buffs.haste)s/=f.buffs.haste.atkSpdMult; return Math.max(0.2,s); }
 
 function pvpTick(room) {
   if (room.finished) return;
