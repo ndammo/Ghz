@@ -159,6 +159,8 @@
       invFilter:           G.invFilter || 'all',
       cp:                  (typeof calcCP === 'function') ? calcCP() : 0,
       arenaRating:         G.arenaRating || 1000,
+      stats:               clone(G.stats || {}),
+      maxHp:               G.maxHp || 100,
       updatedAt:           Date.now(),
     };
   }

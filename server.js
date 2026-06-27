@@ -2619,7 +2619,8 @@ function pvpSimBattle(playerData, opponentData) {
     // Атаки по таймеру
     for (var ai = 0; ai < 2; ai++) {
       fighters[ai].atkTimer += DT;
-      var atkInterval = ATK_INTERVAL;
+      var atkSpd = fighters[ai].stats.atkSpd || 1.0;
+      var atkInterval = Math.max(0.3, ATK_INTERVAL / Math.max(0.1, atkSpd));
       if (fighters[ai].buffs.haste) atkInterval /= fighters[ai].buffs.haste.atkSpdMult;
       atkInterval = Math.max(0.3, atkInterval);
 
@@ -2770,13 +2771,15 @@ app.post('/api/pvp/fight', async (req, res) => {
 
     // Подготавливаем данные игрока
     var playerStats = playerDoc.data.stats || {};
-    var playerMaxHp = playerDoc.data.maxHp || (playerStats.hp) || 100;
+    var playerMaxHp = playerDoc.data.maxHp || playerDoc.data.cp || 100;
     var playerSkills = playerDoc.data.skills || {};
 
     // Данные соперника (из БД — не с клиента)
     var oppStats   = opponentDoc.data.stats || {};
-    var oppMaxHp   = opponentDoc.data.maxHp || (oppStats.hp) || 100;
+    var oppMaxHp   = opponentDoc.data.maxHp || opponentDoc.data.cp || 100;
     var oppSkills  = opponentDoc.data.skills || {};
+
+    console.log(`⚔️  [pvp/fight] player hp=${playerMaxHp} atk=${playerStats.atk} | opp hp=${oppMaxHp} atk=${oppStats.atk}`);
 
     // Симулируем бой
     var result = pvpSimBattle(
