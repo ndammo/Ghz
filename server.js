@@ -138,24 +138,6 @@ MarketListingSchema.index({ sellerId: 1, status: 1 });
 MarketListingSchema.index({ expiresAt: 1 });
 const MarketListing = mongoose.model('MarketListing', MarketListingSchema);
 
-// ── История PvP боёв ──
-const PvpBattleSchema = new mongoose.Schema({
-  roomId:       { type: String, required: true, unique: true },
-  winnerId:     { type: String, required: true, index: true },
-  loserId:      { type: String, required: true, index: true },
-  winnerName:   { type: String, default: '' },
-  loserName:    { type: String, default: '' },
-  winnerCharId: { type: String, default: 'fire' },
-  loserCharId:  { type: String, default: 'fire' },
-  ratingChange: { type: Number, default: 0 },
-  pixrReward:   { type: Number, default: 0 },
-  log:          { type: mongoose.Schema.Types.Mixed, default: [] },
-  createdAt:    { type: Number, default: Date.now },
-});
-PvpBattleSchema.index({ winnerId: 1, createdAt: -1 });
-PvpBattleSchema.index({ loserId:  1, createdAt: -1 });
-const PvpBattle = mongoose.model('PvpBattle', PvpBattleSchema);
-
 // Авто-истечение лотов каждые 10 минут
 setInterval(async () => {
   try {
@@ -181,6 +163,27 @@ setInterval(async () => {
     console.error('❌ [market] expire job error:', e.message);
   }
 }, 10 * 60 * 1000);
+
+// ── PvP история боёв ──
+const PvpBattleSchema = new mongoose.Schema({
+  battleId:     { type: String, required: true, unique: true },
+  attackerId:   { type: String, required: true, index: true },
+  defenderId:   { type: String, required: true },
+  attackerName: { type: String, default: '' },
+  defenderName: { type: String, default: '' },
+  attackerChar: { type: String, default: null },
+  defenderChar: { type: String, default: null },
+  winnerId:     { type: String, required: true },
+  ratingChange: { type: Number, default: 0 },
+  attackerRatingBefore: { type: Number, default: 1000 },
+  defenderRatingBefore: { type: Number, default: 1000 },
+  attackerDmgDealt: { type: Number, default: 0 },
+  defenderDmgDealt: { type: Number, default: 0 },
+  createdAt:    { type: Number, default: Date.now },
+}, { minimize: false });
+PvpBattleSchema.index({ attackerId: 1, createdAt: -1 });
+PvpBattleSchema.index({ defenderId: 1, createdAt: -1 });
+const PvpBattle = mongoose.model('PvpBattle', PvpBattleSchema);
 
 // ── Специальные задания ──
 const SpecialTaskSchema = new mongoose.Schema({
@@ -494,16 +497,6 @@ app.post('/api/save', async (req, res) => {
         if (currentDoc.data.pixr      !== undefined) data.pixr      = currentDoc.data.pixr;
         if (currentDoc.data.inventory !== undefined) data.inventory = currentDoc.data.inventory;
         data._adminUpdatedAt = adminUpdatedAt;
-      }
-
-      // ✅ Защита arenaRating — PvP сервер обновляет его напрямую через $inc,
-      // клиент может прислать устаревшее значение — берём максимум
-      const srvRating = currentDoc.data.arenaRating;
-      const cliRating = data.arenaRating;
-      if (typeof srvRating === 'number' && typeof cliRating === 'number') {
-        data.arenaRating = Math.max(srvRating, cliRating);
-      } else if (typeof srvRating === 'number') {
-        data.arenaRating = srvRating;
       }
     }
 
@@ -1204,9 +1197,9 @@ function initBot() {
         console.log('📨 [bot] /start от ' + username + ' (' + userId + '), param: ' + (startParam || 'none'));
 
         let webappUrl = WEBAPP_URL;
-if (startParam) {
-  webappUrl = webappUrl + '?start_param=' + startParam;
-}
+        if (startParam) {
+          webappUrl = webappUrl + '?startapp=' + startParam;
+        }
 
         const hour = new Date().getHours();
         let greeting = 'Добрый день';
@@ -2392,6 +2385,279 @@ app.post('/api/upgrade', async (req, res) => {
 
 
 // ═══════════════════════════════
+//  PvP АРЕНА
+// ═══════════════════════════════
+
+// Базовые статы персонажей (зеркало data.js CHARS.baseStats)
+const CHARS_BASE = {
+  fire:  { atk: 18, def: 4,  spd: 3,  hp: 85,  crit: 6,  dodge: 3, atkSpd: 1.2, critDmg: 0 },
+  light: { atk: 8,  def: 14, spd: 3,  hp: 130, crit: 4,  dodge: 4, atkSpd: 0.8, critDmg: 0 },
+  water: { atk: 12, def: 6,  spd: 4,  hp: 95,  crit: 22, dodge: 5, atkSpd: 1.0, critDmg: 0 },
+};
+
+// Зеркало UPG_DEFS из data.js
+const UPG_DEFS_SRV = [
+  { id: 'atk',     stat: 'atk',     bonus: 3    },
+  { id: 'def',     stat: 'def',     bonus: 2    },
+  { id: 'hp',      stat: 'hp',      bonus: 15   },
+  { id: 'spd',     stat: 'spd',     bonus: 1    },
+  { id: 'atkSpd',  stat: 'atkSpd',  bonus: 0.15 },
+  { id: 'crit',    stat: 'crit',    bonus: 3    },
+  { id: 'critDmg', stat: 'critDmg', bonus: 0.1  },
+  { id: 'dodge',   stat: 'dodge',   bonus: 2    },
+];
+
+// Пересчёт полных статов игрока (база + улучшения + уровень + экипировка)
+// Зеркало логики applySnapshot + recalcStats с клиента
+function calcFullStats(data) {
+  const charId = data.charId;
+  const charBase = CHARS_BASE[charId];
+  if (!charBase) return data.stats || {};
+
+  // 1. Начинаем с базы персонажа
+  const base = Object.assign({}, charBase);
+
+  // 2. Применяем улучшения (upg)
+  const upg = data.upg || {};
+  UPG_DEFS_SRV.forEach(u => {
+    const lv = upg[u.id] || 0;
+    if (lv > 0) {
+      base[u.stat] = parseFloat(((base[u.stat] || 0) + u.bonus * lv).toFixed(4));
+    }
+  });
+
+  // 3. Бонусы уровня (как в applySnapshot)
+  const lvBonuses = (data.level || 1) - 1;
+  if (lvBonuses > 0) {
+    base.atk    = (base.atk    || 0) + lvBonuses * 2;
+    base.def    = (base.def    || 0) + lvBonuses * 1;
+    base.hp     = (base.hp     || 0) + lvBonuses * 10;
+    base.atkSpd = parseFloat(((base.atkSpd || 1.0) + lvBonuses * 0.02).toFixed(4));
+  }
+
+  // 4. Суммируем бонусы от экипировки
+  // inventory хранит полные объекты, equipped хранит id предметов
+  const inventory = data.inventory || [];
+  const equipped  = data.equipped  || {};
+  const EQUIP_SLOTS = ['weapon','body','legs','gloves','belt','ring','boots','helmet'];
+  const bonus = { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0, critDmg: 0 };
+
+  EQUIP_SLOTS.forEach(slot => {
+    const itemId = equipped[slot];
+    if (!itemId) return;
+    // Ищем предмет в инвентаре по id
+    const item = inventory.find(i => i.id === itemId);
+    if (!item || !item.stats) return;
+    Object.keys(item.stats).forEach(stat => {
+      bonus[stat] = (bonus[stat] || 0) + (item.stats[stat] || 0);
+    });
+  });
+
+  // 5. Итоговые статы
+  const stats = {};
+  ['atk','def','hp','spd','crit','dodge','atkSpd','critDmg'].forEach(s => {
+    stats[s] = (base[s] || 0) + (bonus[s] || 0);
+  });
+  stats.hp    = Math.floor(stats.hp);
+  stats.atk   = Math.floor(stats.atk);
+  stats.def   = Math.floor(stats.def);
+  stats.crit  = Math.floor(stats.crit);
+  stats.dodge = Math.floor(stats.dodge);
+  stats.atkSpd = parseFloat((stats.atkSpd || 1.0).toFixed(4));
+
+  return stats;
+}
+
+// Получить 3 случайных противника из рейтинга ±200 очков
+app.post('/api/pvp/opponents', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  try {
+    const doc = await Save.findOne({ tgId: tg.id }).lean();
+    if (!doc || !doc.data) return res.json({ ok: false, error: 'no_save' });
+
+    const myRating = doc.data.arenaRating || 1000;
+    const minR = myRating - 200;
+    const maxR = myRating + 200;
+
+    // Берём игроков в диапазоне рейтинга, исключая себя
+    const pool = await Save.find({
+      tgId: { $ne: tg.id },
+      'data.arenaRating': { $gte: minR, $lte: maxR },
+      'data.charId': { $ne: null },
+    }, 'tgId firstName username charId data.arenaRating data.stats data.baseStats data.upg data.skills data.equipped data.level data.charId').lean();
+
+    // Если мало игроков в диапазоне — добавляем произвольных
+    let candidates = pool;
+    if (candidates.length < 5) {
+      const extra = await Save.find({
+        tgId: { $ne: tg.id },
+        'data.charId': { $ne: null },
+      }, 'tgId firstName username charId data.arenaRating data.stats data.baseStats data.upg data.skills data.equipped data.level data.charId').limit(30).lean();
+      const extraFiltered = extra.filter(e => !candidates.find(c => c.tgId === e.tgId));
+      candidates = candidates.concat(extraFiltered);
+    }
+
+    // Перемешиваем и берём 3
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
+    const chosen = candidates.slice(0, 3).map(p => {
+      const d = p.data || {};
+      const fullStats = calcFullStats(d);
+      return {
+        tgId:     p.tgId,
+        name:     p.firstName || p.username || 'Игрок',
+        charId:   d.charId || p.charId,
+        level:    d.level  || 1,
+        rating:   d.arenaRating || 1000,
+        stats:    fullStats,
+        maxHp:    fullStats.hp || 100,
+        skills:   d.skills || {},
+      };
+    });
+
+    res.json({ ok: true, opponents: chosen, myRating });
+  } catch (e) {
+    console.error('❌ [pvp/opponents]', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// Сохранить результат PvP боя
+app.post('/api/pvp/result', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  try {
+    const { opponentId, won, myDmg, oppDmg } = req.body;
+    if (!opponentId) return res.json({ ok: false, error: 'bad_params' });
+
+    const [myDoc, oppDoc] = await Promise.all([
+      Save.findOne({ tgId: tg.id }).lean(),
+      Save.findOne({ tgId: opponentId }).lean(),
+    ]);
+    if (!myDoc || !myDoc.data) return res.json({ ok: false, error: 'no_save' });
+
+    // Проверка попыток (10 в день, сброс в полночь UTC)
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const data = myDoc.data;
+    const pvpDate = data.pvpAttemptsDate || '';
+    let pvpAttempts = (pvpDate === todayStr) ? (data.pvpAttempts || 0) : 0;
+
+    if (pvpAttempts >= 10) {
+      return res.json({ ok: false, error: 'no_attempts' });
+    }
+
+    const myRating   = data.arenaRating || 1000;
+    const oppRating  = (oppDoc && oppDoc.data && oppDoc.data.arenaRating) || 1000;
+
+    // Очки: победа над сильнее = +10, над слабее = +5; поражение = -5
+    let ratingChange = 0;
+    if (won) {
+      ratingChange = (oppRating >= myRating) ? 10 : 5;
+    } else {
+      ratingChange = -5;
+    }
+
+    const newMyRating  = Math.max(0, myRating + ratingChange);
+    const newOppRating = oppDoc ? Math.max(0, oppRating + (won ? 0 : 0)) : oppRating;
+    const now = Date.now();
+
+    // Обновляем рейтинг атакующего
+    await Save.findOneAndUpdate(
+      { tgId: tg.id },
+      {
+        $set: {
+          'data.arenaRating':      newMyRating,
+          'data.pvpAttempts':      pvpAttempts + 1,
+          'data.pvpAttemptsDate':  todayStr,
+          'data.updatedAt':        now,
+          updatedAt:               now,
+        }
+      }
+    );
+
+    // Сохраняем историю боя
+    const battleId = tg.id + '_' + opponentId + '_' + now;
+    const oppName  = (oppDoc && (oppDoc.firstName || oppDoc.username)) || 'Игрок';
+    const oppChar  = (oppDoc && oppDoc.data && oppDoc.data.charId) || null;
+
+    await PvpBattle.create({
+      battleId,
+      attackerId:   tg.id,
+      defenderId:   opponentId,
+      attackerName: tg.firstName || tg.username || 'Игрок',
+      defenderName: oppName,
+      attackerChar: data.charId || null,
+      defenderChar: oppChar,
+      winnerId:     won ? tg.id : opponentId,
+      ratingChange,
+      attackerRatingBefore: myRating,
+      defenderRatingBefore: oppRating,
+      attackerDmgDealt: myDmg || 0,
+      defenderDmgDealt: oppDmg || 0,
+      createdAt: now,
+    }).catch(() => {}); // Игнорируем ошибки дубликата
+
+    res.json({
+      ok: true,
+      won,
+      ratingChange,
+      newRating: newMyRating,
+      attemptsLeft: 10 - (pvpAttempts + 1),
+    });
+  } catch (e) {
+    console.error('❌ [pvp/result]', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// Топ-50 по рейтингу арены
+app.post('/api/pvp/rating', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  try {
+    const top = await Save.find(
+      { 'data.arenaRating': { $exists: true }, 'data.charId': { $ne: null } },
+      'tgId firstName username charId data.arenaRating data.level data.charId'
+    ).sort({ 'data.arenaRating': -1 }).limit(50).lean();
+
+    const players = top.map(p => ({
+      tgId:   p.tgId,
+      name:   p.firstName || p.username || 'Игрок',
+      charId: (p.data && p.data.charId) || p.charId,
+      level:  (p.data && p.data.level) || 1,
+      rating: (p.data && p.data.arenaRating) || 1000,
+    }));
+
+    const myDoc = await Save.findOne({ tgId: tg.id }, 'data.arenaRating').lean();
+    const myRating = (myDoc && myDoc.data && myDoc.data.arenaRating) || 1000;
+
+    res.json({ ok: true, players, myRating, tgId: tg.id });
+  } catch (e) {
+    console.error('❌ [pvp/rating]', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// История боёв (20 последних)
+app.post('/api/pvp/history', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  try {
+    const battles = await PvpBattle.find({
+      $or: [{ attackerId: tg.id }, { defenderId: tg.id }]
+    }).sort({ createdAt: -1 }).limit(20).lean();
+
+    res.json({ ok: true, battles, tgId: tg.id });
+  } catch (e) {
+    console.error('❌ [pvp/history]', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ═══════════════════════════════
 //  БОТ: внутренний роут для транзакций
 // ═══════════════════════════════
 app.post('/bot/transaction/:txId/:action', async (req, res) => {
@@ -2470,209 +2736,3 @@ server.listen(PORT, () => {
   console.log(`🚀 Server on :${PORT}`);
   console.log(`📊 MongoDB: 5GB, Pool: 50`);
 });
-// ═══════════════════════════════════════════════════════
-//  PvP — REST (симуляция боя на сервере, без Socket.IO)
-// ═══════════════════════════════════════════════════════
-
-const PVP_WIN_RATING    =  5;   // победа: +5
-const PVP_LOSE_RATING   = -4;   // поражение: -4
-const PVP_WIN_PIXR      =  1;   // победа: +1 PIXR
-const PVP_MAX_BATTLES   = 10;   // боёв в день
-const PVP_MAX_REFRESHES =  5;   // обновлений соперников в день
-
-// ─── Утилита: сброс дневных счётчиков ──────────────────
-function pvpGetDailyData(userData) {
-  var today = new Date().toISOString().slice(0, 10);
-  var pvp = (userData && userData.pvpDaily) || {};
-  if (pvp.date !== today) {
-    return { date: today, battlesLeft: PVP_MAX_BATTLES, refreshesLeft: PVP_MAX_REFRESHES, opponents: null };
-  }
-  return pvp;
-}
-
-// ─── GET соперников ────────────────────────────────────
-app.post('/api/pvp/opponents', async (req, res) => {
-  const tg = authUser(req, res); if (!tg) return;
-  try {
-    const userDoc = await Save.findOne({ tgId: tg.id }).lean();
-    if (!userDoc || !userDoc.data) return res.status(404).json({ ok: false, error: 'no_save' });
-
-    var daily = pvpGetDailyData(userDoc.data);
-    var myRating = (userDoc.data.arenaRating) || 1000;
-
-    // Возвращаем закешированных соперников если они есть и обновление не запрошено
-    var forceRefresh = req.body && req.body.refresh;
-    if (!forceRefresh && daily.opponents && daily.opponents.length > 0) {
-      return res.json({ ok: true, opponents: daily.opponents, daily });
-    }
-
-    // Проверяем лимит обновлений
-    if (forceRefresh && daily.refreshesLeft <= 0) {
-      return res.status(400).json({ ok: false, error: 'no_refreshes', daily });
-    }
-
-    // Ищем ±10 игроков по рейтингу
-    var pool = await Save.find({
-      tgId: { $ne: tg.id },
-      charId: { $ne: null },
-      'data.arenaRating': {
-        $gte: Math.max(0, myRating - 200),
-        $lte: myRating + 200
-      }
-    }).select('tgId firstName username charId data.arenaRating data.stats data.maxHp data.skills data.cp -_id').limit(50).lean();
-
-    // Если мало — расширяем диапазон
-    if (pool.length < 3) {
-      pool = await Save.find({
-        tgId: { $ne: tg.id },
-        charId: { $ne: null },
-      }).sort({ 'data.arenaRating': -1 }).select('tgId firstName username charId data.arenaRating data.stats data.maxHp data.skills data.cp -_id').limit(50).lean();
-    }
-
-    // Берём ближайших 10 по рейтингу и рандомим 3
-    pool.sort(function(a, b) {
-      var ra = (a.data && a.data.arenaRating) || 1000;
-      var rb = (b.data && b.data.arenaRating) || 1000;
-      return Math.abs(ra - myRating) - Math.abs(rb - myRating);
-    });
-    var nearest10 = pool.slice(0, 10);
-
-    // Случайно выбираем 3
-    var shuffled = nearest10.sort(function() { return Math.random() - 0.5; });
-    var chosen3  = shuffled.slice(0, Math.min(3, shuffled.length));
-
-    var opponents = chosen3.map(function(u) {
-      return {
-        tgId:        u.tgId,
-        name:        u.firstName || u.username || 'Игрок',
-        charId:      u.charId || 'fire',
-        arenaRating: (u.data && u.data.arenaRating) || 1000,
-        cp:          (u.data && u.data.cp) || 0,
-        stats:       (u.data && u.data.stats) || {},
-        maxHp:       (u.data && u.data.maxHp) || 100,
-        skills:      (u.data && u.data.skills) || {},
-      };
-    });
-
-    // Сохраняем соперников и обновляем счётчик
-    if (forceRefresh) daily.refreshesLeft = Math.max(0, (daily.refreshesLeft || PVP_MAX_REFRESHES) - 1);
-    daily.opponents = opponents;
-
-    await Save.findOneAndUpdate(
-      { tgId: tg.id },
-      { $set: { 'data.pvpDaily': daily, updatedAt: Date.now() } }
-    );
-
-    res.json({ ok: true, opponents, daily });
-  } catch(e) {
-    console.error('❌ [pvp/opponents] error:', e.message);
-    res.status(500).json({ ok: false, error: 'server_error' });
-  }
-});
-
-// ─── Провести бой ─────────────────────────────────────
-const _pvpFightLocks = new Set();
-app.post('/api/pvp/fight', async (req, res) => {
-  const tg = authUser(req, res); if (!tg) return;
-  if (_pvpFightLocks.has(tg.id)) return res.status(429).json({ ok: false, error: 'in_progress' });
-  _pvpFightLocks.add(tg.id);
-  try {
-    const { opponentTgId, clientResult } = req.body || {};
-    if (!opponentTgId) return res.status(400).json({ ok: false, error: 'missing_opponent' });
-
-    const [playerDoc, opponentDoc] = await Promise.all([
-      Save.findOne({ tgId: tg.id }).lean(),
-      Save.findOne({ tgId: String(opponentTgId) }).lean(),
-    ]);
-
-    if (!playerDoc || !playerDoc.data) return res.status(404).json({ ok: false, error: 'no_save' });
-    if (!opponentDoc || !opponentDoc.data) return res.status(400).json({ ok: false, error: 'opponent_not_found' });
-
-    var daily = pvpGetDailyData(playerDoc.data);
-    if (daily.battlesLeft <= 0) {
-      return res.status(400).json({ ok: false, error: 'no_battles_left' });
-    }
-
-    // Результат пришёл с клиента — бой прошёл локально на канвасе
-    var isWin = clientResult === true;
-    var myRatingChange = isWin ? PVP_WIN_RATING : PVP_LOSE_RATING;
-    var myRating  = (playerDoc.data.arenaRating) || 1000;
-    var newRating = Math.max(0, myRating + myRatingChange);
-
-    daily.battlesLeft = Math.max(0, (daily.battlesLeft || PVP_MAX_BATTLES) - 1);
-    if (daily.opponents) {
-      daily.opponents = daily.opponents.filter(function(o) { return o.tgId !== String(opponentTgId); });
-    }
-
-    var setObj  = { 'data.pvpDaily': daily, 'data.arenaRating': newRating, updatedAt: Date.now() };
-    var updateOp = { $set: setObj };
-    if (isWin) updateOp.$inc = { 'data.pixr': PVP_WIN_PIXR };
-    await Save.findOneAndUpdate({ tgId: tg.id }, updateOp);
-
-    var roomId = 'pvp_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-    await PvpBattle.create({
-      roomId,
-      winnerId:     isWin ? tg.id : String(opponentTgId),
-      loserId:      isWin ? String(opponentTgId) : tg.id,
-      winnerName:   isWin ? (playerDoc.firstName||playerDoc.username||'Игрок') : (opponentDoc.firstName||opponentDoc.username||'Игрок'),
-      loserName:    isWin ? (opponentDoc.firstName||opponentDoc.username||'Игрок') : (playerDoc.firstName||playerDoc.username||'Игрок'),
-      winnerCharId: isWin ? (playerDoc.charId||'fire') : (opponentDoc.charId||'fire'),
-      loserCharId:  isWin ? (opponentDoc.charId||'fire') : (playerDoc.charId||'fire'),
-      ratingChange: PVP_WIN_RATING,
-      pixrReward:   isWin ? PVP_WIN_PIXR : 0,
-      log:          [],
-      createdAt:    Date.now(),
-    });
-
-    console.log(`⚔️  [pvp] ${tg.id} vs ${opponentTgId} → ${isWin?'WIN':'LOSE'} (${myRatingChange})`);
-    res.json({ ok: true });
-  } catch(e) {
-    console.error('❌ [pvp/fight] error:', e.message);
-    res.status(500).json({ ok: false, error: 'server_error' });
-  } finally {
-    _pvpFightLocks.delete(tg.id);
-  }
-});
-
-// ─── Рейтинг ──────────────────────────────────────────
-app.post('/api/pvp/rating', async (req, res) => {
-  const tg = authUser(req, res); if (!tg) return;
-  try {
-    const top = await Save.find({ charId: { $ne: null } })
-      .sort({ 'data.arenaRating': -1 }).limit(50)
-      .select('tgId firstName username data.arenaRating -_id').lean();
-    const me  = await Save.findOne({ tgId: tg.id }, { 'data.arenaRating': 1, 'data.pvpDaily': 1 }).lean();
-    res.json({
-      ok: true,
-      top: top.map(function(u, i) {
-        return { rank: i+1, name: u.firstName||u.username||'Игрок', rating: (u.data&&u.data.arenaRating)||1000, tgId: u.tgId };
-      }),
-      myRating: me&&me.data&&typeof me.data.arenaRating==='number' ? me.data.arenaRating : 1000,
-      daily: me&&me.data ? pvpGetDailyData(me.data) : null,
-    });
-  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ─── История ──────────────────────────────────────────
-app.post('/api/pvp/history', async (req, res) => {
-  const tg = authUser(req, res); if (!tg) return;
-  const myId = String(tg.id);
-  try {
-    const battles = await PvpBattle.find({
-      $or: [{ winnerId: myId }, { loserId: myId }]
-    }).sort({ createdAt: -1 }).limit(20).lean();
-    const list = battles.map(function(b) {
-      const isWin = b.winnerId === myId;
-      return {
-        result:         isWin ? 'win' : 'loss',
-        opponentName:   isWin ? b.loserName  : b.winnerName,
-        opponentCharId: isWin ? b.loserCharId: b.winnerCharId,
-        ratingChange:   isWin ? b.ratingChange : -b.ratingChange,
-        pixrReward:     isWin ? b.pixrReward : 0,
-        createdAt:      b.createdAt,
-      };
-    });
-    res.json({ ok: true, history: list });
-  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
