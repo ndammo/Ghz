@@ -1343,7 +1343,7 @@ html, body {
 
 .pvp-hud-btn {
   position: absolute; z-index: 52;
-  right: 8px; top: 228px;
+  right: 60px; top: 98px;
   width: 44px; height: 36px;
   border-radius: 8px;
   background: rgba(5,0,20,0.88);
