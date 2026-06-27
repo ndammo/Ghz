@@ -2483,8 +2483,8 @@ const pvpQueue   = new Map();
 const pvpRooms   = new Map();
 const pvpSockets = new Map();
 
-const PVP_TICK_MS         = 500;
-const PVP_ATK_INTERVAL    = 2.5;
+const PVP_TICK_MS         = 200;
+const PVP_ATK_INTERVAL    = 1.5;
 const PVP_RECONNECT_GRACE = 60;
 const PVP_QUEUE_TIMEOUT   = 60;
 const PVP_WIN_HIGH        = 20;
@@ -2678,20 +2678,9 @@ io.on('connection', function(socket) {
       var d = save.data;
       var charId = (d.char&&d.char.id) || d.charId || 'fire';
 
-      // ── Используем актуальные stats с клиента ──
-      // Клиент передаёт recalcStats() результат (с экипировкой и апгрейдами)
-      // Валидация: HP не может быть больше чем base hp * 5 (защита от читов)
-      var clientStats = data.stats || {};
-      var clientMaxHp = data.maxHp || 0;
-      var dbBaseHp = (d.stats && d.stats.hp) || 100;
-      var maxAllowedHp = dbBaseHp * 10; // разрешаем до 10x от базы (экипировка)
-
-      var finalStats = (clientStats.atk && clientMaxHp && clientMaxHp <= maxAllowedHp)
-        ? clientStats
-        : (d.stats || {});
-      var finalMaxHp = (clientMaxHp > 0 && clientMaxHp <= maxAllowedHp)
-        ? clientMaxHp
-        : (d.maxHp || dbBaseHp || 100);
+      // ── Берём все статы с клиента как есть (recalcStats с экипировкой и апгрейдами) ──
+      var finalStats = (data.stats && data.stats.atk) ? data.stats : (d.stats || {});
+      var finalMaxHp = (data.maxHp > 0) ? data.maxHp : (d.maxHp || (d.stats && d.stats.hp) || 100);
 
       pvpQueue.set(myTgId, {
         tgId: myTgId,
