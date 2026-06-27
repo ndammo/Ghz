@@ -2023,7 +2023,7 @@ app.get('/admin', (req, res) => {
 //  МАРКЕТ
 // ═══════════════════════════════
 
-const MARKET_OPEN_COST  = 1000;
+const MARKET_OPEN_COST  = 1;
 const MARKET_MAX_LOTS   = 3;
 const MARKET_TTL_MS     = 48 * 60 * 60 * 1000; // 48 часов
 const MARKET_COMMISSION = 0.10;
