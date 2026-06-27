@@ -2483,7 +2483,7 @@ const pvpQueue   = new Map();
 const pvpRooms   = new Map();
 const pvpSockets = new Map();
 
-const PVP_TICK_MS         = 500;
+const PVP_TICK_MS         = 200;
 const PVP_ATK_INTERVAL    = 1; // фиксированный интервал атаки для всех
 const PVP_RECONNECT_GRACE = 60;
 const PVP_QUEUE_TIMEOUT   = 60;
