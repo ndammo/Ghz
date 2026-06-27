@@ -2797,16 +2797,11 @@ app.post('/api/pvp/fight', async (req, res) => {
     }
 
     // Атомарно сохраняем результат
-    var incObj = { 'data.arenaRating': myRatingChange };
-    if (isWin) incObj['data.pixr'] = PVP_WIN_PIXR;
+    var setObj = { 'data.pvpDaily': daily, 'data.arenaRating': newRating, updatedAt: Date.now() };
+    var updateOp = { $set: setObj };
+    if (isWin) updateOp.$inc = { 'data.pixr': PVP_WIN_PIXR };
 
-    await Save.findOneAndUpdate(
-      { tgId: tg.id },
-      {
-        $inc: incObj,
-        $set: { 'data.pvpDaily': daily, 'data.arenaRating': newRating, updatedAt: Date.now() }
-      }
-    );
+    await Save.findOneAndUpdate({ tgId: tg.id }, updateOp);
 
     // Запись в историю
     var roomId = 'pvp_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
