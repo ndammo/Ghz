@@ -2379,29 +2379,36 @@ function _pvpShowResult(isWin, ratingChange, newRating, pixrReward, oppName) {
   var modal = document.getElementById('pvpResultModal');
   var box   = document.getElementById('pvpResultBox');
   if (!modal || !box) return;
-  var rc = ratingChange;
+  var rc      = ratingChange;
+  var mono    = "font-family:'Courier New',monospace";
+  var rcColor = rc >= 0 ? '#2ecc71' : '#e74c3c';
+  var rcSign  = rc >= 0 ? '+' : '';
+  var rewardRow = (isWin && pixrReward)
+    ? ('<div style="display:flex;justify-content:space-between;font-size:12px;' + mono + ';"><span style="color:#778;">Награда</span><span style="color:#ff44cc;font-weight:bold;">+' + pixrReward + ' PIXR</span></div>')
+    : '';
   box.innerHTML =
     '<div style="text-align:center;padding:18px 14px;">' +
     '<div style="font-size:48px;margin-bottom:6px;">' + (isWin ? '🏆' : '💀') + '</div>' +
-    '<div style="font-size:20px;font-weight:bold;font-family:'Courier New',monospace;color:' + (isWin ? '#ffd700' : '#e74c3c') + ';margin-bottom:4px;">' + (isWin ? 'ПОБЕДА!' : 'ПОРАЖЕНИЕ') + '</div>' +
+    '<div style="font-size:20px;font-weight:bold;' + mono + ';color:' + (isWin ? '#ffd700' : '#e74c3c') + ';margin-bottom:4px;">' + (isWin ? 'ПОБЕДА!' : 'ПОРАЖЕНИЕ') + '</div>' +
     '<div style="font-size:11px;color:#778;margin-bottom:16px;">vs ' + oppName + '</div>' +
     '<div style="background:rgba(255,255,255,0.04);border-radius:10px;padding:12px 14px;margin-bottom:14px;text-align:left;">' +
-      '<div style="display:flex;justify-content:space-between;font-size:12px;font-family:'Courier New',monospace;margin-bottom:8px;">' +
-        '<span style="color:#778;">Рейтинг</span><span style="color:' + (rc >= 0 ? '#2ecc71' : '#e74c3c') + ';font-weight:bold;">' + (rc >= 0 ? '+' : '') + rc + '</span>' +
+      '<div style="display:flex;justify-content:space-between;font-size:12px;' + mono + ';margin-bottom:8px;">' +
+        '<span style="color:#778;">Рейтинг</span>' +
+        '<span style="color:' + rcColor + ';font-weight:bold;">' + rcSign + rc + '</span>' +
       '</div>' +
-      '<div style="display:flex;justify-content:space-between;font-size:12px;font-family:'Courier New',monospace;' + (isWin && pixrReward ? 'margin-bottom:8px;' : '') + '">' +
-        '<span style="color:#778;">Новый рейтинг</span><span style="color:#a78bfa;font-weight:bold;">★ ' + newRating + '</span>' +
+      '<div style="display:flex;justify-content:space-between;font-size:12px;' + mono + ';">' +
+        '<span style="color:#778;">Новый рейтинг</span>' +
+        '<span style="color:#a78bfa;font-weight:bold;">★ ' + newRating + '</span>' +
       '</div>' +
-      (isWin && pixrReward ? '<div style="display:flex;justify-content:space-between;font-size:12px;font-family:'Courier New',monospace;"><span style="color:#778;">Награда</span><span style="color:#ff44cc;font-weight:bold;">+' + pixrReward + ' 💎 PIXR</span></div>' : '') +
+      rewardRow +
     '</div>' +
     '<div style="display:flex;gap:8px;">' +
-      '<button onclick="pvpCloseResult();switchPvpTab('fight')" style="flex:1;padding:10px 8px;background:rgba(160,100,255,0.2);border:1px solid rgba(160,100,255,0.5);border-radius:8px;color:#c090ff;font-size:12px;cursor:pointer;">⚔️ Ещё бой</button>' +
-      '<button onclick="pvpCloseResult();switchPvpTab('history')" style="flex:1;padding:10px 8px;background:rgba(255,255,255,0.04);border:1px solid #333;border-radius:8px;color:#778;font-size:12px;cursor:pointer;">📜 История</button>' +
+      '<button onclick="pvpCloseResult();switchPvpTab(\'fight\')" style="flex:1;padding:10px 8px;background:rgba(160,100,255,0.2);border:1px solid rgba(160,100,255,0.5);border-radius:8px;color:#c090ff;font-size:12px;cursor:pointer;">⚔️ Ещё бой</button>' +
+      '<button onclick="pvpCloseResult();switchPvpTab(\'history\')" style="flex:1;padding:10px 8px;background:rgba(255,255,255,0.04);border:1px solid #333;border-radius:8px;color:#778;font-size:12px;cursor:pointer;">История</button>' +
     '</div>' +
     '</div>';
   modal.classList.remove('hidden');
 }
-
 function _pvpStopBattleCanvas() {
   _pvpBattleActive = false;
   _pvpFighting = false;
