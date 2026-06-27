@@ -512,8 +512,9 @@ function openItemModal(itemId) {
       Object.keys(equippedItem.stats).forEach(function(s) {
         if (!equippedItem.stats[s]) return;
         var d = (item.stats[s] || 0) - (equippedItem.stats[s] || 0);
-        var diffStr = d > 0 ? ' <span style="color:#2ecc71;font-size:10px;">▲+' + d + '</span>'
-                   : d < 0 ? ' <span style="color:#e74c3c;font-size:10px;">▼' + d + '</span>'
+        // На надетом инвертируем: если новый лучше (d>0) — надетый хуже → ▼
+        var diffStr = d > 0 ? ' <span style="color:#e74c3c;font-size:10px;">▼-' + d + '</span>'
+                   : d < 0 ? ' <span style="color:#2ecc71;font-size:10px;">▲+' + (-d) + '</span>'
                    : ' <span style="color:#556;font-size:10px;">=</span>';
         eqStatRows += '<div class="modal-stat-row" style="font-size:11px;"><span style="color:#667">' + (statLabels[s] || s) + '</span><span style="color:#999;">+' + equippedItem.stats[s] + diffStr + '</span></div>';
       });
