@@ -1204,9 +1204,9 @@ function initBot() {
         console.log('📨 [bot] /start от ' + username + ' (' + userId + '), param: ' + (startParam || 'none'));
 
         let webappUrl = WEBAPP_URL;
-        if (startParam) {
-          webappUrl = webappUrl + '?startapp=' + startParam;
-        }
+if (startParam) {
+  webappUrl = webappUrl + '?start_param=' + startParam;
+}
 
         const hour = new Date().getHours();
         let greeting = 'Добрый день';
