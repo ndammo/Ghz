@@ -2480,6 +2480,79 @@ const PVP_WIN_PIXR      =  1;   // победа: +1 PIXR
 const PVP_MAX_BATTLES   = 10;   // боёв в день
 const PVP_MAX_REFRESHES =  5;   // обновлений соперников в день
 
+// ─── Пересчёт статов игрока из сохранённых данных ──────
+// Аналог applySnapshot+recalcStats на клиенте.
+// НЕ учитывает atkSpd и spd (по условию задачи).
+var PVP_CHARS_BASE = {
+  fire:  { atk: 18, def: 4,  hp: 85,  crit: 6,  dodge: 3, critDmg: 0 },
+  light: { atk: 8,  def: 14, hp: 130, crit: 4,  dodge: 4, critDmg: 0 },
+  water: { atk: 12, def: 6,  hp: 95,  crit: 22, dodge: 5, critDmg: 0 },
+};
+var PVP_UPG_DEFS = [
+  { id: 'atk',     stat: 'atk',     bonus: 3   },
+  { id: 'def',     stat: 'def',     bonus: 2   },
+  { id: 'hp',      stat: 'hp',      bonus: 15  },
+  { id: 'crit',    stat: 'crit',    bonus: 3   },
+  { id: 'critDmg', stat: 'critDmg', bonus: 0.1 },
+  { id: 'dodge',   stat: 'dodge',   bonus: 2   },
+  // spd и atkSpd намеренно исключены
+];
+
+function pvpCalcStats(data) {
+  if (!data) return { stats: { atk: 10, def: 5, hp: 100, crit: 5, dodge: 3, critDmg: 0 }, maxHp: 100 };
+
+  var charId = data.charId || 'fire';
+  var base = Object.assign({ atk: 10, def: 5, hp: 100, crit: 5, dodge: 3, critDmg: 0 },
+                            PVP_CHARS_BASE[charId] || {});
+
+  // Бонус от уровня (как в applySnapshot)
+  var level = Number(data.level) || 1;
+  var lvBonuses = level - 1;
+  if (lvBonuses > 0) {
+    base.atk = (base.atk || 0) + lvBonuses * 2;
+    base.def = (base.def || 0) + lvBonuses * 1;
+    base.hp  = (base.hp  || 0) + lvBonuses * 10;
+  }
+
+  // Бонус от улучшений (upg)
+  var upg = data.upg || {};
+  PVP_UPG_DEFS.forEach(function(u) {
+    var lv = Number(upg[u.id]) || 0;
+    if (lv > 0) {
+      base[u.stat] = parseFloat(((base[u.stat] || 0) + u.bonus * lv).toFixed(4));
+    }
+  });
+
+  // Бонус от экипировки
+  // data.inventory — массив предметов, data.equipped — { slot: itemId }
+  var invMap = {};
+  if (Array.isArray(data.inventory)) {
+    data.inventory.forEach(function(it) { if (it && it.id != null) invMap[it.id] = it; });
+  }
+  var equippedObj = data.equipped || {};
+  var equipBonus = { atk: 0, def: 0, hp: 0, crit: 0, dodge: 0, critDmg: 0 };
+  Object.values(equippedObj).forEach(function(idOrItem) {
+    if (!idOrItem) return;
+    var item = (typeof idOrItem === 'object') ? idOrItem : invMap[idOrItem];
+    if (!item || !item.stats) return;
+    Object.keys(item.stats).forEach(function(s) {
+      if (equipBonus[s] !== undefined) equipBonus[s] += (item.stats[s] || 0);
+    });
+  });
+
+  var stats = {
+    atk:     (base.atk     || 0) + (equipBonus.atk     || 0),
+    def:     (base.def     || 0) + (equipBonus.def     || 0),
+    hp:      (base.hp      || 0) + (equipBonus.hp      || 0),
+    crit:    (base.crit    || 0) + (equipBonus.crit    || 0),
+    dodge:   (base.dodge   || 0) + (equipBonus.dodge   || 0),
+    critDmg: (base.critDmg || 0),
+  };
+  var maxHp = stats.hp;
+
+  return { stats: stats, maxHp: maxHp };
+}
+
 // ─── Симуляция PvP боя на сервере ───────────────────────
 function pvpSimCalcDmg(as, ds) {
   var dodge = ds.dodge || 3;
@@ -2619,8 +2692,7 @@ function pvpSimBattle(playerData, opponentData) {
     // Атаки по таймеру
     for (var ai = 0; ai < 2; ai++) {
       fighters[ai].atkTimer += DT;
-      var atkSpd = fighters[ai].stats.atkSpd || 1.0;
-      var atkInterval = Math.max(0.3, ATK_INTERVAL / Math.max(0.1, atkSpd));
+      var atkInterval = ATK_INTERVAL;
       if (fighters[ai].buffs.haste) atkInterval /= fighters[ai].buffs.haste.atkSpdMult;
       atkInterval = Math.max(0.3, atkInterval);
 
@@ -2716,14 +2788,15 @@ app.post('/api/pvp/opponents', async (req, res) => {
     var chosen3  = shuffled.slice(0, Math.min(3, shuffled.length));
 
     var opponents = chosen3.map(function(u) {
+      var calc = pvpCalcStats(u.data);
       return {
         tgId:        u.tgId,
         name:        u.firstName || u.username || 'Игрок',
         charId:      u.charId || 'fire',
         arenaRating: (u.data && u.data.arenaRating) || 1000,
         cp:          (u.data && u.data.cp) || 0,
-        stats:       (u.data && u.data.stats) || {},
-        maxHp:       (u.data && u.data.maxHp) || 100,
+        stats:       calc.stats,
+        maxHp:       calc.maxHp,
         skills:      (u.data && u.data.skills) || {},
       };
     });
@@ -2769,17 +2842,17 @@ app.post('/api/pvp/fight', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'no_battles_left', daily });
     }
 
-    // Подготавливаем данные игрока
-    var playerStats = playerDoc.data.stats || {};
-    var playerMaxHp = playerDoc.data.maxHp || playerDoc.data.cp || 100;
+    // Подготавливаем данные игрока (пересчёт из БД)
+    var playerCalc   = pvpCalcStats(playerDoc.data);
+    var playerStats  = playerCalc.stats;
+    var playerMaxHp  = playerCalc.maxHp;
     var playerSkills = playerDoc.data.skills || {};
 
-    // Данные соперника (из БД — не с клиента)
-    var oppStats   = opponentDoc.data.stats || {};
-    var oppMaxHp   = opponentDoc.data.maxHp || opponentDoc.data.cp || 100;
-    var oppSkills  = opponentDoc.data.skills || {};
-
-    console.log(`⚔️  [pvp/fight] player hp=${playerMaxHp} atk=${playerStats.atk} | opp hp=${oppMaxHp} atk=${oppStats.atk}`);
+    // Данные соперника (пересчёт из БД — не с клиента)
+    var oppCalc   = pvpCalcStats(opponentDoc.data);
+    var oppStats  = oppCalc.stats;
+    var oppMaxHp  = oppCalc.maxHp;
+    var oppSkills = opponentDoc.data.skills || {};
 
     // Симулируем бой
     var result = pvpSimBattle(
