@@ -1090,3 +1090,262 @@ function render() {
   drawPlayer();
   drawParticles();
 }
+
+// ═══════════════════════════════════════════════════════
+//  PvP — Спрайты персонажей
+// ═══════════════════════════════════════════════════════
+var _pvpCharSprites = {};
+function pvpGetCharSprites(charId) {
+  if (_pvpCharSprites[charId]) return _pvpCharSprites[charId];
+  var def = CHARS[charId];
+  if (!def) return null;
+  var run  = new Image(); run.src  = def.runSrc;
+  var atk  = new Image(); atk.src  = def.atkSrc;
+  var idle = new Image(); idle.src = def.idleSrc;
+  _pvpCharSprites[charId] = { run, atk, idle, def };
+  return _pvpCharSprites[charId];
+}
+
+// ── PvP состояние отрисовки ──
+var pvpRenderState = {
+  active:     false,
+  yourIdx:    0,
+  fighters:   [
+    { charId: 'fire',  hp: 100, maxHp: 100, animTime: 0, state: 'idle', hitFlash: 0, buffs: {}, debuffs: {} },
+    { charId: 'water', hp: 100, maxHp: 100, animTime: 0, state: 'idle', hitFlash: 0, buffs: {}, debuffs: {} },
+  ],
+  floatingTexts: [],
+  lastTs: 0,
+};
+
+// Вызывается из game loop
+// Снаряды PvP: { x, y, tx, ty, color, speed, timer }
+var pvpProjectiles = [];
+
+function pvpSpawnProjectile(fromIdx, color) {
+  var SIZE = Math.min(W * 0.38, 160);
+  var gnd  = H * 0.72;
+  var x0 = fromIdx === 0 ? W * 0.12 + SIZE * 0.85 : W - W * 0.12 - SIZE * 0.85;
+  var y0 = gnd - SIZE * 0.45;
+  var x1 = fromIdx === 0 ? W - W * 0.12 - SIZE * 0.5 : W * 0.12 + SIZE * 0.5;
+  var y1 = gnd - SIZE * 0.45;
+  pvpProjectiles.push({ x: x0, y: y0, tx: x1, ty: y1, color: color || '#ffcc00', timer: 0.6 });
+}
+
+function renderPvp(ts) {
+  if (!pvpRenderState.active) return;
+
+  var dt  = Math.min((ts - pvpRenderState.lastTs) / 1000, 0.1);
+  pvpRenderState.lastTs = ts;
+
+  pvpRenderState.fighters.forEach(function(f) {
+    f.animTime += dt;
+    if (f.hitFlash > 0) f.hitFlash -= dt;
+  });
+
+  ctx.clearRect(0, 0, W, H);
+  _pvpDrawBackground();
+  _pvpDrawFighter(0, ts, dt);
+  _pvpDrawFighter(1, ts, dt);
+  _pvpDrawProjectiles(dt);
+  _pvpDrawHpBars();
+  _pvpDrawFloatingTexts(dt);
+}
+
+function _pvpDrawProjectiles(dt) {
+  pvpProjectiles = pvpProjectiles.filter(function(p) {
+    p.timer -= dt;
+    if (p.timer <= 0) return false;
+    var progress = 1 - (p.timer / 0.6);
+    var cx = p.x + (p.tx - p.x) * progress;
+    var cy = p.y + (p.ty - p.y) * progress - Math.sin(progress * Math.PI) * 30;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, p.timer * 3);
+    ctx.shadowColor = p.color; ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+    ctx.fillStyle = p.color;
+    ctx.fill();
+    // Хвост
+    ctx.beginPath();
+    var tailX = p.x + (p.tx - p.x) * Math.max(0, progress - 0.15);
+    var tailY = p.y + (p.ty - p.y) * Math.max(0, progress - 0.15) - Math.sin(Math.max(0, progress - 0.15) * Math.PI) * 30;
+    ctx.moveTo(tailX, tailY); ctx.lineTo(cx, cy);
+    ctx.strokeStyle = p.color; ctx.lineWidth = 3; ctx.globalAlpha *= 0.4;
+    ctx.stroke();
+    ctx.restore();
+    return true;
+  });
+}
+
+function _pvpDrawBackground() {
+  // Простой тёмный фон с линией земли
+  var grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#050510');
+  grad.addColorStop(1, '#0a0a20');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Земля
+  var gnd = H * 0.72;
+  ctx.fillStyle = '#111128';
+  ctx.fillRect(0, gnd, W, H - gnd);
+  ctx.fillStyle = '#1a1a40';
+  ctx.fillRect(0, gnd, W, 3);
+
+  // Разделитель посередине (декоративный)
+  ctx.save();
+  ctx.globalAlpha = 0.15;
+  ctx.strokeStyle = '#a78bfa';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([6, 8]);
+  ctx.beginPath();
+  ctx.moveTo(W / 2, H * 0.1);
+  ctx.lineTo(W / 2, gnd);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function _pvpDrawFighter(idx, ts, dt) {
+  var f   = pvpRenderState.fighters[idx];
+  var spr = pvpGetCharSprites(f.charId);
+  if (!spr) return;
+
+  var gnd = H * 0.72;
+  var SIZE = Math.min(W * 0.38, 160);
+  var py  = gnd - SIZE;
+
+  // Позиция: idx=0 слева, idx=1 справа (зеркально)
+  var px;
+  if (idx === 0) { px = W * 0.12; }
+  else           { px = W - W * 0.12 - SIZE; }
+
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+
+  // Зеркалим правого бойца
+  if (idx === 1) {
+    ctx.translate(px + SIZE, py);
+    ctx.scale(-1, 1);
+    px = 0; py = 0;
+  }
+
+  // Мигание при попадании
+  if (f.hitFlash > 0) {
+    ctx.globalAlpha = 0.4 + Math.abs(Math.sin(f.hitFlash * 30)) * 0.6;
+  }
+
+  // Выбираем анимацию
+  var img, frames, fw, fh;
+  if (f.state === 'atk') {
+    img = spr.atk; frames = spr.def.atkFrames; fw = spr.def.atkFW; fh = spr.def.atkFH;
+  } else if (f.state === 'idle' || f.state === 'fight') {
+    img = spr.idle; frames = spr.def.idleFrames; fw = spr.def.idleFW; fh = spr.def.idleFH;
+  } else {
+    img = spr.run; frames = spr.def.runFrames; fw = spr.def.runFW; fh = spr.def.runFH;
+  }
+  var frame = Math.floor(f.animTime * 16) % frames;
+  ctx.drawImage(img, frame * fw, 0, fw, fh, px|0, py|0, SIZE, SIZE);
+
+  ctx.restore();
+
+  // Иконки баффов под бойцом
+  _pvpDrawBuffIcons(idx, f);
+}
+
+function _pvpDrawBuffIcons(idx, f) {
+  var gnd = H * 0.72;
+  var SIZE = Math.min(W * 0.38, 160);
+  var cx = idx === 0 ? W * 0.12 + SIZE / 2 : W - W * 0.12 - SIZE / 2;
+  var y  = gnd + 6;
+
+  var icons = [];
+  if (f.buffs)   { if (f.buffs.haste)    icons.push('⚡'); if (f.buffs.shield)   icons.push('🛡'); if (f.buffs.reflect)  icons.push('↩'); if (f.buffs.critBoost) icons.push('🎯'); }
+  if (f.debuffs) { if (f.debuffs.frozen) icons.push('❄'); if (f.debuffs.cursed) icons.push('💀'); }
+
+  ctx.font = '14px serif';
+  ctx.textAlign = 'center';
+  icons.forEach(function(ic, i) {
+    ctx.fillText(ic, cx + (i - (icons.length - 1) / 2) * 18, y + 14);
+  });
+}
+
+function _pvpDrawHpBars() {
+  var f0 = pvpRenderState.fighters[0];
+  var f1 = pvpRenderState.fighters[1];
+  var barW = W * 0.40, barH = 12;
+  var marginX = W * 0.04;
+  var topY = (HUD_H || 60) + 14;
+  _pvpDrawOneHpBar(marginX, topY, barW, barH, f0, false);
+  _pvpDrawOneHpBar(W - marginX - barW, topY, barW, barH, f1, true);
+}
+
+function _pvpDrawOneHpBar(x, y, w, h, f, isRight) {
+  var pct   = Math.max(0, f.hp / f.maxHp);
+  var color = pct > 0.5 ? '#2ecc71' : pct > 0.25 ? '#f5c542' : '#e74c3c';
+
+  // Фон
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.beginPath(); _pvpRRect(x - 2, y - 2, w + 4, h + 4, 4); ctx.fill();
+
+  // Полоска
+  ctx.fillStyle = '#1a1a2a';
+  ctx.beginPath(); _pvpRRect(x, y, w, h, 3); ctx.fill();
+  ctx.fillStyle = color;
+  if (isRight) {
+    ctx.fillRect(x + w * (1 - pct), y, w * pct, h);
+  } else {
+    ctx.fillRect(x, y, w * pct, h);
+  }
+
+  // Имя + HP
+  ctx.font = 'bold 11px "Courier New", monospace';
+  ctx.fillStyle = '#ccc';
+  ctx.textAlign = isRight ? 'right' : 'left';
+  var label = f.name + '  ' + f.hp + '/' + f.maxHp;
+  ctx.fillText(label, isRight ? x + w : x, y - 4);
+
+  // Рейтинг
+  ctx.font = '9px "Courier New", monospace';
+  ctx.fillStyle = '#a78bfa';
+  var ratingLabel = '★ ' + (f.arenaRating || 1000);
+  ctx.fillText(ratingLabel, isRight ? x + w : x, y + h + 12);
+}
+
+function _pvpRRect(x, y, w, h, r) {
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function _pvpDrawFloatingTexts(dt) {
+  pvpRenderState.floatingTexts = pvpRenderState.floatingTexts.filter(function(ft) {
+    ft.timer -= dt;
+    ft.y -= dt * 40;
+    if (ft.timer <= 0) return false;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, ft.timer / 0.4);
+    ctx.font = 'bold ' + (ft.big ? '20' : '15') + 'px "Courier New", monospace';
+    ctx.fillStyle = ft.color || '#fff';
+    ctx.textAlign = 'center';
+    ctx.fillText(ft.text, ft.x, ft.y);
+    ctx.restore();
+    return true;
+  });
+}
+
+// Добавить плавающий текст урона
+function pvpAddFloatText(idx, text, color, big) {
+  var SIZE = Math.min(W * 0.38, 160);
+  var cx = idx === 0 ? W * 0.12 + SIZE * 0.5 : W - W * 0.12 - SIZE * 0.5;
+  var gnd = H * 0.72;
+  pvpRenderState.floatingTexts.push({ x: cx + (Math.random() - 0.5) * 40, y: gnd - SIZE * 0.5, text: text, color: color, timer: 1.0, big: big || false });
+}

@@ -57,7 +57,7 @@ const SKILLS_DEF = {
         if (!target) return false;
         var dmg = Math.floor(G.stats.atk * 2 * (1 + lv * 0.10) * (0.9 + Math.random() * 0.2));
         var crit = Math.random() * 100 < effectiveCrit();
-        if (crit) dmg = Math.floor(dmg * 1.8);
+        if (crit) dmg = Math.floor(dmg * effectiveCritDmg());
         fireballs.push({
           worldX: player.worldX + 70, y: player.y + 40,
           targetM: target, speed: 700, dmg: dmg, crit: crit, angle: 0,
@@ -102,7 +102,7 @@ const SKILLS_DEF = {
         if (!target) return false;
         var dmg = Math.floor(G.stats.atk * 2 * (1 + lv * 0.10) * (0.9 + Math.random() * 0.2));
         var crit = Math.random() * 100 < effectiveCrit();
-        if (crit) dmg = Math.floor(dmg * 1.8);
+        if (crit) dmg = Math.floor(dmg * effectiveCritDmg());
         fireballs.push({
           worldX: player.worldX + 70, y: player.y + 40,
           targetM: target, speed: 700, dmg: dmg, crit: crit, angle: 0,
@@ -152,7 +152,7 @@ const SKILLS_DEF = {
               if (!target || target.hp <= 0) return;
               var dmg = Math.floor(G.stats.atk * (0.85 + Math.random() * 0.3));
               var crit = Math.random() * 100 < effectiveCrit();
-              if (crit) dmg = Math.floor(dmg * 1.8);
+              if (crit) dmg = Math.floor(dmg * effectiveCritDmg());
               fireballs.push({
                 worldX: player.worldX + 70, y: player.y + 38 + idx * 8,
                 targetM: target, speed: 680, dmg: dmg, crit: crit, angle: 0,
@@ -438,13 +438,14 @@ const ITEM_TYPES = [
 //  УЛУЧШЕНИЯ ХАРАКТЕРИСТИК
 // ═══════════════════════════════
 const UPG_DEFS = [
-  { id: 'atk',    name: 'Атака',           svgId: 'upg-atk',    stat: 'atk',    bonus: 3,    maxLv: 60, baseCost: 80  },
-  { id: 'def',    name: 'Защита',          svgId: 'upg-def',    stat: 'def',    bonus: 2,    maxLv: 60, baseCost: 70  },
-  { id: 'hp',     name: 'Макс. HP',        svgId: 'upg-hp',     stat: 'hp',     bonus: 15,   maxLv: 60, baseCost: 60  },
-  { id: 'spd',    name: 'Скорость',        svgId: 'upg-spd',    stat: 'spd',    bonus: 1,    maxLv: 60, baseCost: 100 },
-  { id: 'crit',   name: 'Крит. удар',      svgId: 'upg-crit',   stat: 'crit',   bonus: 2,    maxLv: 60, baseCost: 120 },
-  { id: 'dodge',  name: 'Уклонение',       svgId: 'upg-dodge',  stat: 'dodge',  bonus: 2,    maxLv: 60, baseCost: 110 },
-  { id: 'atkSpd', name: 'Скорость атаки',  svgId: 'upg-atkspd', stat: 'atkSpd', bonus: 0.15, maxLv: 60, baseCost: 150 },
+  { id: 'atk',     name: 'Атака',          svgId: 'upg-atk',    stat: 'atk',     bonus: 3,    maxLv: 60, baseCost: 80,  currency: 'gold' },
+  { id: 'def',     name: 'Защита',         svgId: 'upg-def',    stat: 'def',     bonus: 2,    maxLv: 60, baseCost: 70,  currency: 'gold' },
+  { id: 'hp',      name: 'Макс. HP',       svgId: 'upg-hp',     stat: 'hp',      bonus: 15,   maxLv: 60, baseCost: 60,  currency: 'gold' },
+  { id: 'spd',     name: 'Скорость',       svgId: 'upg-spd',    stat: 'spd',     bonus: 1,    maxLv: 60, baseCost: 100, currency: 'gold' },
+  { id: 'atkSpd',  name: 'Скорость атаки', svgId: 'upg-atkspd', stat: 'atkSpd',  bonus: 0.15, maxLv: 60, baseCost: 150, currency: 'gold' },
+  { id: 'crit',    name: 'Шанс крита',     svgId: 'upg-crit',   stat: 'crit',    bonus: 3,    maxLv: 10, baseCost: 50,  currency: 'pixr' },
+  { id: 'critDmg', name: 'Сила крита',     svgId: 'upg-critdmg',stat: 'critDmg', bonus: 0.1,  maxLv: 10, baseCost: 50,  currency: 'pixr' },
+  { id: 'dodge',   name: 'Уклонение',      svgId: 'upg-dodge',  stat: 'dodge',   bonus: 2,    maxLv: 10, baseCost: 50,  currency: 'pixr' },
 ];
 
 // Pixel SVG иконки для характеристик
@@ -455,6 +456,7 @@ function upgIcon(svgId) {
     'upg-hp':     `<svg width="36" height="36" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="2" y="4" width="4" height="4" fill="#e74c3c"/><rect x="10" y="4" width="4" height="4" fill="#e74c3c"/><rect x="0" y="6" width="16" height="6" fill="#e74c3c"/><rect x="2" y="12" width="12" height="2" fill="#e74c3c"/><rect x="4" y="14" width="8" height="2" fill="#c0392b"/><rect x="6" y="3" width="4" height="10" fill="#ff6b6b"/><rect x="4" y="5" width="8" height="6" fill="#ff6b6b"/></svg>`,
     'upg-spd':    `<svg width="36" height="36" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="0" y="6" width="4" height="2" fill="#2ecc71"/><rect x="2" y="4" width="4" height="2" fill="#2ecc71"/><rect x="4" y="2" width="4" height="2" fill="#27ae60"/><rect x="6" y="4" width="4" height="2" fill="#2ecc71"/><rect x="8" y="2" width="4" height="2" fill="#2ecc71"/><rect x="10" y="4" width="4" height="2" fill="#27ae60"/><rect x="2" y="8" width="6" height="2" fill="#2ecc71" opacity="0.6"/><rect x="4" y="10" width="8" height="2" fill="#2ecc71" opacity="0.4"/></svg>`,
     'upg-crit':   `<svg width="36" height="36" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="7" y="0" width="2" height="4" fill="#f5c542"/><rect x="7" y="12" width="2" height="4" fill="#f5c542"/><rect x="0" y="7" width="4" height="2" fill="#f5c542"/><rect x="12" y="7" width="4" height="2" fill="#f5c542"/><rect x="2" y="2" width="2" height="2" fill="#f5c542"/><rect x="12" y="2" width="2" height="2" fill="#f5c542"/><rect x="2" y="12" width="2" height="2" fill="#f5c542"/><rect x="12" y="12" width="2" height="2" fill="#f5c542"/><rect x="5" y="5" width="6" height="6" fill="#f5c542"/><rect x="6" y="6" width="4" height="4" fill="#fff8d0"/></svg>`,
+    'upg-critdmg':`<svg width="36" height="36" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="7" y="0" width="2" height="4" fill="#ff6020"/><rect x="7" y="12" width="2" height="4" fill="#ff6020"/><rect x="0" y="7" width="4" height="2" fill="#ff6020"/><rect x="12" y="7" width="4" height="2" fill="#ff6020"/><rect x="2" y="2" width="2" height="2" fill="#ff6020"/><rect x="12" y="2" width="2" height="2" fill="#ff6020"/><rect x="2" y="12" width="2" height="2" fill="#ff6020"/><rect x="12" y="12" width="2" height="2" fill="#ff6020"/><rect x="5" y="5" width="6" height="6" fill="#ff8040"/><rect x="6" y="6" width="4" height="4" fill="#ffddaa"/><rect x="7" y="4" width="2" height="8" fill="#fff" opacity="0.5"/><rect x="4" y="7" width="8" height="2" fill="#fff" opacity="0.5"/></svg>`,
     'upg-dodge':  `<svg width="36" height="36" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="4" y="0" width="2" height="4" fill="#9b59b6"/><rect x="10" y="0" width="2" height="4" fill="#9b59b6"/><rect x="0" y="4" width="4" height="2" fill="#9b59b6"/><rect x="12" y="4" width="4" height="2" fill="#9b59b6"/><rect x="0" y="10" width="4" height="2" fill="#9b59b6"/><rect x="12" y="10" width="4" height="2" fill="#9b59b6"/><rect x="4" y="12" width="2" height="4" fill="#9b59b6"/><rect x="10" y="12" width="2" height="4" fill="#9b59b6"/><rect x="6" y="4" width="4" height="2" fill="#c39bd3"/><rect x="4" y="6" width="2" height="4" fill="#c39bd3"/><rect x="10" y="6" width="2" height="4" fill="#c39bd3"/><rect x="6" y="10" width="4" height="2" fill="#c39bd3"/></svg>`,
     'upg-atkspd': `<svg width="36" height="36" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="2" y="2" width="2" height="2" fill="#ffaa00"/><rect x="4" y="4" width="2" height="2" fill="#ffaa00"/><rect x="6" y="6" width="4" height="2" fill="#ffcc44"/><rect x="8" y="4" width="2" height="2" fill="#ffaa00"/><rect x="10" y="2" width="2" height="2" fill="#ffaa00"/><rect x="4" y="8" width="2" height="2" fill="#ffcc44"/><rect x="2" y="10" width="2" height="2" fill="#ffaa00"/><rect x="10" y="8" width="2" height="2" fill="#ffcc44"/><rect x="12" y="6" width="2" height="2" fill="#ffaa00"/><rect x="12" y="10" width="2" height="2" fill="#ffaa00"/><rect x="4" y="12" width="8" height="2" fill="#ff8800"/></svg>`,
   };

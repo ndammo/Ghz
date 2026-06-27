@@ -26,7 +26,7 @@
   var INSTANT_FIELDS = [
     'inventory', 'equipped', 'upg', 'skills', 
     'potionLv', 'potionThreshold', 'floor', 'level',
-    'pixr', 'gram', 'bp', 'prem'
+    'pixr', 'gram', 'bp', 'prem', 'marketUnlocked'
   ];
 
   var TG_INIT = '';
@@ -146,6 +146,7 @@
       bp:                  clone(G.bp   || { active: false, claimed: [] }),
       prem:                clone(G.prem || { tier: null, expiresAt: 0 }),
       boss:                clone(G.boss || { floor: 1, lastFightTime: 0 }),
+      marketUnlocked:      G.marketUnlocked || false,
       hp:                  G.hp,
       gold:                G.gold,
       xp:                  G.xp,
@@ -157,6 +158,7 @@
       specialTasksClaimed: clone(G.specialTasksClaimed || {}),
       invFilter:           G.invFilter || 'all',
       cp:                  (typeof calcCP === 'function') ? calcCP() : 0,
+      arenaRating:         G.arenaRating || 1000,
       updatedAt:           Date.now(),
     };
   }
@@ -235,6 +237,9 @@
     G.prem = d.prem || { tier: null, expiresAt: 0 };
     G.boss = d.boss || { floor: 1, lastFightTime: 0 };
     if (!G.boss.floor) G.boss.floor = 1;
+    G.marketUnlocked = d.marketUnlocked || false;
+
+    G.arenaRating = (typeof d.arenaRating === 'number') ? d.arenaRating : (G.arenaRating || 1000);
 
     G.invFilter = d.invFilter || 'all';
     G.dailyTasks = d.dailyTasks || { date: '', seconds: 0, claimed: [] };
@@ -522,6 +527,10 @@ function saveInstant(data) {
             } else {
               location.reload();
             }
+          } else if (notification.event === 'market_sold' || notification.event === 'market_expired') {
+            if (typeof window._handleMarketNotif === 'function') {
+              window._handleMarketNotif(notification.event, notification.data || {});
+            }
           }
         });
       }
@@ -693,28 +702,20 @@ function saveInstant(data) {
       START_PARAM = (window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.start_param) || '';
     } catch (e) { START_PARAM = ''; }
   }
-  
-  // ✅ ИСПРАВЛЕНО: ищем ПРАВИЛЬНЫЙ параметр
   if (!START_PARAM) {
     try {
-      var urlParams = new URLSearchParams(window.location.search);
-      // Проверяем оба варианта
-      var startapp = urlParams.get('startapp');
-      var ref = urlParams.get('ref');
-      if (startapp) START_PARAM = startapp;
-      else if (ref) START_PARAM = ref;
-      console.log('🔍 [initTelegram] startParam из URL:', START_PARAM || 'none');
+      var urlRef = new URLSearchParams(window.location.search).get('ref') || '';
+      if (urlRef) START_PARAM = urlRef;
     } catch (e) {}
   }
-  
   SYNC.online = !!TG_INIT;
   
   var tgId = getTgId();
   if (tgId) {
     SYNC.currentTgId = tgId;
   }
-  console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online, 'startParam:', START_PARAM || 'none');
-  }
+  console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online);
+}
 
   // ═══════════════════════════════
 //  БУТ — с задержкой
@@ -962,5 +963,59 @@ SYNC.booted = true;
     saveInstant: saveInstant,
     _API:        API,
     get _INIT() { return TG_INIT; },
+  };
+})();
+// ═══════════════════════════════════════════════════════
+//  PvP — Socket.IO клиент
+// ═══════════════════════════════════════════════════════
+(function() {
+  'use strict';
+  var _socket  = null;
+  var _authed  = false;
+  var _roomId  = null;
+  var _yourIdx = null;
+  var _handlers = {};
+  var _initData = '';
+
+  var PVP = window.PvpClient = {
+    connect: function(apiUrl, initData) {
+      _initData = initData;
+      if (_socket && _socket.connected) {
+        // Уже подключены — просто авторизуемся снова
+        _socket.emit('pvp_auth', { initData: _initData });
+        return;
+      }
+      _socket = io(apiUrl, { transports: ['websocket','polling'], reconnection: true, reconnectionDelay: 1000 });
+
+      _socket.on('connect', function() {
+        _authed = false;
+        _socket.emit('pvp_auth', { initData: _initData });
+      });
+      _socket.on('pvp_authed',            function(d) { _authed = true;  PVP._fire('authed', d); });
+      _socket.on('pvp_error',             function(d) { PVP._fire('error', d); });
+      _socket.on('pvp_queued',            function(d) { PVP._fire('queued', d); });
+      _socket.on('pvp_timeout',           function(d) { PVP._fire('timeout', d); });
+      _socket.on('pvp_queue_cancelled',   function(d) { PVP._fire('queue_cancelled', d); });
+      _socket.on('pvp_matched',           function(d) { _roomId = d.roomId; _yourIdx = d.yourIdx; PVP._fire('matched', d); });
+      _socket.on('pvp_tick',              function(d) { PVP._fire('tick', d); });
+      _socket.on('pvp_skill_used',        function(d) { PVP._fire('skill_used', d); });
+      _socket.on('pvp_skill_cd',          function(d) { PVP._fire('skill_cd', d); });
+      _socket.on('pvp_end',               function(d) { _roomId = null; PVP._fire('end', d); });
+      _socket.on('pvp_opponent_disconnected', function(d) { PVP._fire('opponent_disconnected', d); });
+      _socket.on('pvp_opponent_reconnected',  function(d) { PVP._fire('opponent_reconnected', d); });
+      _socket.on('pvp_reconnected',       function(d) { _roomId = d.roomId; _yourIdx = d.yourIdx; PVP._fire('reconnected', d); });
+      _socket.on('disconnect',            function()  { _authed = false; PVP._fire('disconnected', {}); });
+    },
+    joinQueue:   function(cp, stats, maxHp) { if (_socket) _socket.emit('pvp_join_queue', { cp: cp, stats: stats || {}, maxHp: maxHp || 0 }); },
+    cancelQueue: function()        { if (_socket) _socket.emit('pvp_cancel_queue', {}); },
+    castSkill:   function(skillId) { if (_socket && _roomId) _socket.emit('pvp_skill',     { roomId: _roomId, skillId: skillId }); },
+    surrender:   function()        { if (_socket && _roomId) _socket.emit('pvp_surrender',  { roomId: _roomId }); },
+    reconnect:   function()        { if (_socket && _roomId) _socket.emit('pvp_reconnect',  { roomId: _roomId }); },
+    on:          function(evt, fn) { _handlers[evt] = fn; },
+    off:         function(evt)     { delete _handlers[evt]; },
+    _fire:       function(evt, d)  { if (_handlers[evt]) _handlers[evt](d); },
+    getRoomId:   function()        { return _roomId; },
+    getYourIdx:  function()        { return _yourIdx; },
+    isConnected: function()        { return !!(_socket && _socket.connected && _authed); },
   };
 })();

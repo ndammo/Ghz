@@ -16,19 +16,28 @@ var _invSelected   = {};  // { itemId: true }
 //  ГЕНЕРАЦИЯ ПРЕДМЕТОВ
 // ═══════════════════════════════
 
+// Диапазон редкости по этажу
+var FLOOR_MAX_RARITY = { 1:'common', 2:'uncommon', 3:'uncommon', 4:'rare', 5:'rare', 6:'rare', 7:'epic', 8:'epic', 9:'legend', 10:'legend' };
+var FLOOR_MIN_RARITY = { 1:'common', 2:'common', 3:'common', 4:'common', 5:'common', 6:'common', 7:'common', 8:'uncommon', 9:'uncommon', 10:'uncommon' };
+
 // Розыгрыш редкости с учётом этажа (выше этаж — выше шанс редкого)
 function rollRarity(floor) {
+  var rarityOrder = ['common','uncommon','rare','epic','legend'];
+  var maxIdx = rarityOrder.indexOf(FLOOR_MAX_RARITY[floor] || 'legend');
+  var minIdx = rarityOrder.indexOf(FLOOR_MIN_RARITY[floor] || 'common');
   var bonus = (floor - 1) * 0.3;
   var weights = RARITIES.map(function(r, i) {
+    if (i > maxIdx || i < minIdx) return 0;
     return Math.max(0.1, r.weight - i * bonus * 0.8 + (i > 1 ? bonus * i * 0.5 : 0));
   });
   var total = weights.reduce(function(a, b) { return a + b; }, 0);
   var roll = Math.random() * total, cum = 0;
   for (var i = 0; i < RARITIES.length; i++) {
+    if (weights[i] === 0) continue;
     cum += weights[i];
     if (roll <= cum) return RARITIES[i];
   }
-  return RARITIES[0];
+  return RARITIES[minIdx];
 }
 
 // Множитель статов по редкости
@@ -75,9 +84,9 @@ function generateItem(floor) {
 }
 
 // Шанс выпадения предмета (растёт с этажом)
-function dropChance(floor)          { return 0.025 + (floor - 1) * 0.005; }
+function dropChance(floor)          { return 0.00833 + (floor - 1) * 0.00167; }
 // Шанс выпадения книги навыка (очень редко)
-function skillBookDropChance(floor) { return 0.0008 + (floor - 1) * 0.0001; }
+function skillBookDropChance(floor) { return 0.000267 + (floor - 1) * 0.0000333; }
 
 // ── Попытка выдать книгу навыка после убийства монстра ──
 function tryDropSkillBook(floor) {
@@ -152,6 +161,7 @@ function recalcStats() {
   G.stats.def    = base.def    + bonus.def;
   G.stats.spd    = base.spd    + bonus.spd;
   G.stats.crit   = base.crit   + bonus.crit;
+  G.stats.critDmg = base.critDmg || 0;
   G.stats.dodge  = base.dodge  + bonus.dodge;
   G.stats.atkSpd = (base.atkSpd || 1.0) + (bonus.atkSpd || 0);
   var oldMaxHp   = G.maxHp;
@@ -455,12 +465,16 @@ function openItemModal(itemId) {
     if (!er2) { var rd2 = document.createElement('div'); rd2.id = 'mRefine'; document.getElementById('mStats').after(rd2); }
     document.getElementById('mRefine').innerHTML = '';
     var actHtml2 = '';
+    var canSellBook = G.marketUnlocked;
     if (isWrongClass) {
       actHtml2 += '<button class="modal-btn" disabled style="flex:1;opacity:0.5;border:1.5px solid #553;color:#665;cursor:not-allowed;">🔒 Только ' + item.classLabel + '</button>';
     } else if (!sk_isMax) {
       actHtml2 += '<button class="modal-btn ' + (sk_canUse ? 'equip' : '') + '" ' +
         (sk_canUse ? '' : 'disabled style="opacity:0.5;"') +
         ' onclick="useSkillBook(\'' + sk_id + '\');closeItemModal();">📖 ' + sk_action + '</button>';
+    }
+    if (canSellBook) {
+      actHtml2 += '<button class="modal-btn" style="background:rgba(0,200,80,0.12);border-color:#00c850;color:#00c850;" onclick="openSellModal(' + itemId + ')">💰 Продать</button>';
     }
     actHtml2 += '<button class="modal-btn destroy" onclick="destroyItem(' + itemId + ')">🗑</button>';
     document.getElementById('mActions').innerHTML = actHtml2;
@@ -495,12 +509,18 @@ function openItemModal(itemId) {
 
   var actHtml = '';
   var wrongClass = item.forClass && G_CHAR && item.forClass !== G_CHAR.id;
+  var canSell = G.marketUnlocked && !item._equipped &&
+    ['uncommon','rare','epic','legend'].includes(item.rarity);
+
   if (item._equipped) {
     actHtml += '<button class="modal-btn unequip" onclick="unequipItem(' + itemId + ')">Снять</button>';
   } else if (wrongClass) {
     actHtml += '<button class="modal-btn" disabled style="flex:1;padding:10px;font-size:11px;font-family:Courier New,monospace;border-radius:8px;border:1.5px solid #553;background:rgba(80,60,0,0.1);color:#665;cursor:not-allowed;">🔒 Только ' + item.classLabel + '</button>';
   } else {
     actHtml += '<button class="modal-btn equip" onclick="equipItem(' + itemId + ')">Надеть</button>';
+  }
+  if (canSell) {
+    actHtml += '<button class="modal-btn" style="background:rgba(0,200,80,0.12);border-color:#00c850;color:#00c850;" onclick="openSellModal(' + itemId + ')">💰 Продать</button>';
   }
   if (stars < REFINE_MAX) actHtml += '<button class="modal-btn refine" onclick="refineItem(' + itemId + ')">⚒ Точить</button>';
   actHtml += '<button class="modal-btn destroy" onclick="destroyItem(' + itemId + ')">🗑</button>';

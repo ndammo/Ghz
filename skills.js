@@ -169,3 +169,7 @@ function effectiveCrit() {
   if (skillBuffs.critBoost) c += skillBuffs.critBoost.flat;
   return c;
 }
+
+function effectiveCritDmg() {
+  return 1.8 + (G.baseStats.critDmg || 0);
+}

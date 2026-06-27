@@ -17,7 +17,15 @@ const path     = require('path');
 // ── Telegram Bot ──
 const TelegramBot = require('node-telegram-bot-api');
 
-const app = express();
+const http = require('http');
+const { Server } = require('socket.io');
+
+const app    = express();
+const server = http.createServer(app);
+const io     = new Server(server, {
+  cors: { origin: '*', methods: ['GET','POST'] },
+  pingTimeout: 20000, pingInterval: 10000,
+});
 const BOT_USERNAME = process.env.BOT_USERNAME || 'YourBotUsername';
 if (!process.env.BOT_USERNAME) console.warn('⚠️  BOT_USERNAME не задан');
 const REF_GOLD_PER_MILESTONE = 500;
@@ -114,6 +122,70 @@ const AdminLogSchema = new mongoose.Schema({
   timestamp: { type: Number, default: Date.now }
 });
 const AdminLog = mongoose.model('AdminLog', AdminLogSchema);
+
+// ── Маркет ──
+const MarketListingSchema = new mongoose.Schema({
+  listingId:   { type: String, required: true, unique: true },
+  sellerId:    { type: String, required: true, index: true },
+  sellerName:  { type: String, default: '' },
+  item:        { type: mongoose.Schema.Types.Mixed, required: true },
+  price:       { type: Number, required: true, min: 1 },
+  status:      { type: String, enum: ['active', 'sold', 'cancelled'], default: 'active', index: true },
+  buyerId:     { type: String, default: null },
+  buyerName:   { type: String, default: null },
+  createdAt:   { type: Number, default: Date.now },
+  expiresAt:   { type: Number, required: true },
+  soldAt:      { type: Number, default: null },
+  cancelledAt: { type: Number, default: null },
+}, { minimize: false });
+MarketListingSchema.index({ status: 1, createdAt: -1 });
+MarketListingSchema.index({ sellerId: 1, status: 1 });
+MarketListingSchema.index({ expiresAt: 1 });
+const MarketListing = mongoose.model('MarketListing', MarketListingSchema);
+
+// ── История PvP боёв ──
+const PvpBattleSchema = new mongoose.Schema({
+  roomId:       { type: String, required: true, unique: true },
+  winnerTgId:   { type: String, required: true, index: true },
+  loserTgId:    { type: String, required: true, index: true },
+  winnerName:   { type: String, default: '' },
+  loserName:    { type: String, default: '' },
+  winnerCharId: { type: String, default: 'fire' },
+  loserCharId:  { type: String, default: 'fire' },
+  reason:       { type: String, default: 'killed' },
+  ratingChange: { type: Number, default: 0 },
+  pixrReward:   { type: Number, default: 0 },
+  createdAt:    { type: Number, default: Date.now },
+});
+PvpBattleSchema.index({ winnerTgId: 1, createdAt: -1 });
+PvpBattleSchema.index({ loserTgId:  1, createdAt: -1 });
+const PvpBattle = mongoose.model('PvpBattle', PvpBattleSchema);
+
+// Авто-истечение лотов каждые 10 минут
+setInterval(async () => {
+  try {
+    const now = Date.now();
+    const expired = await MarketListing.find({ status: 'active', expiresAt: { $lte: now } }).lean();
+    for (const listing of expired) {
+      // Атомарно переводим в cancelled
+      const updated = await MarketListing.findOneAndUpdate(
+        { listingId: listing.listingId, status: 'active' },
+        { $set: { status: 'cancelled', cancelledAt: now } },
+        { new: false }
+      );
+      if (!updated) continue;
+      // Возвращаем предмет владельцу
+      await Save.findOneAndUpdate(
+        { tgId: listing.sellerId },
+        { $push: { 'data.inventory': listing.item } }
+      );
+      notifyClient(listing.sellerId, 'market_expired', { listingId: listing.listingId, item: listing.item });
+      console.log(`⏰ [market] Лот ${listing.listingId} истёк — предмет возвращён ${listing.sellerId}`);
+    }
+  } catch (e) {
+    console.error('❌ [market] expire job error:', e.message);
+  }
+}, 10 * 60 * 1000);
 
 // ── Специальные задания ──
 const SpecialTaskSchema = new mongoose.Schema({
@@ -418,7 +490,7 @@ app.post('/api/save', async (req, res) => {
         return res.json({ ok: true, updatedAt: serverUpdatedAt, ignored: true });
       }
 
-      // ✅ Защита от перезаписи админских изменений
+      // ✅ Защита от перезаписи AdminUpdatedAt
       const adminUpdatedAt = (currentDoc.data._adminUpdatedAt) || 0;
       if (adminUpdatedAt > clientUpdatedAt) {
         console.log(`🛡️ [save] Мёрж с админскими изменениями для ${tg.id}`);
@@ -427,6 +499,16 @@ app.post('/api/save', async (req, res) => {
         if (currentDoc.data.pixr      !== undefined) data.pixr      = currentDoc.data.pixr;
         if (currentDoc.data.inventory !== undefined) data.inventory = currentDoc.data.inventory;
         data._adminUpdatedAt = adminUpdatedAt;
+      }
+
+      // ✅ Защита arenaRating — PvP сервер обновляет его напрямую через $inc,
+      // клиент может прислать устаревшее значение — берём максимум
+      const srvRating = currentDoc.data.arenaRating;
+      const cliRating = data.arenaRating;
+      if (typeof srvRating === 'number' && typeof cliRating === 'number') {
+        data.arenaRating = Math.max(srvRating, cliRating);
+      } else if (typeof srvRating === 'number') {
+        data.arenaRating = srvRating;
       }
     }
 
@@ -1950,6 +2032,299 @@ app.get('/admin', (req, res) => {
 
 
 // ═══════════════════════════════
+//  МАРКЕТ
+// ═══════════════════════════════
+
+const MARKET_OPEN_COST  = 1000;
+const MARKET_MAX_LOTS   = 3;
+const MARKET_TTL_MS     = 48 * 60 * 60 * 1000; // 48 часов
+const MARKET_COMMISSION = 0.10;
+const MARKET_MIN_RARITY = ['uncommon', 'rare', 'epic', 'legend']; // common запрещён
+
+// ── Открытие маркета (разовая покупка) ──
+app.post('/api/market/open', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  try {
+    const user = await Save.findOne({ tgId: tg.id }).lean();
+    if (!user || !user.data) return res.status(404).json({ ok: false, error: 'no_save' });
+
+    // Уже открыт
+    if (user.data.marketUnlocked) return res.json({ ok: true, alreadyUnlocked: true });
+
+    // Атомарно списываем PIXR
+    const result = await Save.findOneAndUpdate(
+      { tgId: tg.id, 'data.pixr': { $gte: MARKET_OPEN_COST } },
+      {
+        $inc: { 'data.pixr': -MARKET_OPEN_COST },
+        $set: { 'data.marketUnlocked': true, updatedAt: Date.now() }
+      },
+      { new: true }
+    );
+    if (!result) return res.status(400).json({ ok: false, error: 'not_enough_pixr' });
+
+    console.log(`✅ [market] ${tg.id} открыл маркет`);
+    res.json({ ok: true, pixr: result.data.pixr });
+  } catch (e) {
+    console.error('❌ [market/open] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ── Список активных лотов ──
+app.post('/api/market/list', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  try {
+    const { rarity, type } = req.body || {};
+    const filter = { status: 'active', expiresAt: { $gt: Date.now() } };
+    if (rarity && rarity !== 'all') {
+      if (rarity === 'book') {
+        filter['item.isSkillBook'] = true;
+      } else {
+        filter['item.rarity'] = rarity;
+        filter['item.isSkillBook'] = { $ne: true };
+      }
+    }
+    const listings = await MarketListing.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean();
+
+    res.json({ ok: true, listings });
+  } catch (e) {
+    console.error('❌ [market/list] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ── Мои лоты ──
+app.post('/api/market/my', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  try {
+    const listings = await MarketListing.find({ sellerId: tg.id, status: 'active' })
+      .sort({ createdAt: -1 })
+      .lean();
+    res.json({ ok: true, listings });
+  } catch (e) {
+    console.error('❌ [market/my] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ── Выставить предмет ──
+const _listingLocks = new Set();
+app.post('/api/market/sell', async (req, res) => {
+  console.log('📦 [market/sell] BODY:', req.body);
+  
+  const tg = authUser(req, res);
+  if (!tg) {
+    console.log('❌ [market/sell] auth failed');
+    return res.status(401).json({ ok: false, error: 'auth_failed' });
+  }
+  
+  if (_listingLocks.has(tg.id)) {
+    return res.status(429).json({ ok: false, error: 'in_progress' });
+  }
+  _listingLocks.add(tg.id);
+  
+  try {
+    const { itemId, price } = req.body || {};
+    
+    console.log(`📦 [market/sell] itemId=${itemId}, price=${price}, tg=${tg.id}`);
+    
+    // ✅ Проверяем что itemId и price есть
+    if (itemId === undefined || itemId === null || !price || price < 1) {
+      console.log('❌ [market/sell] bad_params:', { itemId, price });
+      return res.status(400).json({ ok: false, error: 'bad_params' });
+    }
+
+    const user = await Save.findOne({ tgId: tg.id }).lean();
+    if (!user || !user.data) {
+      return res.status(404).json({ ok: false, error: 'no_save' });
+    }
+    
+    if (!user.data.marketUnlocked) {
+      return res.status(403).json({ ok: false, error: 'market_locked' });
+    }
+
+    const activeCount = await MarketListing.countDocuments({ 
+      sellerId: tg.id, 
+      status: 'active' 
+    });
+    if (activeCount >= MARKET_MAX_LOTS) {
+      return res.status(400).json({ ok: false, error: 'max_lots' });
+    }
+
+    const inventory = user.data.inventory || [];
+    // ✅ ИСПРАВЛЕННОЕ СРАВНЕНИЕ
+    const itemIdx = inventory.findIndex(i => Number(i.id) === Number(itemId));
+    if (itemIdx === -1) {
+      console.log(`❌ [market/sell] item not found: ${itemId}`);
+      return res.status(400).json({ ok: false, error: 'item_not_found' });
+    }
+
+    const item = inventory[itemIdx];
+    console.log(`✅ [market/sell] item found: ${item.name}`);
+
+    if (!item.isSkillBook && !MARKET_MIN_RARITY.includes(item.rarity)) {
+      return res.status(400).json({ ok: false, error: 'rarity_too_low' });
+    }
+    if (item._equipped) {
+      return res.status(400).json({ ok: false, error: 'item_equipped' });
+    }
+
+    // Удаляем предмет из инвентаря
+    const updated = await Save.findOneAndUpdate(
+      { tgId: tg.id, 'data.inventory': { $elemMatch: { id: item.id } } },
+      { $pull: { 'data.inventory': { id: item.id } }, $set: { updatedAt: Date.now() } },
+      { new: true }
+    );
+    if (!updated) {
+      return res.status(400).json({ ok: false, error: 'item_not_found' });
+    }
+
+    const now = Date.now();
+    const listingId = 'lst_' + now + '_' + Math.random().toString(36).substring(2, 6);
+    const listing = await MarketListing.create({
+      listingId,
+      sellerId:   tg.id,
+      sellerName: user.firstName || user.username || 'Игрок',
+      item,
+      price:      Math.floor(price),
+      status:     'active',
+      createdAt:  now,
+      expiresAt:  now + MARKET_TTL_MS,
+    });
+
+    console.log(`✅ [market] ${tg.id} выставил ${item.name} за ${price} PIXR`);
+    res.json({ ok: true, listing, inventory: updated.data.inventory });
+    
+  } catch (e) {
+    console.error('❌ [market/sell] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  } finally {
+    _listingLocks.delete(tg.id);
+  }
+});
+
+// ── Купить лот ──
+const _buyLocks = new Set();
+app.post('/api/market/buy', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  if (_buyLocks.has(tg.id)) return res.status(429).json({ ok: false, error: 'in_progress' });
+  _buyLocks.add(tg.id);
+  try {
+    const { listingId } = req.body || {};
+    if (!listingId) return res.status(400).json({ ok: false, error: 'bad_params' });
+
+    const user = await Save.findOne({ tgId: tg.id }).lean();
+    if (!user || !user.data) return res.status(404).json({ ok: false, error: 'no_save' });
+    if (!user.data.marketUnlocked) return res.status(403).json({ ok: false, error: 'market_locked' });
+
+    // Берём лот
+    const listing = await MarketListing.findOne({ listingId, status: 'active' }).lean();
+    if (!listing) return res.status(400).json({ ok: false, error: 'listing_not_found' });
+    if (listing.expiresAt <= Date.now()) return res.status(400).json({ ok: false, error: 'listing_expired' });
+    if (listing.sellerId === tg.id) return res.status(400).json({ ok: false, error: 'own_listing' });
+
+    const price = listing.price;
+
+    // Атомарно списываем PIXR у покупателя
+    const buyer = await Save.findOneAndUpdate(
+      { tgId: tg.id, 'data.pixr': { $gte: price } },
+      {
+        $inc: { 'data.pixr': -price },
+        $push: { 'data.inventory': listing.item },
+        $set: { updatedAt: Date.now() }
+      },
+      { new: true }
+    );
+    if (!buyer) return res.status(400).json({ ok: false, error: 'not_enough_pixr' });
+
+    // Атомарно закрываем лот — защита от гонки, двое не купят одновременно
+    const sold = await MarketListing.findOneAndUpdate(
+      { listingId, status: 'active' },
+      {
+        $set: {
+          status: 'sold',
+          buyerId: tg.id,
+          buyerName: user.data.firstName || user.username || 'Игрок',
+          soldAt: Date.now(),
+        }
+      },
+      { new: false }
+    );
+    if (!sold) {
+      // Лот уже купили — откатываем у покупателя
+      await Save.findOneAndUpdate(
+        { tgId: tg.id },
+        {
+          $inc: { 'data.pixr': price },
+          $pull: { 'data.inventory': { id: listing.item.id } }
+        }
+      );
+      return res.status(400).json({ ok: false, error: 'already_sold' });
+    }
+
+    // Начисляем продавцу 90%
+    const sellerEarns = Math.floor(price * (1 - MARKET_COMMISSION));
+    await Save.findOneAndUpdate(
+      { tgId: listing.sellerId },
+      { $inc: { 'data.pixr': sellerEarns } }
+    );
+
+    notifyClient(listing.sellerId, 'market_sold', {
+      listingId,
+      itemName: listing.item.name,
+      earned:   sellerEarns,
+    });
+
+    console.log(`✅ [market] ${tg.id} купил "${listing.item.name}" у ${listing.sellerId} за ${price} PIXR`);
+    res.json({ ok: true, item: listing.item, pixr: buyer.data.pixr });
+  } catch (e) {
+    console.error('❌ [market/buy] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  } finally {
+    _buyLocks.delete(tg.id);
+  }
+});
+
+// ── Снять лот с продажи ──
+app.post('/api/market/cancel', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  try {
+    const { listingId } = req.body || {};
+    if (!listingId) return res.status(400).json({ ok: false, error: 'bad_params' });
+
+    // Атомарно — только свой лот, только active
+    const cancelled = await MarketListing.findOneAndUpdate(
+      { listingId, sellerId: tg.id, status: 'active' },
+      { $set: { status: 'cancelled', cancelledAt: Date.now() } },
+      { new: false }
+    );
+    if (!cancelled) return res.status(400).json({ ok: false, error: 'listing_not_found' });
+
+    // Возвращаем предмет в инвентарь
+    const updated = await Save.findOneAndUpdate(
+      { tgId: tg.id },
+      { $push: { 'data.inventory': cancelled.item }, $set: { updatedAt: Date.now() } },
+      { new: true }
+    );
+
+    console.log(`✅ [market] ${tg.id} снял лот ${listingId}`);
+    res.json({ ok: true, item: cancelled.item, inventory: updated.data.inventory });
+  } catch (e) {
+    console.error('❌ [market/cancel] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+
+// ═══════════════════════════════
 //  ПОКУПКА УЛУЧШЕНИЙ (атомарно)
 // ═══════════════════════════════
 app.post('/api/upgrade', async (req, res) => {
@@ -2096,7 +2471,335 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
 //  Запуск
 // ═══════════════════════════════
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`🚀 Server on :${PORT}`);
   console.log(`📊 MongoDB: 5GB, Pool: 50`);
+});
+// ═══════════════════════════════════════════════════════
+//  PvP — MATCHMAKING + РЕАЛЬНОЕ ВРЕМЯ (Socket.IO)
+// ═══════════════════════════════════════════════════════
+
+const pvpQueue   = new Map();
+const pvpRooms   = new Map();
+const pvpSockets = new Map();
+
+const PVP_TICK_MS         = 500;
+const PVP_ATK_INTERVAL    = 2.5;
+const PVP_RECONNECT_GRACE = 60;
+const PVP_QUEUE_TIMEOUT   = 60;
+const PVP_WIN_HIGH        = 20;
+const PVP_WIN_LOW         = 10;
+const PVP_LOSE_HIGH       = 15;
+const PVP_LOSE_LOW        = 8;
+const PVP_REWARD_PIXR     = 1;
+
+function genRoomId() { return 'pvp_' + Date.now() + '_' + Math.random().toString(36).slice(2,6); }
+
+function pvpCalcDmg(as, ds) {
+  var dodge = ds.dodge || 3;
+  if (Math.random() * 100 < dodge) return { dmg: 0, dodge: true, crit: false };
+  var atk = as.atk || 10, def = ds.def || 5;
+  var critDmg = 1.8 + (as.critDmg || 0);
+  var dmg = Math.max(1, Math.floor(atk * (0.85 + Math.random() * 0.3) - def * 0.4));
+  var isCrit = Math.random() * 100 < (as.crit || 5);
+  if (isCrit) dmg = Math.floor(dmg * critDmg);
+  return { dmg, crit: isCrit, dodge: false };
+}
+
+function pvpApplySkill(skillId, caster, target) {
+  var lv = (caster.skills && caster.skills[skillId] && caster.skills[skillId].level) || 1;
+  var as = caster.stats, ds = target.stats;
+  var critDmg = 1.8 + (as.critDmg || 0);
+
+  if (skillId === 'fire_fireball' || skillId === 'light_smite') {
+    var dmg = Math.max(1, Math.floor((as.atk||10) * 2 * (1 + lv * 0.10) * (0.9 + Math.random() * 0.2) - (ds.def||5) * 0.4));
+    var c = Math.random() * 100 < (as.crit||5);
+    if (c) dmg = Math.floor(dmg * critDmg);
+    target.hp = Math.max(0, target.hp - dmg);
+    var heal = 0;
+    if (skillId === 'light_smite') { heal = Math.max(1, Math.floor(caster.maxHp * 0.20)); caster.hp = Math.min(caster.maxHp, caster.hp + heal); }
+    return skillId === 'light_smite' ? { type:'smite', dmg, crit:c, heal } : { type:'dmg', dmg, crit:c, dodge:false };
+  }
+  if (skillId === 'fire_curse')  { target.debuffs.cursed   = { defMult: 1-(0.30+(lv-1)*0.03), timer:30 }; return { type:'debuff', effect:'curse' }; }
+  if (skillId === 'fire_haste')  { caster.buffs.haste       = { atkSpdMult:2.0, timer:5+(lv-1)*0.5 };      return { type:'buff',   effect:'haste' }; }
+  if (skillId === 'light_shield'){ caster.buffs.shield      = { defMult:1.20+(lv-1)*0.03, timer:7+(lv-1)*0.5 }; return { type:'buff', effect:'shield' }; }
+  if (skillId === 'light_reflect'){ caster.buffs.reflect    = { pct:0.05+(lv-1)*0.01, timer:5+(lv-1)*0.5 };  return { type:'buff', effect:'reflect' }; }
+  if (skillId === 'water_burst') {
+    var total = 0;
+    for (var i=0;i<3;i++) { var d2=Math.max(1,Math.floor((as.atk||10)*(0.85+Math.random()*0.3)-(ds.def||5)*0.4)); var cr=Math.random()*100<(as.crit||5); if(cr)d2=Math.floor(d2*critDmg); total+=d2; }
+    target.hp = Math.max(0, target.hp - total);
+    return { type:'dmg', dmg:total, crit:false, dodge:false, hits:3 };
+  }
+  if (skillId === 'water_critup'){ caster.buffs.critBoost   = { flat:20+(lv-1)*3, timer:7+(lv-1)*0.5 };      return { type:'buff',   effect:'critup' }; }
+  if (skillId === 'water_freeze'){ target.debuffs.frozen    = { timer:2+(lv-1)*0.4 };                         return { type:'debuff', effect:'freeze' }; }
+  return null;
+}
+
+function pvpTickBuffs(f, dt) {
+  Object.keys(f.buffs).forEach(function(k)   { f.buffs[k].timer   -= dt; if (f.buffs[k].timer   <= 0) delete f.buffs[k];   });
+  Object.keys(f.debuffs).forEach(function(k) { f.debuffs[k].timer -= dt; if (f.debuffs[k].timer <= 0) delete f.debuffs[k]; });
+}
+
+function pvpEffDef(f)  { var d=f.stats.def||5; if(f.buffs.shield)d=Math.floor(d*f.buffs.shield.defMult); if(f.debuffs.cursed)d=Math.floor(d*f.debuffs.cursed.defMult); return d; }
+function pvpEffCrit(f) { var c=f.stats.crit||5; if(f.buffs.critBoost)c+=f.buffs.critBoost.flat; return c; }
+function pvpAtkInterval(f) { var s=PVP_ATK_INTERVAL/(f.stats.atkSpd||1.0); if(f.buffs.haste)s/=f.buffs.haste.atkSpdMult; return Math.max(0.5,s); }
+
+function pvpTick(room) {
+  if (room.finished) return;
+  var dt = PVP_TICK_MS / 1000;
+  var a = room.fighters[0], b = room.fighters[1];
+  pvpTickBuffs(a, dt); pvpTickBuffs(b, dt);
+  var events = [];
+
+  a.atkTimer = (a.atkTimer||0) + dt;
+  if (!a.debuffs.frozen && a.atkTimer >= pvpAtkInterval(a)) {
+    a.atkTimer = 0;
+    var res = pvpCalcDmg({ atk:a.stats.atk, def:pvpEffDef(a), crit:pvpEffCrit(a), critDmg:a.stats.critDmg, dodge:a.stats.dodge }, { def:pvpEffDef(b), dodge:b.stats.dodge||3 });
+    if (!res.dodge) {
+      b.hp = Math.max(0, b.hp - res.dmg);
+      if (b.buffs.reflect && res.dmg > 0) { var rd=Math.floor(res.dmg*b.buffs.reflect.pct); a.hp=Math.max(0,a.hp-rd); events.push({type:'reflect',from:b.idx,dmg:rd}); }
+    }
+    events.push({ type:'atk', from:a.idx, dmg:res.dmg, crit:res.crit, dodge:res.dodge });
+  }
+
+  b.atkTimer = (b.atkTimer||0) + dt;
+  if (!b.debuffs.frozen && b.atkTimer >= pvpAtkInterval(b)) {
+    b.atkTimer = 0;
+    var res2 = pvpCalcDmg({ atk:b.stats.atk, def:pvpEffDef(b), crit:pvpEffCrit(b), critDmg:b.stats.critDmg, dodge:b.stats.dodge }, { def:pvpEffDef(a), dodge:a.stats.dodge||3 });
+    if (!res2.dodge) {
+      a.hp = Math.max(0, a.hp - res2.dmg);
+      if (a.buffs.reflect && res2.dmg > 0) { var rd2=Math.floor(res2.dmg*a.buffs.reflect.pct); b.hp=Math.max(0,b.hp-rd2); events.push({type:'reflect',from:a.idx,dmg:rd2}); }
+    }
+    events.push({ type:'atk', from:b.idx, dmg:res2.dmg, crit:res2.crit, dodge:res2.dodge });
+  }
+
+  io.to(room.roomId).emit('pvp_tick', { hp:[a.hp,b.hp], maxHp:[a.maxHp,b.maxHp], buffs:[a.buffs,b.buffs], debuffs:[a.debuffs,b.debuffs], events });
+  if (a.hp <= 0 || b.hp <= 0) pvpEndRoom(room, a.hp > 0 ? 0 : 1, 'killed');
+}
+
+async function pvpEndRoom(room, winIdx, reason) {
+  if (room.finished) return;
+  room.finished = true;
+  clearInterval(room.tickInterval);
+  var winner = room.fighters[winIdx], loser = room.fighters[1-winIdx];
+  var wr = winner.arenaRating||1000, lr = loser.arenaRating||1000;
+  var wg = wr >= lr ? PVP_WIN_LOW  : PVP_WIN_HIGH;
+  var ll = wr >= lr ? PVP_LOSE_HIGH: PVP_LOSE_LOW;
+  // Убеждаемся что рейтинг не уйдёт ниже 0
+  var newLoserRating = Math.max(0, lr - ll);
+  var actualLl = lr - newLoserRating; // реальное снижение (может быть меньше ll)
+  io.to(room.roomId).emit('pvp_end', { winnerId:winner.tgId, reason, winnerIdx:winIdx, winnerRating:wr+wg, loserRating:newLoserRating, ratingChange:[wg,-actualLl], pixrReward:PVP_REWARD_PIXR });
+  try {
+    await Save.findOneAndUpdate({tgId:winner.tgId},{$inc:{'data.pixr':PVP_REWARD_PIXR,'data.arenaRating':wg}});
+    // $inc может дать отрицательный рейтинг — после применяем $max
+    await Save.findOneAndUpdate({tgId:loser.tgId}, {$inc:{'data.arenaRating':-actualLl}});
+    await Save.findOneAndUpdate({tgId:loser.tgId}, {$max:{'data.arenaRating':0}});
+    await PvpBattle.create({
+      roomId:       room.roomId,
+      winnerTgId:   winner.tgId,   loserTgId:   loser.tgId,
+      winnerName:   winner.name,   loserName:   loser.name,
+      winnerCharId: winner.charId, loserCharId: loser.charId,
+      reason, ratingChange: wg, pixrReward: PVP_REWARD_PIXR,
+      createdAt: Date.now(),
+    });
+  } catch(e) { console.error('❌ [pvp] rating save:', e.message); }
+  console.log(`🏆 [pvp] ${winner.tgId} победил ${loser.tgId} (${reason}), +${wg}/-${actualLl}`);
+  pvpRooms.delete(room.roomId);
+}
+
+// Matchmaking каждые 2 секунды
+setInterval(function() {
+  var now = Date.now();
+  Array.from(pvpQueue.values()).forEach(function(p) {
+    if (now - p.joinedAt > PVP_QUEUE_TIMEOUT*1000) {
+      pvpQueue.delete(p.tgId);
+      var s = pvpSockets.get(p.tgId);
+      if (s) s.emit('pvp_timeout', {});
+    }
+  });
+  var list = Array.from(pvpQueue.values());
+  if (list.length < 2) return;
+  var matched = new Set();
+  for (var i=0;i<list.length;i++) {
+    if (matched.has(list[i].tgId)) continue;
+    for (var j=i+1;j<list.length;j++) {
+      if (matched.has(list[j].tgId)) continue;
+      var cpDiff = Math.abs(list[i].cp - list[j].cp) / (Math.max(list[i].cp, list[j].cp)||1);
+      if (cpDiff <= 0.30) {
+        matched.add(list[i].tgId); matched.add(list[j].tgId);
+        pvpQueue.delete(list[i].tgId); pvpQueue.delete(list[j].tgId);
+        pvpStartRoom(list[i], list[j]);
+        break;
+      }
+    }
+  }
+}, 2000);
+
+function pvpStartRoom(a, b) {
+  var roomId = genRoomId();
+  var sA = pvpSockets.get(a.tgId), sB = pvpSockets.get(b.tgId);
+  if (!sA || !sB) return;
+  sA.join(roomId); sB.join(roomId);
+  var fA = { idx:0, tgId:a.tgId, name:a.name, charId:a.charId, hp:a.maxHp, maxHp:a.maxHp, stats:a.stats, skills:a.skills, arenaRating:a.arenaRating, buffs:{}, debuffs:{}, atkTimer:0, cooldowns:{} };
+  var fB = { idx:1, tgId:b.tgId, name:b.name, charId:b.charId, hp:b.maxHp, maxHp:b.maxHp, stats:b.stats, skills:b.skills, arenaRating:b.arenaRating, buffs:{}, debuffs:{}, atkTimer:0, cooldowns:{} };
+  var room = { roomId, finished:false, fighters:[fA,fB], tgIds:[a.tgId,b.tgId], disconnected:{} };
+  sA.emit('pvp_matched', { roomId, yourIdx:0, opponent:{name:b.name,charId:b.charId,cp:b.cp,arenaRating:b.arenaRating}, maxHp:[fA.maxHp,fB.maxHp] });
+  sB.emit('pvp_matched', { roomId, yourIdx:1, opponent:{name:a.name,charId:a.charId,cp:a.cp,arenaRating:a.arenaRating}, maxHp:[fA.maxHp,fB.maxHp] });
+  room.tickInterval = setInterval(function() { pvpTick(room); }, PVP_TICK_MS);
+  pvpRooms.set(roomId, room);
+  console.log(`⚔️  [pvp] ${a.tgId} vs ${b.tgId} room=${roomId}`);
+}
+
+// Socket.IO
+io.on('connection', function(socket) {
+  var myTgId = null;
+
+  socket.on('pvp_auth', function(data) {
+    try {
+      // ── ИСПРАВЛЕНО: используем verifyTelegram (не verifyTgData) ──
+      var tg = verifyTelegram(data.initData);
+      if (!tg) { socket.emit('pvp_error', { msg: 'auth_failed' }); return; }
+      myTgId = String(tg.id);
+      pvpSockets.set(myTgId, socket);
+      socket.emit('pvp_authed', { tgId: myTgId });
+      console.log(`🔌 [pvp] authed ${myTgId}`);
+    } catch(e) { socket.emit('pvp_error', { msg: 'auth_error' }); }
+  });
+
+  socket.on('pvp_join_queue', async function(data) {
+    if (!myTgId) { socket.emit('pvp_error', { msg: 'not_authed' }); return; }
+    if (pvpQueue.has(myTgId)) return;
+    for (var [,room] of pvpRooms) {
+      if (!room.finished && room.tgIds.includes(myTgId)) { socket.emit('pvp_error',{msg:'already_in_battle'}); return; }
+    }
+    try {
+      var save = await Save.findOne({ tgId: myTgId }).lean();
+      if (!save || !save.data) { socket.emit('pvp_error',{msg:'no_save'}); return; }
+      var d = save.data;
+      var charId = (d.char&&d.char.id) || d.charId || 'fire';
+
+      // ── Используем актуальные stats с клиента ──
+      // Клиент передаёт recalcStats() результат (с экипировкой и апгрейдами)
+      // Валидация: HP не может быть больше чем base hp * 5 (защита от читов)
+      var clientStats = data.stats || {};
+      var clientMaxHp = data.maxHp || 0;
+      var dbBaseHp = (d.stats && d.stats.hp) || 100;
+      var maxAllowedHp = dbBaseHp * 10; // разрешаем до 10x от базы (экипировка)
+
+      var finalStats = (clientStats.atk && clientMaxHp && clientMaxHp <= maxAllowedHp)
+        ? clientStats
+        : (d.stats || {});
+      var finalMaxHp = (clientMaxHp > 0 && clientMaxHp <= maxAllowedHp)
+        ? clientMaxHp
+        : (d.maxHp || dbBaseHp || 100);
+
+      pvpQueue.set(myTgId, {
+        tgId: myTgId,
+        name: save.firstName || save.username || 'Игрок',
+        cp:   data.cp || 0,
+        charId,
+        stats:  finalStats,
+        maxHp:  finalMaxHp,
+        skills: d.skills || {},
+        arenaRating: d.arenaRating || 1000,
+        joinedAt: Date.now(),
+      });
+      socket.emit('pvp_queued', { position: pvpQueue.size });
+      console.log(`🔍 [pvp] ${myTgId} в очереди CP=${data.cp} HP=${finalMaxHp} ATK=${finalStats.atk||'?'}`);
+    } catch(e) { socket.emit('pvp_error',{msg:'server_error'}); }
+  });
+
+  socket.on('pvp_cancel_queue', function() { if(myTgId) pvpQueue.delete(myTgId); socket.emit('pvp_queue_cancelled',{}); });
+
+  socket.on('pvp_skill', function(data) {
+    if (!myTgId||!data.roomId||!data.skillId) return;
+    var room = pvpRooms.get(data.roomId);
+    if (!room||room.finished) return;
+    var myIdx = room.tgIds.indexOf(myTgId);
+    if (myIdx===-1) return;
+    var caster = room.fighters[myIdx], target = room.fighters[1-myIdx];
+    var now = Date.now(), last = caster.cooldowns[data.skillId]||0;
+    var cdSec = 20;
+    var skillDefs = { fire_fireball:30, fire_curse:20, fire_haste:25, light_smite:30, light_shield:18, light_reflect:22, water_burst:30, water_critup:20, water_freeze:20 };
+    cdSec = skillDefs[data.skillId] || 20;
+    var lv = (caster.skills&&caster.skills[data.skillId]&&caster.skills[data.skillId].level)||1;
+    cdSec = Math.max(5, cdSec*(1-Math.min(lv,5)*0.05));
+    if (now-last < cdSec*1000) { socket.emit('pvp_skill_cd',{skillId:data.skillId}); return; }
+    if (!caster.skills||!caster.skills[data.skillId]||!caster.skills[data.skillId].unlocked) { socket.emit('pvp_error',{msg:'skill_locked'}); return; }
+    caster.cooldowns[data.skillId] = now;
+    var result = pvpApplySkill(data.skillId, caster, target);
+    if (!result) return;
+    io.to(room.roomId).emit('pvp_skill_used', { byIdx:myIdx, skillId:data.skillId, result, hp:[room.fighters[0].hp, room.fighters[1].hp] });
+    if (room.fighters[0].hp<=0||room.fighters[1].hp<=0) pvpEndRoom(room, room.fighters[0].hp>0?0:1, 'killed');
+  });
+
+  socket.on('pvp_surrender', function(data) {
+    if (!myTgId||!data.roomId) return;
+    var room=pvpRooms.get(data.roomId);
+    if (!room||room.finished) return;
+    var myIdx=room.tgIds.indexOf(myTgId);
+    if (myIdx===-1) return;
+    pvpEndRoom(room, 1-myIdx, 'surrender');
+  });
+
+  socket.on('pvp_reconnect', function(data) {
+    if (!myTgId||!data.roomId) return;
+    var room=pvpRooms.get(data.roomId);
+    if (!room||room.finished) return;
+    pvpSockets.set(myTgId, socket);
+    socket.join(data.roomId);
+    if (room.disconnected[myTgId]) { clearTimeout(room.disconnected[myTgId]); delete room.disconnected[myTgId]; }
+    var myIdx=room.tgIds.indexOf(myTgId);
+    socket.emit('pvp_reconnected',{roomId:data.roomId,yourIdx:myIdx,hp:[room.fighters[0].hp,room.fighters[1].hp],maxHp:[room.fighters[0].maxHp,room.fighters[1].maxHp]});
+    io.to(data.roomId).emit('pvp_opponent_reconnected',{idx:myIdx});
+  });
+
+  socket.on('disconnect', function() {
+    if (!myTgId) return;
+    pvpQueue.delete(myTgId);
+    pvpSockets.delete(myTgId);
+    pvpRooms.forEach(function(room) {
+      if (room.finished||!room.tgIds.includes(myTgId)) return;
+      var myIdx=room.tgIds.indexOf(myTgId);
+      io.to(room.roomId).emit('pvp_opponent_disconnected',{idx:myIdx});
+      room.disconnected[myTgId]=setTimeout(function(){if(!room.finished)pvpEndRoom(room,1-myIdx,'disconnect');},PVP_RECONNECT_GRACE*1000);
+    });
+    console.log(`🔌 [pvp] disconnect ${myTgId}`);
+  });
+});
+
+app.post('/api/pvp/rating', async (req, res) => {
+  const tg = authUser(req, res); if (!tg) return;
+  try {
+    const top = await Save.find({},{'data.arenaRating':1,firstName:1,username:1,tgId:1}).sort({'data.arenaRating':-1}).limit(50).lean();
+    const me  = await Save.findOne({tgId:tg.id},{'data.arenaRating':1}).lean();
+    res.json({
+      ok: true,
+      top: top.map(function(u,i){ return { rank:i+1, name:u.firstName||u.username||'Игрок', rating:u.data&&u.data.arenaRating||1000, tgId:u.tgId }; }),
+      myRating: me&&me.data&&typeof me.data.arenaRating==='number' ? me.data.arenaRating : 1000,
+    });
+  } catch(e) { res.status(500).json({ok:false,error:e.message}); }
+});
+
+app.post('/api/pvp/history', async (req, res) => {
+  const tg = authUser(req, res); if (!tg) return;
+  const myId = String(tg.id);
+  try {
+    const battles = await PvpBattle.find({
+      $or: [{ winnerTgId: myId }, { loserTgId: myId }]
+    }).sort({ createdAt: -1 }).limit(20).lean();
+    const list = battles.map(function(b) {
+      const isWin = b.winnerTgId === myId;
+      return {
+        result:         isWin ? 'win' : 'loss',
+        opponentName:   isWin ? b.loserName   : b.winnerName,
+        opponentCharId: isWin ? b.loserCharId : b.winnerCharId,
+        ratingChange:   isWin ? b.ratingChange : -b.ratingChange,
+        pixrReward:     isWin ? b.pixrReward : 0,
+        reason:         b.reason,
+        createdAt:      b.createdAt,
+      };
+    });
+    res.json({ ok: true, history: list });
+  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
 });

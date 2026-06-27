@@ -332,7 +332,7 @@ function update(dt) {
         atkTarget = target.m;
         atkCrit = Math.random() * 100 < effectiveCrit();
         atkDmg = Math.floor(G.stats.atk * (0.85 + Math.random() * 0.3));
-        if (atkCrit) atkDmg = Math.floor(atkDmg * 1.8);
+        if (atkCrit) atkDmg = Math.floor(atkDmg * effectiveCritDmg());
       }
     } else {
       atkAnimTimer = -1; atkFired = false;
@@ -463,7 +463,7 @@ monsters = monsters.filter(m => {
       tryDropItem(G.floor);
       
       // PIXR шанс зависит от этажа
-      var pixrChance = 0.3 * Math.pow(1.5, G.floor - 1) * premMult('pixr');
+      var pixrChance = 0.02 * Math.pow(1.5, G.floor - 1) * premMult('pixr');
       if (Math.random() * 100 < pixrChance) {
         G.pixr = (G.pixr || 0) + 1;
         showDmgPop('+1 PIXR', m.worldX - player.worldX + W * 0.5, GROUND * 0.4, '#ff44cc');
@@ -735,6 +735,12 @@ function flashRed() {
 var _loopRunning = false;
 
 function loop(ts) {
+  // PvP сцена — перехватываем loop
+  if (typeof pvpRenderState !== 'undefined' && pvpRenderState.active) {
+    renderPvp(ts);
+    requestAnimationFrame(loop);
+    return;
+  }
   const dt = Math.min((ts - lastTime) / 1000, 0.1);
   lastTime = ts;
   update(dt);

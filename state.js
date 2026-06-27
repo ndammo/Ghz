@@ -30,7 +30,7 @@ const G = {
   maxHp: 100,
 
   // Уровни вложенных улучшений
-  upg: { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 },
+  upg: { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, critDmg: 0, dodge: 0, atkSpd: 0 },
   potionLv: 0,
   bp: { active: false, claimed: [] },
   prem: { tier: null, expiresAt: 0 },
@@ -51,10 +51,12 @@ const G = {
   },
   invFilter: 'all',
   boss: { floor: 1, lastFightTime: 0 }, // lastFightTime = timestamp победы (ms)
+  marketUnlocked: false,
+  arenaRating: 1000,
 };
 
 // Базовые статы — отдельно, чтобы пересчитывать после снятия предметов
-G.baseStats = { atk: 10, def: 5, spd: 3, hp: 100, crit: 5, dodge: 3, atkSpd: 1.0 };
+G.baseStats = { atk: 10, def: 5, spd: 3, hp: 100, crit: 5, dodge: 3, atkSpd: 1.0, critDmg: 0 };
 
 // ── Расчёт боевой мощи (CP) ──
 function calcCP() {

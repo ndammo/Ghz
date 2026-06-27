@@ -8,6 +8,22 @@
   ══════════════════════════════════════════════════════
 */
 
+// ── Кеш аватаров (чтобы не спамить 404 запросами) ──
+var _avatarFailedCache = {};
+
+function avatarUrl(tgId) {
+  if (!tgId || !window.GameSync || !window.GameSync._API) return '';
+  if (_avatarFailedCache[tgId]) return '';
+  return window.GameSync._API + '/api/avatar/' + tgId;
+}
+
+function onAvatarError(img, tgId, fallbackHtml) {
+  _avatarFailedCache[tgId] = true;
+  img.style.display = 'none';
+  img.parentElement.innerHTML = fallbackHtml;
+  img.parentElement.style.cssText += ';display:flex;align-items:center;justify-content:center;font-size:16px;';
+}
+
 // ═══════════════════════════════
 //  ВКЛАДКА УЛУЧШЕНИЙ
 // ═══════════════════════════════
@@ -15,16 +31,26 @@ var _upgTab = 'stats'; // 'stats' | 'skills'
 function setUpgTab(t) { _upgTab = t; renderUpgrades(); }
 
 function upgCost(u) {
-  const lv = Math.min(G.upg[u.id], 10);
-  return Math.floor(u.baseCost * Math.pow(1.6, lv));
+  const lv = G.upg[u.id] || 0;
+  if (u.currency === 'pixr') return { gold: 0, pixr: u.baseCost };
+  const goldCost = Math.floor(u.baseCost * Math.pow(1.6, lv));
+  const pixrCost = lv >= 15 ? (lv - 14) : 0;
+  return { gold: goldCost, pixr: pixrCost };
 }
 
 function buyUpgrade(u) {
-  if (G.upg[u.id] >= u.maxLv) return;
+  if ((G.upg[u.id] || 0) >= u.maxLv) return;
   const cost = upgCost(u);
-  if (G.gold < cost) { flashRed(); return; }
-  G.gold -= cost;
-  G.upg[u.id]++;
+  if (u.currency === 'pixr') {
+    if ((G.pixr || 0) < cost.pixr) { flashRed(); return; }
+    G.pixr -= cost.pixr;
+  } else {
+    if (G.gold < cost.gold) { flashRed(); return; }
+    if ((G.pixr || 0) < cost.pixr) { flashRed(); return; }
+    G.gold -= cost.gold;
+    G.pixr = (G.pixr || 0) - cost.pixr;
+  }
+  G.upg[u.id] = (G.upg[u.id] || 0) + 1;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
 }
@@ -55,20 +81,31 @@ function renderUpgrades() {
     ${swordSvg} <span>CP: <span style="color:#fa0;font-weight:bold">${cp}</span></span>
     <span style="color:#2a2a5a;margin:0 2px">|</span>
     ${coinSvg} <span>Золото: <span style="color:#f5c542;font-weight:bold">${G.gold}</span></span>
+    <span style="color:#2a2a5a;margin:0 2px">|</span>
+    <img src="images/pixr.png" style="width:13px;height:13px;image-rendering:pixelated;vertical-align:middle;"> <span>PIXR: <span style="color:#ff44cc;font-weight:bold">${G.pixr || 0}</span></span>
   </div>`;
 
   // ── Характеристики ──
   if (_upgTab === 'stats') {
     body.innerHTML = header + tabBar + UPG_DEFS.map(u => {
-      const lv = G.upg[u.id], maxLv = u.maxLv;
-      const cost    = lv < maxLv ? upgCost(u) : '-';
+      const lv = G.upg[u.id] || 0, maxLv = u.maxLv;
+      const cost    = lv < maxLv ? upgCost(u) : null;
       const pct     = (lv / maxLv * 100) + '%';
       const statVal = u.id === 'atkSpd'
         ? G.stats.atkSpd.toFixed(2) + 'x (' + getAtkCooldown().toFixed(1) + 's)'
-        : G.stats[u.stat];
-      const btnContent = lv >= maxLv
-        ? 'MAX'
-        : `<span style="display:flex;align-items:center;gap:3px;justify-content:center;">${coinSvg}<span>${cost}</span></span>`;
+        : u.id === 'critDmg'
+          ? effectiveCritDmg().toFixed(1) + 'x'
+          : G.stats[u.stat];
+      let btnContent;
+      if (lv >= maxLv) {
+        btnContent = 'MAX';
+      } else if (u.currency === 'pixr') {
+        btnContent = `<span style="display:flex;align-items:center;gap:3px;justify-content:center;"><img src="images/pixr.png" style="width:13px;height:13px;image-rendering:pixelated;vertical-align:middle;"><span>${cost.pixr}</span></span>`;
+      } else if (cost.pixr > 0) {
+        btnContent = `<span style="display:flex;align-items:center;gap:4px;justify-content:center;">${coinSvg}<span>${cost.gold}</span><span style="color:#444">+</span><img src="images/pixr.png" style="width:13px;height:13px;image-rendering:pixelated;vertical-align:middle;"><span style="color:#ff44cc">${cost.pixr}</span></span>`;
+      } else {
+        btnContent = `<span style="display:flex;align-items:center;gap:3px;justify-content:center;">${coinSvg}<span>${cost.gold}</span></span>`;
+      }
       return `<div class="upg-item">
         <div class="upg-icon">${upgIcon(u.svgId)}</div>
         <div class="upg-info">
@@ -96,7 +133,7 @@ function renderUpgrades() {
   var totalBooks = G.inventory.filter(function(i){ return i.isSkillBook; }).length;
   var booksInfo  = '<div style="font-size:10px;color:#778;margin-bottom:10px;padding:6px 10px;background:rgba(167,139,250,0.06);border:1px solid #3a2a6a;border-radius:6px;display:flex;align-items:center;gap:6px;">' +
     '<span style="font-size:16px">📖</span><span>Книг в инвентаре: <strong style="color:#a78bfa">' + totalBooks + '</strong></span>' +
-    '<span style="color:#445;font-size:9px;margin-left:auto">Шанс: ~1%</span></div>';
+    '<span style="color:#445;font-size:9px;margin-left:auto">Шанс: ~' + ((0.000267 + (G.floor - 1) * 0.0000333) * 100).toFixed(4) + '% / убийство</span></div>';
 
   var skillsHtml = skills.map(function(sk) {
     var st      = getSkillState(sk.id);
@@ -151,32 +188,62 @@ function openFloorLoot(floorN) {
   var rarityNames  = { common:'Обычный', uncommon:'Необычный', rare:'Редкий', epic:'Эпический', legend:'Легендарный' };
   var classColors  = { fire:'#ff7030', light:'#ffd040', water:'#40d0ff' };
   var classLabels  = { fire:'Пирокан', light:'Люмос', water:'Аквас' };
-  var html = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">' +
+  var maxRarityMap = { 1:'common', 2:'uncommon', 3:'uncommon', 4:'rare', 5:'rare', 6:'rare', 7:'epic', 8:'epic', 9:'legend', 10:'legend' };
+  var minRarityMap = { 1:'common', 2:'common', 3:'common', 4:'common', 5:'common', 6:'common', 7:'common', 8:'uncommon', 9:'uncommon', 10:'uncommon' };
+  var minR = minRarityMap[f.n] || 'common';
+  var maxR = maxRarityMap[f.n] || 'legend';
+  var minCol = rarityColors[minR], maxCol = rarityColors[maxR];
+
+  var realItemChance = ((0.00833 + (f.n - 1) * 0.00167) * 100).toFixed(2);
+  var realBookChance = ((0.000267 + (f.n - 1) * 0.0000333) * 100).toFixed(4);
+  var pixrChance     = (0.02 * Math.pow(1.5, f.n - 1)).toFixed(3);
+
+  var html = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">' +
     '<span style="font-size:28px">' + f.emoji + '</span>' +
     '<div><div style="font-size:15px;font-weight:bold;color:#f5c542;">Этаж ' + f.n + ': ' + f.name + '</div>' +
-    '<div style="font-size:10px;color:#778;margin-top:2px;">Таблица дропа предметов</div></div></div>' +
-    '<div style="font-size:9px;color:#556;letter-spacing:1px;margin-bottom:8px;">ПРЕДМЕТЫ</div>';
+    '<div style="font-size:10px;color:#778;margin-top:2px;">Дроп за убийство: <span style="color:#f5c542;">' + realItemChance + '%</span> · Редкость: ' +
+    '<span style="color:' + minCol + ';">' + rarityNames[minR] + '</span>' +
+    ' — <span style="color:' + maxCol + ';">' + rarityNames[maxR] + '</span></div></div></div>';
+
   if (f.loot && f.loot.length) {
+    var totalWeight = f.loot.reduce(function(s, i) { return s + i.chance; }, 0);
     f.loot.forEach(function(item) {
-      var col = rarityColors[item.rarity] || '#888';
-      var rname = rarityNames[item.rarity] || item.rarity;
+      var col    = rarityColors[item.rarity] || '#888';
+      var rname  = rarityNames[item.rarity]  || item.rarity;
       var iconSrc = itemIcon(item.slot, item.rarity, item.forClass || null);
+      var realChance = ((item.chance / totalWeight) * parseFloat(realItemChance)).toFixed(2);
       html += '<div class="loot-row"><img src="' + iconSrc + '" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;margin-right:8px;vertical-align:middle;" onerror="this.style.opacity=0">';
       html += '<span style="flex:1;color:#ddd;">' + item.name;
-      if (item.forClass) html += ' <span style="font-size:9px;color:' + (classColors[item.forClass]||'#aaa') + ';border:1px solid ' + (classColors[item.forClass]||'#aaa') + ';padding:1px 5px;border-radius:3px;">' + (classLabels[item.forClass]||item.forClass) + '</span>';
+      if (item.forClass) html += ' <span style="font-size:9px;color:' + (classColors[item.forClass]||'#aaa') + ';border:1px solid ' + (classColors[item.forClass]||'#aaa') + ';padding:1px 4px;border-radius:3px;">' + (classLabels[item.forClass]||item.forClass) + '</span>';
       html += '</span><span class="loot-rarity-badge" style="color:' + col + ';border-color:' + col + ';margin-right:8px;">' + rname + '</span>';
-      html += '<span style="color:#f5c542;font-weight:bold;min-width:34px;text-align:right;">' + item.chance + '%</span></div>';
+      html += '<span style="color:#f5c542;font-weight:bold;min-width:38px;text-align:right;">' + realChance + '%</span></div>';
     });
-    var pixrChance = (0.3 * Math.pow(1.5, f.n - 1)).toFixed(2);
-    html += '<div class="loot-row"><img src="images/pixr.png" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;margin-right:8px;vertical-align:middle;" onerror="this.style.opacity=0">';
-    html += '<span style="flex:1;color:#ff44cc;">PIXR</span>';
-    html += '<span class="loot-rarity-badge" style="color:#ff44cc;border-color:#ff44cc;margin-right:8px;">Монетка</span>';
-    html += '<span style="color:#f5c542;font-weight:bold;min-width:34px;text-align:right;">' + pixrChance + '%</span></div>';
   } else {
     html += '<div style="color:#445;font-size:11px;text-align:center;padding:20px 0;">Нет данных о дропе</div>';
   }
-  html += '<div style="margin-top:14px;font-size:9px;color:#445;text-align:center;">Шанс выпадения — вероятность относительно других предметов этажа</div>';
-  html += '<button onclick="closeFloorLootModal()" style="width:100%;margin-top:14px;padding:10px;font-size:12px;font-family:Courier New,monospace;border-radius:8px;border:1.5px solid #2a2a5a;background:rgba(255,255,255,0.04);color:#778;cursor:pointer;">Закрыть</button>';
+
+  // PIXR
+  html += '<div class="loot-row"><img src="images/pixr.png" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;margin-right:8px;vertical-align:middle;" onerror="this.style.opacity=0">';
+  html += '<span style="flex:1;color:#ff44cc;">PIXR монетка</span>';
+  html += '<span class="loot-rarity-badge" style="color:#ff44cc;border-color:#ff44cc;margin-right:8px;">Валюта</span>';
+  html += '<span style="color:#f5c542;font-weight:bold;min-width:38px;text-align:right;">' + pixrChance + '%</span></div>';
+
+  // Книги по классам
+  var bookClasses = [
+    { id:'fire',  label:'Пирокан', color:'#ff7030', skills:'Огн. шар, Проклятие, Ярость' },
+    { id:'light', label:'Люмос',   color:'#ffd040', skills:'Кара света, Щит света, Отражение' },
+    { id:'water', label:'Аквас',   color:'#40d0ff', skills:'Тройной удар, Концентрация, Заморозка' },
+  ];
+  bookClasses.forEach(function(bc) {
+    html += '<div class="loot-row"><span style="font-size:20px;margin-right:8px;">📖</span>';
+    html += '<span style="flex:1;color:#b88cf8;">Книга навыка <span style="font-size:9px;color:' + bc.color + ';border:1px solid ' + bc.color + ';padding:1px 4px;border-radius:3px;">' + bc.label + '</span>';
+    html += ' <span style="font-size:9px;color:#556;">(' + bc.skills + ')</span></span>';
+    html += '<span class="loot-rarity-badge" style="color:#9b59b6;border-color:#9b59b6;margin-right:8px;">Эпический</span>';
+    html += '<span style="color:#f5c542;font-weight:bold;min-width:38px;text-align:right;">' + realBookChance + '%</span></div>';
+  });
+
+  html += '<div style="margin-top:10px;font-size:9px;color:#445;text-align:center;">% — шанс выпадения за каждое убийство</div>';
+  html += '<button onclick="closeFloorLootModal()" style="width:100%;margin-top:12px;padding:10px;font-size:12px;font-family:Courier New,monospace;border-radius:8px;border:1.5px solid #2a2a5a;background:rgba(255,255,255,0.04);color:#778;cursor:pointer;">Закрыть</button>';
   document.getElementById('floorLootContent').innerHTML = html;
   document.getElementById('floorLootModal').classList.add('show');
 }
@@ -202,9 +269,9 @@ function renderFloors() {
     var allXp = f.baseXp.map(function(xp) { return Math.round(xp * f.xpMult); });
     var allGold = f.baseGold.map(function(gold) { return Math.round(gold * f.goldMult); });
     
-    var avgXp   = Math.round(allXp.reduce(function(a,b){return a+b;},0) / allXp.length);
+    var avgXp   = Math.round(Math.min.apply(null, allXp));
     var maxXp   = Math.round(Math.max.apply(null, allXp));
-    var avgGold = Math.round(allGold.reduce(function(a,b){return a+b;},0) / allGold.length);
+    var avgGold = Math.round(Math.min.apply(null, allGold));
     var maxGold = Math.round(Math.max.apply(null, allGold));
     
     var cpLeft  = f.cpReq - cp;
@@ -346,16 +413,13 @@ function renderRatingData(players, body) {
     var level = p.level || 1;
     var cp = p.cp || 0;
     
-    var avatarUrl = '';
-    if (p.tgId && window.GameSync && window.GameSync._API) {
-      avatarUrl = window.GameSync._API + '/api/avatar/' + p.tgId;
-    }
+    var aUrl = avatarUrl(p.tgId);
     
     html += 
       '<div class="rating-row" style="' + (isMe ? 'border-color:#fa0;background:rgba(245,197,66,0.08);' : '') + '">' +
         '<div class="rating-rank">' + medal + '</div>' +
-        '<div style="flex:0 0 32px;width:32px;height:32px;border-radius:50%;overflow:hidden;border:1.5px solid ' + (isMe ? '#f5c542' : '#2a2a5a') + ';background:#0d0d22;flex-shrink:0;">' +
-          '<img src="' + avatarUrl + '" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.style.display=\'none\';this.parentElement.innerHTML=\'' + (charEmoji || '👤') + '\';this.parentElement.style.display=\'flex\';this.parentElement.style.alignItems=\'center\';this.parentElement.style.justifyContent=\'center\';this.parentElement.style.fontSize=\'16px\';">' +
+        '<div style="flex:0 0 32px;width:32px;height:32px;border-radius:50%;overflow:hidden;border:1.5px solid ' + (isMe ? '#f5c542' : '#2a2a5a') + ';background:#0d0d22;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px;">' +
+          (aUrl ? '<img src="' + aUrl + '" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="onAvatarError(this,\'' + p.tgId + '\',\'' + (charEmoji||'👤') + '\')">' : (charEmoji||'👤')) +
         '</div>' +
         '<div style="flex:1;min-width:0;padding-left:10px;">' +
           '<div style="font-size:12px;color:' + (isMe ? '#f5c542' : '#ddd') + ';">' +
@@ -635,6 +699,7 @@ function renderStats() {
       <div class="stat-cell"><div class="stat-icon">${shieldSvg()}</div><div class="stat-label">Защита</div><div class="stat-val">${G.stats.def}</div></div>
       <div class="stat-cell"><div class="stat-icon">${windSvg()}</div><div class="stat-label">Скорость</div><div class="stat-val">${G.stats.spd}</div></div>
       <div class="stat-cell"><div class="stat-icon">${critSvg()}</div><div class="stat-label">Крит %</div><div class="stat-val">${G.stats.crit}%</div></div>
+      <div class="stat-cell"><div class="stat-icon">${critSvg()}</div><div class="stat-label">Сила крита</div><div class="stat-val">${effectiveCritDmg().toFixed(1)}x</div></div>
       <div class="stat-cell"><div class="stat-icon">${dodgeSvg()}</div><div class="stat-label">Уклон %</div><div class="stat-val">${G.stats.dodge}%</div></div>
       <div class="stat-cell"><div class="stat-icon">${heartSvg()}</div><div class="stat-label">Макс. HP</div><div class="stat-val">${G.maxHp}</div></div>
       <div class="stat-cell"><div class="stat-icon">${atkSpdSvg()}</div><div class="stat-label">Ск. атаки</div><div class="stat-val">${(G.stats.atkSpd||1).toFixed(2)}x</div></div>
@@ -907,10 +972,14 @@ function switchTab(tab) {
   var premBtn = document.querySelector('.prem-hud-btn');
   var taskBtn = document.getElementById('taskHudBtn');
   var bossBtn = document.getElementById('bossHudBtn');
+  var shopBtn = document.getElementById('marketHudBtn');
+  var pvpBtn  = document.getElementById('pvpHudBtn');
   if (bpBtn)   bpBtn.style.display   = isGame ? 'flex' : 'none';
   if (premBtn) premBtn.style.display = isGame ? 'flex' : 'none';
   if (taskBtn) taskBtn.style.display = isGame ? 'flex' : 'none';
   if (bossBtn) bossBtn.style.display = isGame ? 'flex' : 'none';
+  if (shopBtn) shopBtn.style.display = isGame ? 'flex' : 'none';
+  if (pvpBtn)  pvpBtn.style.display  = isGame ? 'flex' : 'none';
 
   if (tab === 'inv')      { _invSelectMode = false; _invSelected = {}; renderInventory(); }
   if (tab === 'upgrades') renderUpgrades();
@@ -1205,7 +1274,7 @@ function updateHudAvatar() {
 
   // 2. Серверный прокси через Bot API
   if (!photoUrl && window.GameSync && window.GameSync._API) {
-    photoUrl = window.GameSync._API + '/api/avatar/' + tgId;
+    photoUrl = avatarUrl(tgId);
   }
 
   if (!photoUrl) return;
@@ -1217,6 +1286,7 @@ function updateHudAvatar() {
   imgEl.src = photoUrl;
 
   imgEl.onerror = function() {
+    _avatarFailedCache[tgId] = true;
     this.style.display = 'none';
     var name = '';
     try {
@@ -1604,4 +1674,796 @@ function callBoss(bossId) {
     switchTab('game');
     setTimeout(function() { spawnBoss(bossId); }, 100);
   }
+}
+
+// ═══════════════════════════════════════════════════════
+//  МАРКЕТ
+// ═══════════════════════════════════════════════════════
+
+var _marketTab    = 'all';   // 'all' | 'my'
+var _marketFilter = 'all';   // 'all' | rarity | 'book'
+var _sellItemId   = null;
+
+// ── Время до истечения лота ──
+function marketTimeLeft(expiresAt) {
+  var diff = expiresAt - Date.now();
+  if (diff <= 0) return 'Истёк';
+  var h = Math.floor(diff / 3600000);
+  var m = Math.floor((diff % 3600000) / 60000);
+  if (h > 0) return h + 'ч ' + m + 'м';
+  return m + 'м';
+}
+
+// ── Открыть маркет ──
+function openMarket() {
+  if (!G.marketUnlocked) {
+    document.getElementById('marketUnlockModal').classList.remove('hidden');
+    return;
+  }
+  document.getElementById('marketModal').classList.remove('hidden');
+  _marketTab    = 'all';
+  _marketFilter = 'all';
+  _syncMarketTabs();
+  _syncMarketFilters();
+  loadMarketListings();
+  updateMarketPixrBal();
+}
+
+function closeMarket() {
+  document.getElementById('marketModal').classList.add('hidden');
+}
+
+function updateMarketPixrBal() {
+  var el = document.getElementById('marketPixrBal');
+  if (el) el.textContent = '💎 ' + (G.pixr || 0).toLocaleString();
+}
+
+// ── Переключение вкладок ──
+function switchMarketTab(tab) {
+  _marketTab = tab;
+  _syncMarketTabs();
+  var filters = document.getElementById('marketFilters');
+  if (filters) filters.style.display = tab === 'all' ? '' : 'none';
+  loadMarketListings();
+}
+
+function _syncMarketTabs() {
+  document.getElementById('marketTabAll').classList.toggle('active', _marketTab === 'all');
+  document.getElementById('marketTabMy').classList.toggle('active', _marketTab === 'my');
+}
+
+// ── Фильтры ──
+function setMarketFilter(f) {
+  _marketFilter = f;
+  _syncMarketFilters();
+  loadMarketListings();
+}
+
+function _syncMarketFilters() {
+  var btns = document.querySelectorAll('.market-filter-btn');
+  var filters = ['all','uncommon','rare','epic','legend','book'];
+  btns.forEach(function(btn, i) {
+    btn.classList.toggle('active', filters[i] === _marketFilter);
+  });
+}
+
+// ── Загрузить лоты ──
+function loadMarketListings() {
+  var body = document.getElementById('marketBody');
+  if (!body) return;
+  body.innerHTML = '<div class="market-loading">⏳ Загрузка...</div>';
+
+  var API  = window.GameSync._API;
+  var init = window.GameSync._INIT;
+
+  if (_marketTab === 'my') {
+    fetch(API + '/api/market/my', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData: init })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) { renderMarketListings(d.listings || [], true); })
+    .catch(function() { body.innerHTML = '<div class="market-empty">Ошибка загрузки</div>'; });
+  } else {
+    fetch(API + '/api/market/list', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData: init, rarity: _marketFilter })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) { renderMarketListings(d.listings || [], false); })
+    .catch(function() { body.innerHTML = '<div class="market-empty">Ошибка загрузки</div>'; });
+  }
+}
+
+// ── Отрисовка списка лотов ──
+function renderMarketListings(listings, isMy) {
+  var body = document.getElementById('marketBody');
+  if (!body) return;
+
+  if (listings.length === 0) {
+    body.innerHTML = '<div class="market-empty">' +
+      (isMy ? '📦 У тебя нет активных лотов.<br><span style="font-size:10px">Выставляй предметы из инвентаря!</span>'
+             : '🏪 Пока нет лотов.<br><span style="font-size:10px">Заходи позже!</span>') +
+      '</div>';
+    return;
+  }
+
+  var html = '';
+  listings.forEach(function(lst) {
+    var item     = lst.item || {};
+    var r        = RARITIES.find(function(x) { return x.id === item.rarity; }) || { color: '#888', name: '—' };
+    var isBook   = item.isSkillBook;
+    var iconHtml = isBook
+      ? '<span style="font-size:22px;line-height:1;">📖</span>'
+      : '<img src="' + (item.icon || '') + '" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.display=\'none\'">';
+
+    var subParts = [r.name];
+    if (isBook && item.bookSkillName) subParts.push(item.bookSkillName);
+    if (item.forClass && item.classLabel) subParts.push(item.classLabel);
+    if (!isMy) subParts.push(lst.sellerName || 'Игрок');
+
+    var actionBtn = '';
+    if (isMy) {
+      actionBtn = '<button class="market-cancel-btn" onclick="cancelListing(\'' + lst.listingId + '\')">Снять</button>';
+    } else {
+      var isSelf    = lst.sellerId === (window.GameSync && window.GameSync.getTgId ? window.GameSync.getTgId() : '');
+      var canAfford = (G.pixr || 0) >= lst.price;
+      actionBtn = '<button class="market-buy-btn" ' +
+        (isSelf ? 'disabled title="Ваш лот"' : (!canAfford ? 'disabled title="Мало PIXR"' : '')) +
+        ' onclick="buyListing(\'' + lst.listingId + '\', ' + lst.price + ')">' +
+        (isSelf ? 'Ваш' : 'Купить') + '</button>';
+    }
+
+    html += '<div class="market-listing">' +
+      '<div class="market-listing-icon" style="border-color:' + r.color + '44;">' + iconHtml + '</div>' +
+      '<div class="market-listing-info">' +
+        '<div class="market-listing-name" style="color:' + r.color + ';">' + (item.name || '—') + (item.refine ? ' <span style="color:#a78bfa">+' + item.refine + '</span>' : '') + '</div>' +
+        '<div class="market-listing-sub">' + subParts.join(' · ') + '</div>' +
+        '<div class="market-lot-timer">⏱ ' + marketTimeLeft(lst.expiresAt) + '</div>' +
+      '</div>' +
+      '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">' +
+        '<div class="market-listing-price">' + lst.price.toLocaleString() + ' 💎</div>' +
+        actionBtn +
+      '</div>' +
+    '</div>';
+  });
+
+  body.innerHTML = html;
+}
+
+// ── Купить лот ──
+function buyListing(listingId, price) {
+  if (!confirm('Купить за ' + price + ' PIXR?')) return;
+  var API  = window.GameSync._API;
+  var init = window.GameSync._INIT;
+  fetch(API + '/api/market/buy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: init, listingId: listingId })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.ok) {
+      G.pixr = d.pixr;
+      if (d.item) G.inventory.push(d.item);
+      updateMarketPixrBal();
+      loadMarketListings();
+      _taskToast('✅ Куплено: ' + (d.item && d.item.name || 'предмет'));
+      if (typeof renderInventory === 'function') renderInventory();
+      window.GameSync.saveInstant();
+    } else {
+      var msgs = {
+        already_sold:    '❌ Кто-то успел купить раньше!',
+        not_enough_pixr: '❌ Недостаточно PIXR',
+        listing_expired: '❌ Лот истёк',
+        own_listing:     '❌ Нельзя купить свой лот',
+        market_locked:   '❌ Маркет не открыт',
+      };
+      _taskToast(msgs[d.error] || '❌ Ошибка: ' + d.error);
+      loadMarketListings();
+    }
+  })
+  .catch(function() { _taskToast('❌ Ошибка сети'); });
+}
+
+// ── Снять лот ──
+function cancelListing(listingId) {
+  if (!confirm('Снять лот с продажи?')) return;
+  var API  = window.GameSync._API;
+  var init = window.GameSync._INIT;
+  fetch(API + '/api/market/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: init, listingId: listingId })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.ok) {
+      if (d.inventory) {
+        G.inventory = d.inventory;
+        if (typeof renderInventory === 'function') renderInventory();
+      }
+      loadMarketListings();
+      _taskToast('✅ Лот снят, предмет возвращён');
+      window.GameSync.saveInstant();
+    } else {
+      _taskToast('❌ Ошибка: ' + d.error);
+    }
+  })
+  .catch(function() { _taskToast('❌ Ошибка сети'); });
+}
+
+// ── Разблокировка маркета ──
+function confirmUnlockMarket() {
+  var API  = window.GameSync._API;
+  var init = window.GameSync._INIT;
+  var btn  = document.querySelector('.market-unlock-btn');
+  if (btn) btn.disabled = true;
+  fetch(API + '/api/market/open', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: init })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (btn) btn.disabled = false;
+    if (d.ok) {
+      G.marketUnlocked = true;
+      if (d.pixr !== undefined) G.pixr = d.pixr;
+      document.getElementById('marketUnlockModal').classList.add('hidden');
+      window.GameSync.saveInstant();
+      _taskToast('🏪 Маркет открыт!');
+      openMarket();
+    } else {
+      var msgs = { not_enough_pixr: '❌ Недостаточно PIXR (нужно 1000)' };
+      _taskToast(msgs[d.error] || '❌ Ошибка: ' + d.error);
+    }
+  })
+  .catch(function() {
+    if (btn) btn.disabled = false;
+    _taskToast('❌ Ошибка сети');
+  });
+}
+
+// ── Открытие модалки продажи ──
+function openSellModal(itemId) {
+  var item = G.inventory.find(function(i) { return i.id === itemId; });
+  if (!item) return;
+  _sellItemId = itemId;
+
+  var r = RARITIES.find(function(x) { return x.id === item.rarity; }) || { color: '#888', name: '—' };
+  var iconHtml = item.isSkillBook
+    ? '<span style="font-size:28px;">📖</span>'
+    : '<img src="' + (item.icon || '') + '" style="width:36px;height:36px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.display=\'none\'">';
+
+  document.getElementById('sellItemPreview').innerHTML =
+    '<div style="width:44px;height:44px;border-radius:8px;border:1.5px solid ' + r.color + '44;background:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;">' + iconHtml + '</div>' +
+    '<div>' +
+      '<div style="font-size:12px;color:' + r.color + ';font-family:\'Courier New\',monospace;">' + item.name + (item.refine ? ' +' + item.refine : '') + '</div>' +
+      '<div style="font-size:10px;color:#556;">' + r.name + (item.level ? ' · Lv.' + item.level : '') + '</div>' +
+    '</div>';
+
+  var input = document.getElementById('sellPriceInput');
+  input.value = '';
+  document.getElementById('sellCommissionNote').textContent = 'Вы получите: — PIXR (комиссия 10%)';
+
+  input.oninput = function() {
+    var val  = parseInt(input.value) || 0;
+    var earn = val > 0 ? Math.floor(val * 0.9) : 0;
+    document.getElementById('sellCommissionNote').textContent =
+      'Вы получите: ' + (earn > 0 ? earn.toLocaleString() : '—') + ' PIXR (комиссия 10%)';
+  };
+
+  if (typeof closeItemModal === 'function') closeItemModal();
+  document.getElementById('sellModal').classList.remove('hidden');
+}
+
+function closeSellModal() {
+  document.getElementById('sellModal').classList.add('hidden');
+  _sellItemId = null;
+}
+
+// ── Подтвердить выставление ──
+function confirmSellItem() {
+  if (!_sellItemId) return;
+  var price = parseInt(document.getElementById('sellPriceInput').value);
+  if (!price || price < 1) { _taskToast('❌ Укажи цену'); return; }
+
+  var API  = window.GameSync._API;
+  var init = window.GameSync._INIT;
+  var btn  = document.querySelector('.sell-confirm-btn');
+  if (btn) btn.disabled = true;
+
+  fetch(API + '/api/market/sell', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: init, itemId: _sellItemId, price: price })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (btn) btn.disabled = false;
+    if (d.ok) {
+      G.inventory = d.inventory;
+      closeSellModal();
+      if (typeof renderInventory === 'function') renderInventory();
+      _taskToast('✅ Предмет выставлен на маркет!');
+      window.GameSync.saveInstant();
+    } else {
+      var msgs = {
+        max_lots:       '❌ Максимум 3 активных лота',
+        rarity_too_low: '❌ Только Необычный и выше',
+        item_equipped:  '❌ Сними предмет перед продажей',
+        item_not_found: '❌ Предмет не найден',
+        market_locked:  '❌ Маркет не открыт',
+      };
+      _taskToast(msgs[d.error] || '❌ Ошибка: ' + d.error);
+    }
+  })
+  .catch(function() {
+    if (btn) btn.disabled = false;
+    _taskToast('❌ Ошибка сети');
+  });
+}
+
+// ── Серверные уведомления ──
+window._handleMarketNotif = function(event, data) {
+  if (event === 'market_sold') {
+    _taskToast('💰 Продано: "' + data.itemName + '" +' + data.earned + ' 💎');
+    G.pixr = (G.pixr || 0) + data.earned;
+    window.GameSync.saveInstant();
+  } else if (event === 'market_expired') {
+    _taskToast('⏰ Лот истёк, "' + (data.item && data.item.name) + '" возвращён');
+    if (data.item) G.inventory.push(data.item);
+    if (typeof renderInventory === 'function') renderInventory();
+    window.GameSync.saveInstant();
+  }
+};
+
+
+// ═══════════════════════════════════════════════════════
+//  PvP — UI логика
+// ═══════════════════════════════════════════════════════
+
+var _pvpSearchTimer    = null;
+var _pvpSearchSeconds  = 0;
+var _pvpRoomId         = null;
+var _pvpYourIdx        = null;
+var _pvpSkillCooldowns = {};
+var _pvpOpponentName   = '';
+var _pvpConnected      = false;
+
+var _pvpPendingSearch = false; // ждём авторизации перед поиском
+
+// ── PvP Лобби ──
+var _pvpTab = 'rating';
+var _pvpRatingCache = null;
+var _pvpRatingCacheTime = 0;
+var _pvpHistoryCache = null;
+var _pvpHistoryCacheTime = 0;
+
+function openPvp() {
+  recalcStats();
+  var page = document.getElementById('pvpPage');
+  if (page) page.classList.remove('hidden');
+  var ratingEl = document.getElementById('pvpMyRating');
+  if (ratingEl) ratingEl.textContent = '★ ' + (G.arenaRating || 1000);
+  var cpEl = document.getElementById('pvpFindCp');
+  if (cpEl) cpEl.textContent = 'Ваш CP: ' + calcCP();
+  _pvpTab = 'rating';
+  _pvpActivateTab('rating');
+  _pvpLoadTabData('rating');
+  // Коннектимся в фоне без поиска
+  if (!_pvpConnected && window.GameSync && PvpClient) {
+    _pvpConnectHandlers();
+    PvpClient.connect(window.GameSync._API, window.GameSync._INIT);
+    _pvpConnected = true;
+  }
+}
+
+function closePvpPage() {
+  var page = document.getElementById('pvpPage');
+  if (page) page.classList.add('hidden');
+}
+
+function switchPvpTab(tab) {
+  _pvpTab = tab;
+  _pvpActivateTab(tab);
+  _pvpLoadTabData(tab);
+}
+
+function _pvpActivateTab(tab) {
+  ['rating', 'history'].forEach(function(t) {
+    var id = 'pvpTab' + t.charAt(0).toUpperCase() + t.slice(1);
+    var btn = document.getElementById(id);
+    if (btn) btn.classList.toggle('active', t === tab);
+  });
+}
+
+function _pvpLoadTabData(tab) {
+  if (!window.GameSync || !window.GameSync.state.online) {
+    document.getElementById('pvpPageBody').innerHTML =
+      '<div style="text-align:center;color:#445;padding:30px;font-size:12px;">📱 Доступно только в Telegram</div>';
+    return;
+  }
+  if (tab === 'rating') _pvpLoadRating();
+  else _pvpLoadHistory();
+}
+
+function _pvpLoadRating() {
+  var body = document.getElementById('pvpPageBody');
+  if (_pvpRatingCache && Date.now() - _pvpRatingCacheTime < 30000) {
+    _pvpRenderRating(_pvpRatingCache.top, _pvpRatingCache.myRating, body);
+    return;
+  }
+  body.innerHTML = '<div style="text-align:center;color:#445;padding:30px;font-size:12px;">⏳ Загрузка...</div>';
+  var API = window.GameSync._API, INIT = window.GameSync._INIT;
+  fetch(API + '/api/pvp/rating', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: INIT })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (!d.ok) { body.innerHTML = '<div style="text-align:center;color:#e74c3c;padding:30px;">❌ Ошибка загрузки</div>'; return; }
+    _pvpRatingCache = d;
+    _pvpRatingCacheTime = Date.now();
+    // Синхронизируем рейтинг с сервером
+    if (d.myRating !== undefined) {
+      G.arenaRating = d.myRating;
+      var rEl = document.getElementById('pvpMyRating');
+      if (rEl) rEl.textContent = '★ ' + d.myRating;
+    }
+    _pvpRenderRating(d.top, d.myRating, body);
+  })
+  .catch(function() { body.innerHTML = '<div style="text-align:center;color:#e74c3c;padding:30px;">❌ Нет соединения</div>'; });
+}
+
+function _pvpRenderRating(top, myRating, body) {
+  var medals = ['🥇', '🥈', '🥉'];
+  var tgId = window.GameSync ? window.GameSync.getTgId() : null;
+
+  var html = '<div style="margin-bottom:10px;padding:10px;background:rgba(167,139,250,0.08);border:1px solid #4a3a8a;border-radius:8px;display:flex;align-items:center;justify-content:space-between;">' +
+    '<span style="font-size:12px;color:#a78bfa;">★ Мой рейтинг</span>' +
+    '<span style="font-size:18px;font-weight:bold;color:#f5c542;font-family:\'Courier New\',monospace;">' + (myRating || G.arenaRating || 1000) + '</span>' +
+    '</div>';
+
+  if (!top || !top.length) {
+    html += '<div style="text-align:center;color:#445;padding:30px;font-size:12px;">👥 Пока нет игроков</div>';
+    body.innerHTML = html; return;
+  }
+
+  top.forEach(function(p, i) {
+    var isMe = p.tgId && tgId && p.tgId === tgId;
+    var medal = i < 3 ? medals[i] : (i + 1) + '.';
+    html += '<div style="display:flex;align-items:center;gap:10px;padding:9px 10px;margin-bottom:5px;border-radius:8px;' +
+      'background:' + (isMe ? 'rgba(167,139,250,0.12)' : 'rgba(255,255,255,0.03)') + ';' +
+      'border:1px solid ' + (isMe ? '#6a4aaa' : '#1a1a35') + ';">' +
+      '<span style="font-size:14px;min-width:26px;text-align:center;">' + medal + '</span>' +
+      '<span style="flex:1;font-size:12px;color:' + (isMe ? '#dda0ff' : '#ccd') + ';">' + p.name + '</span>' +
+      '<span style="font-size:12px;color:#f5c542;font-family:\'Courier New\',monospace;">★ ' + p.rating + '</span>' +
+      '</div>';
+  });
+
+  body.innerHTML = html;
+}
+
+function _pvpLoadHistory() {
+  var body = document.getElementById('pvpPageBody');
+  if (_pvpHistoryCache && Date.now() - _pvpHistoryCacheTime < 30000) {
+    _pvpRenderHistory(_pvpHistoryCache, body);
+    return;
+  }
+  body.innerHTML = '<div style="text-align:center;color:#445;padding:30px;font-size:12px;">⏳ Загрузка...</div>';
+  var API = window.GameSync._API, INIT = window.GameSync._INIT;
+  fetch(API + '/api/pvp/history', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: INIT })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (!d.ok) { body.innerHTML = '<div style="text-align:center;color:#e74c3c;padding:30px;">❌ Ошибка загрузки</div>'; return; }
+    _pvpHistoryCache = d.history;
+    _pvpHistoryCacheTime = Date.now();
+    _pvpRenderHistory(d.history, body);
+  })
+  .catch(function() { body.innerHTML = '<div style="text-align:center;color:#e74c3c;padding:30px;">❌ Нет соединения</div>'; });
+}
+
+function _pvpRenderHistory(history, body) {
+  var charEmojis = { fire: '🔥', light: '✨', water: '💧' };
+  var reasonText = { killed: 'убит', surrender: 'сдался', disconnect: 'отключился' };
+
+  if (!history || !history.length) {
+    body.innerHTML = '<div style="text-align:center;color:#445;padding:40px;font-size:12px;">⚔️ Боёв ещё нет<br><span style="font-size:10px;color:#334;">Сыграй первый бой!</span></div>';
+    return;
+  }
+
+  var html = '';
+  history.forEach(function(b) {
+    var isWin = b.result === 'win';
+    var color = isWin ? '#2ecc71' : '#e74c3c';
+    var icon  = isWin ? '🏆' : '💀';
+    var ts    = b.createdAt ? new Date(b.createdAt).toLocaleDateString('ru', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
+    var ratingTxt = (b.ratingChange >= 0 ? '+' : '') + b.ratingChange;
+    html += '<div style="display:flex;align-items:center;gap:10px;padding:9px 10px;margin-bottom:6px;border-radius:8px;' +
+      'background:rgba(255,255,255,0.03);border:1px solid ' + (isWin ? '#1a4a2a' : '#4a1a1a') + ';">' +
+      '<span style="font-size:18px;">' + icon + '</span>' +
+      '<span style="font-size:16px;">' + (charEmojis[b.opponentCharId] || '👤') + '</span>' +
+      '<div style="flex:1;">' +
+        '<div style="font-size:12px;color:#ccd;">' + (b.opponentName || 'Игрок') + '</div>' +
+        '<div style="font-size:10px;color:#445;">' + (reasonText[b.reason] || b.reason) + ' · ' + ts + '</div>' +
+      '</div>' +
+      '<div style="text-align:right;">' +
+        '<div style="font-size:13px;font-weight:bold;color:' + color + ';">' + ratingTxt + '</div>' +
+        (isWin && b.pixrReward ? '<div style="font-size:10px;color:#ff44cc;">+' + b.pixrReward + ' 💎</div>' : '') +
+      '</div>' +
+    '</div>';
+  });
+
+  body.innerHTML = html;
+}
+
+function pvpStartFinding() {
+  recalcStats();
+  _pvpSearchSeconds = 0;
+  var overlay = document.getElementById('pvpSearchOverlay');
+  if (overlay) overlay.classList.remove('hidden');
+  var cpEl = document.getElementById('pvpSearchCp');
+  if (cpEl) cpEl.textContent = 'Ваш CP: ' + calcCP();
+
+  if (!_pvpConnected) {
+    var API  = window.GameSync._API;
+    var init = window.GameSync._INIT;
+    _pvpPendingSearch = true;
+    _pvpConnectHandlers();
+    PvpClient.connect(API, init);
+    _pvpConnected = true;
+  } else if (PvpClient.isConnected()) {
+    _pvpDoJoinQueue();
+  } else {
+    _pvpPendingSearch = true;
+  }
+}
+
+function _pvpDoJoinQueue() {
+  _pvpPendingSearch = false;
+  _pvpSearchTimer = setInterval(function() {
+    _pvpSearchSeconds++;
+    var s = _pvpSearchSeconds % 60, m = Math.floor(_pvpSearchSeconds / 60);
+    var el = document.getElementById('pvpSearchTimer');
+    if (el) el.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+    if (_pvpSearchSeconds >= 60) clearInterval(_pvpSearchTimer);
+  }, 1000);
+  // Пересчитываем статы перед отправкой — актуальные (экипировка + апгрейды)
+  recalcStats();
+  PvpClient.joinQueue(calcCP(), G.stats, G.maxHp);
+}
+
+function _pvpConnectHandlers() {
+  PvpClient.on('authed', function() {
+    console.log('✅ [pvp] authed');
+    if (_pvpPendingSearch) _pvpDoJoinQueue();
+  });
+  PvpClient.on('error',          function(d) { _taskToast('❌ PvP: ' + (d.msg || 'ошибка')); _pvpHideSearch(); });
+  PvpClient.on('queued',         function() {});
+  PvpClient.on('timeout',        function() { _pvpHideSearch(); _taskToast('⏱ Соперник не найден'); });
+  PvpClient.on('queue_cancelled',function() { _pvpHideSearch(); });
+  PvpClient.on('matched', function(d) {
+    _pvpHideSearch();
+    closePvpPage(); // закрываем лобби арены при нахождении боя
+    _pvpRoomId = d.roomId; _pvpYourIdx = d.yourIdx; _pvpOpponentName = d.opponent.name;
+    _pvpStartBattle(d);
+  });
+  PvpClient.on('tick',       function(d) { _pvpOnTick(d); });
+  PvpClient.on('skill_used', function(d) { _pvpOnSkillUsed(d); });
+  PvpClient.on('skill_cd',   function()  { _taskToast('⏱ Навык ещё не готов'); });
+  PvpClient.on('end',        function(d) { _pvpOnEnd(d); });
+  PvpClient.on('opponent_disconnected', function() {
+    var el = document.getElementById('pvpStatusBadge');
+    if (el) el.textContent = '⚠️ ' + _pvpOpponentName + ' отключился...';
+  });
+  PvpClient.on('opponent_reconnected', function() {
+    var el = document.getElementById('pvpStatusBadge');
+    if (el) el.textContent = '';
+  });
+  PvpClient.on('reconnected', function(d) {
+    _pvpRoomId = d.roomId; _pvpYourIdx = d.yourIdx;
+    pvpRenderState.fighters[0].hp    = d.hp[0];
+    pvpRenderState.fighters[1].hp    = d.hp[1];
+    pvpRenderState.fighters[0].maxHp = d.maxHp[0];
+    pvpRenderState.fighters[1].maxHp = d.maxHp[1];
+  });
+  PvpClient.on('disconnected', function() {
+    var el = document.getElementById('pvpStatusBadge');
+    if (el) el.textContent = '🔄 Переподключение...';
+    setTimeout(function() { if (_pvpRoomId) PvpClient.reconnect(); }, 2000);
+  });
+}
+
+function _pvpHideSearch() {
+  var overlay = document.getElementById('pvpSearchOverlay');
+  if (overlay) overlay.classList.add('hidden');
+  if (_pvpSearchTimer) { clearInterval(_pvpSearchTimer); _pvpSearchTimer = null; }
+  _pvpPendingSearch = false;
+}
+
+function pvpCancelSearch() {
+  PvpClient.cancelQueue();
+  _pvpHideSearch();
+}
+
+// Скрывает/показывает все HUD кнопки справа во время PvP боя
+function _pvpSetHudVisible(visible) {
+  var ids = ['bpHudBtn', 'taskHudBtn', 'bossHudBtn', 'marketHudBtn', 'pvpHudBtn'];
+  ids.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = visible ? 'flex' : 'none';
+  });
+  var premBtn = document.querySelector('.prem-hud-btn');
+  if (premBtn) premBtn.style.display = visible ? 'flex' : 'none';
+}
+
+function _pvpStartBattle(d) {
+  var myCharId  = G_CHAR ? G_CHAR.id : 'fire';
+  var oppCharId = d.opponent.charId || 'fire';
+  pvpRenderState.active        = true;
+  pvpRenderState.yourIdx       = _pvpYourIdx;
+  pvpRenderState.lastTs        = performance.now();
+  pvpRenderState.floatingTexts = [];
+  pvpRenderState.fighters[0] = {
+    charId: _pvpYourIdx === 0 ? myCharId : oppCharId,
+    name:   _pvpYourIdx === 0 ? (G.firstName || 'Ты') : _pvpOpponentName,
+    arenaRating: _pvpYourIdx === 0 ? (G.arenaRating || 1000) : (d.opponent.arenaRating || 1000),
+    hp: d.maxHp[0], maxHp: d.maxHp[0], animTime: 0, state: 'fight', hitFlash: 0, buffs: {}, debuffs: {},
+  };
+  pvpRenderState.fighters[1] = {
+    charId: _pvpYourIdx === 1 ? myCharId : oppCharId,
+    name:   _pvpYourIdx === 1 ? (G.firstName || 'Ты') : _pvpOpponentName,
+    arenaRating: _pvpYourIdx === 1 ? (G.arenaRating || 1000) : (d.opponent.arenaRating || 1000),
+    hp: d.maxHp[1], maxHp: d.maxHp[1], animTime: 0, state: 'fight', hitFlash: 0, buffs: {}, debuffs: {},
+  };
+  _pvpSkillCooldowns = {};
+  _pvpSetHudVisible(false); // скрываем HUD кнопки во время боя
+  var bo = document.getElementById('pvpBattleOverlay');
+  if (bo) bo.classList.remove('hidden');
+  _pvpBuildSkillsBar();
+  _taskToast('⚔️ Бой начался! vs ' + _pvpOpponentName);
+}
+
+function _pvpBuildSkillsBar() {
+  var bar = document.getElementById('pvpSkillsBar');
+  if (!bar || !G_CHAR) return;
+  var html = '';
+  (SKILLS_DEF[G_CHAR.id] || []).forEach(function(sk, i) {
+    if (!getSkillState(sk.id).unlocked) return;
+    html += '<button id="pvpSk' + i + '" class="pvp-skill-btn ready" onclick="pvpCastSkill(\'' + sk.id + '\',' + i + ')">' +
+      '<img src="' + sk.icon + '" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;z-index:1;" onerror="this.remove()">' +
+      '<div id="pvpSkFill' + i + '" style="position:absolute;bottom:0;left:0;right:0;height:0%;background:rgba(0,0,0,0.65);"></div>' +
+      '<span id="pvpSkCd' + i + '" style="font-size:9px;color:#aaa;font-family:\'Courier New\',monospace;z-index:1;"></span>' +
+      '</button>';
+  });
+  bar.innerHTML = html;
+}
+
+function pvpCastSkill(skillId, idx) {
+  var now = Date.now(), last = _pvpSkillCooldowns[skillId] || 0;
+  var sk = null;
+  (SKILLS_DEF[G_CHAR && G_CHAR.id] || []).forEach(function(s) { if (s.id === skillId) sk = s; });
+  if (!sk) return;
+  var lv = (G.skills && G.skills[skillId] && G.skills[skillId].level) || 1;
+  var cd = Math.max(5, sk.cd * (1 - Math.min(lv,5)*0.05)) * 1000;
+  if (now - last < cd) { _taskToast('⏱ ' + sk.name + ' ещё не готов'); return; }
+  _pvpSkillCooldowns[skillId] = now;
+  _pvpUpdateSkillBtn(idx, cd / 1000);
+  PvpClient.castSkill(skillId);
+}
+
+function _pvpUpdateSkillBtn(idx, cdSec) {
+  var btn  = document.getElementById('pvpSk'     + idx);
+  var fill = document.getElementById('pvpSkFill' + idx);
+  var cdEl = document.getElementById('pvpSkCd'   + idx);
+  if (!btn) return;
+  btn.classList.remove('ready'); btn.classList.add('oncd');
+  var start = Date.now(), total = cdSec * 1000;
+  var iv = setInterval(function() {
+    var left = Math.max(0, total - (Date.now() - start));
+    if (fill) fill.style.height = ((left / total) * 100) + '%';
+    if (cdEl) cdEl.textContent  = left > 0 ? Math.ceil(left/1000) + 's' : '';
+    if (left <= 0) {
+      clearInterval(iv);
+      btn.classList.remove('oncd'); btn.classList.add('ready');
+      if (fill) fill.style.height = '0%';
+      if (cdEl) cdEl.textContent  = '';
+    }
+  }, 100);
+}
+
+function _pvpOnTick(d) {
+  var rs = pvpRenderState;
+  if (!rs.active) return;
+  var prev = [rs.fighters[0].hp, rs.fighters[1].hp];
+  rs.fighters[0].hp = d.hp[0]; rs.fighters[1].hp = d.hp[1];
+  rs.fighters[0].buffs   = d.buffs[0]   || {}; rs.fighters[1].buffs   = d.buffs[1]   || {};
+  rs.fighters[0].debuffs = d.debuffs[0] || {}; rs.fighters[1].debuffs = d.debuffs[1] || {};
+  (d.events || []).forEach(function(ev) {
+    if (ev.type === 'atk') {
+      var ti = 1 - ev.from;
+      if (ev.dodge) { pvpAddFloatText(ti, 'DODGE', '#2ef', false); }
+      else if (ev.dmg > 0) {
+        if (prev[ti] - d.hp[ti] > 0) rs.fighters[ti].hitFlash = 0.3;
+        pvpAddFloatText(ti, (ev.crit ? '💥' : '') + ev.dmg, ev.crit ? '#fff566' : '#ff6060', ev.crit);
+        rs.fighters[ev.from].state = 'atk';
+        setTimeout(function() { if (rs.fighters[ev.from]) rs.fighters[ev.from].state = 'fight'; }, 400);
+      }
+    } else if (ev.type === 'reflect') {
+      pvpAddFloatText(ev.from, '↩' + ev.dmg, '#aaffff', false);
+    }
+  });
+}
+
+function _pvpOnSkillUsed(d) {
+  var rs = pvpRenderState;
+  if (!rs.active) return;
+  rs.fighters[0].hp = d.hp[0]; rs.fighters[1].hp = d.hp[1];
+  var r = d.result; if (!r) return;
+  var ci = d.byIdx, ti = 1 - d.byIdx;
+  if (r.type === 'dmg')   { rs.fighters[ti].hitFlash = 0.4; pvpAddFloatText(ti, (r.crit?'💥':'⚡')+r.dmg, r.crit?'#fff566':'#a064ff', r.crit); }
+  else if (r.type==='smite')  { rs.fighters[ti].hitFlash=0.4; pvpAddFloatText(ti,'✨'+r.dmg,'#ffffaa',true); pvpAddFloatText(ci,'+'+r.heal+'❤','#44ff88',false); }
+  else if (r.type==='buff')   { var bl={haste:'⚡HASTE!',shield:'🛡SHIELD!',reflect:'↩REFLECT!',critup:'🎯CRIT UP!'}; pvpAddFloatText(ci,bl[r.effect]||r.effect.toUpperCase(),'#a064ff',false); }
+  else if (r.type==='debuff') { var dl={curse:'💀CURSE!',freeze:'❄FREEZE!'}; pvpAddFloatText(ti,dl[r.effect]||r.effect.toUpperCase(),'#cc44ff',false); }
+  rs.fighters[ci].state = 'atk';
+  setTimeout(function() { if (rs.fighters[ci]) rs.fighters[ci].state = 'fight'; }, 500);
+}
+
+function _pvpOnEnd(d) {
+  var isWinner = d.winnerIdx === _pvpYourIdx;
+  var myChange = d.ratingChange[isWinner ? d.winnerIdx : 1 - d.winnerIdx];
+  G.arenaRating = Math.max(0, (G.arenaRating || 1000) + myChange);
+  if (isWinner) G.pixr = (G.pixr || 0) + (d.pixrReward || 1);
+  if (window.GameSync) window.GameSync.saveInstant();
+  // Сбрасываем кеш чтобы данные обновились при следующем открытии лобби
+  _pvpHistoryCache = null; _pvpHistoryCacheTime = 0;
+  _pvpRatingCache  = null; _pvpRatingCacheTime  = 0;
+  setTimeout(function() {
+    pvpRenderState.active = false;
+    var bo = document.getElementById('pvpBattleOverlay');
+    if (bo) bo.classList.add('hidden');
+    _pvpSetHudVisible(true); // возвращаем HUD кнопки после боя
+    var rm = { killed: isWinner ? (_pvpOpponentName+' повержен') : 'Вы повержены', surrender: isWinner ? (_pvpOpponentName+' сдался') : 'Вы сдались', disconnect: isWinner ? (_pvpOpponentName+' отключился') : 'Вы отключились' };
+    var html =
+      '<div class="pvp-result-icon">'+(isWinner?'🏆':'💀')+'</div>'+
+      '<div class="pvp-result-title" style="color:'+(isWinner?'#ffd700':'#e74c3c')+';">'+(isWinner?'ПОБЕДА!':'ПОРАЖЕНИЕ')+'</div>'+
+      '<div class="pvp-result-sub">'+(rm[d.reason]||'')+'</div>'+
+      '<div class="pvp-result-stats">'+
+        '<div class="pvp-result-row"><span style="color:#778">Соперник</span><span>'+_pvpOpponentName+'</span></div>'+
+        '<div class="pvp-result-row"><span style="color:#778">Рейтинг</span><span style="color:'+(myChange>=0?'#2ecc71':'#e74c3c')+';">'+(myChange>=0?'+':'')+myChange+'</span></div>'+
+        '<div class="pvp-result-row"><span style="color:#778">Новый рейтинг</span><span style="color:#a78bfa;">★ '+(G.arenaRating||1000)+'</span></div>'+
+        (isWinner?'<div class="pvp-result-row"><span style="color:#778">Награда</span><span style="color:#ff44cc;">+'+(d.pixrReward||1)+' 💎 PIXR</span></div>':'')+
+      '</div>'+
+      '<button class="pvp-result-close" onclick="pvpCloseResult()">Закрыть</button>';
+    var box = document.getElementById('pvpResultBox');
+    if (box) box.innerHTML = html;
+    var modal = document.getElementById('pvpResultModal');
+    if (modal) modal.classList.remove('hidden');
+    updateHUD(); _pvpRoomId = null;
+  }, 800);
+}
+
+function pvpSurrender() {
+  if (!_pvpRoomId) return;
+  if (!confirm('Сдаться? Рейтинг снизится.')) return;
+  PvpClient.surrender();
+}
+
+function pvpCloseResult() {
+  var el = document.getElementById('pvpResultModal');
+  if (el) el.classList.add('hidden');
+  // Обновляем рейтинг в шапке лобби и перезагружаем данные
+  var ratingEl = document.getElementById('pvpMyRating');
+  if (ratingEl) ratingEl.textContent = '★ ' + (G.arenaRating || 1000);
+  var cpEl = document.getElementById('pvpFindCp');
+  if (cpEl) cpEl.textContent = 'Ваш CP: ' + calcCP();
+  // Открываем лобби с актуальными данными
+  openPvp();
 }
