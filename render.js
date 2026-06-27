@@ -1135,7 +1135,7 @@ function pvpSpawnProjectile(fromIdx, color) {
 function renderPvp(ts) {
   if (!pvpRenderState.active) return;
 
-  var dt  = Math.min((ts - pvpRenderState.lastTs) / 1000, 0.1);
+  var dt  = Math.min((ts - pvpRenderState.lastTs) / 1000, 0.05);
   pvpRenderState.lastTs = ts;
 
   pvpRenderState.fighters.forEach(function(f) {
@@ -1245,7 +1245,7 @@ function _pvpDrawFighter(idx, ts, dt) {
   } else {
     img = spr.run; frames = spr.def.runFrames; fw = spr.def.runFW; fh = spr.def.runFH;
   }
-  var frame = Math.floor(f.animTime * 16) % frames;
+  var frame = Math.floor(ts / 62.5) % frames;
   ctx.drawImage(img, frame * fw, 0, fw, fh, px|0, py|0, SIZE, SIZE);
 
   ctx.restore();
