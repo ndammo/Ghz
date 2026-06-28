@@ -151,11 +151,19 @@ setInterval(async () => {
         { new: false }
       );
       if (!updated) continue;
-      // Возвращаем предмет владельцу
-      await Save.findOneAndUpdate(
-        { tgId: listing.sellerId },
-        { $push: { 'data.inventory': listing.item } }
-      );
+      // Возвращаем предмет/руду владельцу
+      if (listing.item && listing.item.isOre) {
+        const oreKey = 'data.ore.' + listing.item.oreId;
+        await Save.findOneAndUpdate(
+          { tgId: listing.sellerId },
+          { $inc: { [oreKey]: listing.item.qty } }
+        );
+      } else {
+        await Save.findOneAndUpdate(
+          { tgId: listing.sellerId },
+          { $push: { 'data.inventory': listing.item } }
+        );
+      }
       notifyClient(listing.sellerId, 'market_expired', { listingId: listing.listingId, item: listing.item });
       console.log(`⏰ [market] Лот ${listing.listingId} истёк — предмет возвращён ${listing.sellerId}`);
     }
@@ -2288,6 +2296,72 @@ app.post('/api/market/sell', async (req, res) => {
 });
 
 // ── Купить лот ──
+
+// ── Выставить руду на маркет ──
+app.post('/api/market/sell-ore', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return res.status(401).json({ ok: false, error: 'auth_failed' });
+  if (_listingLocks.has(tg.id)) return res.status(429).json({ ok: false, error: 'in_progress' });
+  _listingLocks.add(tg.id);
+  try {
+    const { oreId, qty, price } = req.body || {};
+    if (!oreId || !qty || qty < 1 || !price || price < 1) {
+      return res.status(400).json({ ok: false, error: 'bad_params' });
+    }
+
+    const user = await Save.findOne({ tgId: tg.id }).lean();
+    if (!user || !user.data) return res.status(404).json({ ok: false, error: 'no_save' });
+    if (!user.data.marketUnlocked) return res.status(403).json({ ok: false, error: 'market_locked' });
+
+    const activeCount = await MarketListing.countDocuments({ sellerId: tg.id, status: 'active' });
+    if (activeCount >= MARKET_MAX_LOTS) return res.status(400).json({ ok: false, error: 'max_lots' });
+
+    const haveQty = (user.data.ore || {})[oreId] || 0;
+    if (haveQty < qty) return res.status(400).json({ ok: false, error: 'not_enough' });
+
+    // Атомарно списываем руду
+    const incKey = 'data.ore.' + oreId;
+    const updated = await Save.findOneAndUpdate(
+      { tgId: tg.id, [incKey]: { $gte: qty } },
+      { $inc: { [incKey]: -qty }, $set: { updatedAt: Date.now() } },
+      { new: true }
+    );
+    if (!updated) return res.status(400).json({ ok: false, error: 'not_enough' });
+
+    const ORE_NAMES = { core:'Обычная руда', uore:'Необычная руда', rore:'Редкая руда', eore:'Эпическая руда', lore:'Легендарная руда' };
+    const ORE_ICONS = { core:'images/core.png', uore:'images/uore.png', rore:'images/rore.png', eore:'images/eore.png', lore:'images/lore.png' };
+    const oreItem = {
+      isOre:  true,
+      oreId,
+      qty:    Math.floor(qty),
+      name:   (ORE_NAMES[oreId] || oreId) + ' ×' + qty,
+      icon:   ORE_ICONS[oreId] || 'images/core.png',
+      rarity: { core:'common', uore:'uncommon', rore:'rare', eore:'epic', lore:'legend' }[oreId] || 'common',
+    };
+
+    const now = Date.now();
+    const listingId = 'ore_' + now + '_' + Math.random().toString(36).substring(2, 6);
+    const listing = await MarketListing.create({
+      listingId,
+      sellerId:   tg.id,
+      sellerName: user.firstName || user.username || 'Игрок',
+      item:       oreItem,
+      price:      Math.floor(price),
+      status:     'active',
+      createdAt:  now,
+      expiresAt:  now + MARKET_TTL_MS,
+    });
+
+    console.log('✅ [market] ' + tg.id + ' выставил руду ' + oreId + '×' + qty + ' за ' + price + ' PIXR');
+    res.json({ ok: true, listing });
+  } catch (e) {
+    console.error('❌ [market/sell-ore] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  } finally {
+    _listingLocks.delete(tg.id);
+  }
+});
+
 const _buyLocks = new Set();
 app.post('/api/market/buy', async (req, res) => {
   const tg = authUser(req, res);
@@ -2309,15 +2383,26 @@ app.post('/api/market/buy', async (req, res) => {
     if (listing.sellerId === tg.id) return res.status(400).json({ ok: false, error: 'own_listing' });
 
     const price = listing.price;
+    const isOre  = !!(listing.item && listing.item.isOre);
 
-    // Атомарно списываем PIXR у покупателя
-    const buyer = await Save.findOneAndUpdate(
-      { tgId: tg.id, 'data.pixr': { $gte: price } },
-      {
+    // Атомарно списываем PIXR у покупателя и начисляем предмет/руду
+    let buyerUpdate;
+    if (isOre) {
+      const oreKey = 'data.ore.' + listing.item.oreId;
+      buyerUpdate = {
+        $inc: { 'data.pixr': -price, [oreKey]: listing.item.qty },
+        $set: { updatedAt: Date.now() }
+      };
+    } else {
+      buyerUpdate = {
         $inc: { 'data.pixr': -price },
         $push: { 'data.inventory': listing.item },
         $set: { updatedAt: Date.now() }
-      },
+      };
+    }
+    const buyer = await Save.findOneAndUpdate(
+      { tgId: tg.id, 'data.pixr': { $gte: price } },
+      buyerUpdate,
       { new: true }
     );
     if (!buyer) return res.status(400).json({ ok: false, error: 'not_enough_pixr' });
@@ -2337,13 +2422,21 @@ app.post('/api/market/buy', async (req, res) => {
     );
     if (!sold) {
       // Лот уже купили — откатываем у покупателя
-      await Save.findOneAndUpdate(
-        { tgId: tg.id },
-        {
-          $inc: { 'data.pixr': price },
-          $pull: { 'data.inventory': { id: listing.item.id } }
-        }
-      );
+      if (isOre) {
+        const oreKey = 'data.ore.' + listing.item.oreId;
+        await Save.findOneAndUpdate(
+          { tgId: tg.id },
+          { $inc: { 'data.pixr': price, [oreKey]: -listing.item.qty } }
+        );
+      } else {
+        await Save.findOneAndUpdate(
+          { tgId: tg.id },
+          {
+            $inc: { 'data.pixr': price },
+            $pull: { 'data.inventory': { id: listing.item.id } }
+          }
+        );
+      }
       return res.status(400).json({ ok: false, error: 'already_sold' });
     }
 
@@ -2386,14 +2479,24 @@ app.post('/api/market/cancel', async (req, res) => {
     );
     if (!cancelled) return res.status(400).json({ ok: false, error: 'listing_not_found' });
 
-    // Возвращаем предмет в инвентарь
-    const updated = await Save.findOneAndUpdate(
-      { tgId: tg.id },
-      { $push: { 'data.inventory': cancelled.item }, $set: { updatedAt: Date.now() } },
-      { new: true }
-    );
+    // Возвращаем предмет/руду в инвентарь
+    let updated;
+    if (cancelled.item && cancelled.item.isOre) {
+      const oreKey = 'data.ore.' + cancelled.item.oreId;
+      updated = await Save.findOneAndUpdate(
+        { tgId: tg.id },
+        { $inc: { [oreKey]: cancelled.item.qty }, $set: { updatedAt: Date.now() } },
+        { new: true }
+      );
+    } else {
+      updated = await Save.findOneAndUpdate(
+        { tgId: tg.id },
+        { $push: { 'data.inventory': cancelled.item }, $set: { updatedAt: Date.now() } },
+        { new: true }
+      );
+    }
 
-    console.log(`✅ [market] ${tg.id} снял лот ${listingId}`);
+    console.log('✅ [market] ' + tg.id + ' снял лот ' + listingId);
     res.json({ ok: true, item: cancelled.item, inventory: updated.data.inventory });
   } catch (e) {
     console.error('❌ [market/cancel] error:', e.message);

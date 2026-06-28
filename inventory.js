@@ -894,7 +894,7 @@ function openOreSellModal(oreId) {
       '</div>' +
 
       '<div style="margin-bottom:14px;">' +
-        '<label style="font-size:10px;color:#556;display:block;margin-bottom:4px;">ЦЕНА ЗА ШТУКУ (GRAM)</label>' +
+        '<label style="font-size:10px;color:#556;display:block;margin-bottom:4px;">ЦЕНА ЗА ШТУКУ (PIXR)</label>' +
         '<input id="oreSellPrice" type="number" min="1" placeholder="Цена за 1 шт." ' +
           'style="width:100%;box-sizing:border-box;background:#0d0d22;border:1.5px solid #2a2a5a;border-radius:6px;color:#ccd;font-size:15px;text-align:center;padding:8px;font-family:inherit;" ' +
           'oninput="_oreUpdateNote()">' +
@@ -937,8 +937,8 @@ function _oreUpdateNote() {
   if (qty > 0 && price > 0) {
     var total = qty * price;
     var earn  = Math.floor(total * 0.9);
-    note.innerHTML = 'Итого: <strong style="color:#f5c542;">' + total + ' GRAM</strong>' +
-      ' · Вы получите: <strong style="color:#2ecc71;">' + earn + ' GRAM</strong> (−10% комиссия)';
+    note.innerHTML = 'Итого: <strong style="color:#ff44cc;">' + total + ' PIXR</strong>' +
+      ' · Вы получите: <strong style="color:#2ecc71;">' + earn + ' PIXR</strong> (−10% комиссия)';
   } else {
     note.textContent = 'Итого: —';
   }
