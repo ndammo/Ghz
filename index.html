@@ -147,6 +147,26 @@
   <!-- ══════════════════════════════════
      TOP HUD — HP, XP, золото, этаж, CP
      ══════════════════════════════════ -->
+  <!-- Оверлей потери связи — блокирует игру -->
+  <div id="connOverlay" class="conn-overlay hidden">
+    <div class="conn-overlay-box">
+      <svg width="48" height="48" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated;display:block;margin:0 auto 16px">
+        <rect x="0" y="13" width="16" height="2" fill="#e74c3c"/>
+        <rect x="2" y="10" width="12" height="2" fill="#e74c3c" opacity="0.5"/>
+        <rect x="4" y="7"  width="8"  height="2" fill="#e74c3c" opacity="0.25"/>
+        <rect x="7" y="4"  width="2"  height="2" fill="#e74c3c" opacity="0.1"/>
+        <!-- крест -->
+        <rect x="6" y="0" width="4" height="2" fill="#e74c3c"/>
+        <rect x="6" y="4" width="4" height="2" fill="#e74c3c"/>
+        <rect x="4" y="2" width="2" height="2" fill="#e74c3c"/>
+        <rect x="10" y="2" width="2" height="2" fill="#e74c3c"/>
+      </svg>
+      <div class="conn-overlay-title">НЕТ СОЕДИНЕНИЯ</div>
+      <div class="conn-overlay-sub">Проверяем подключение...</div>
+      <div class="conn-overlay-dots"><span></span><span></span><span></span></div>
+    </div>
+  </div>
+
   <div id="hud">
     <div class="hud-avatar" id="hudAvatar">
       <img id="hudAvatarImg" src="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:50%;" onerror="this.style.display='none';this.parentElement.textContent='👤';this.parentElement.style.display='flex';this.parentElement.style.alignItems='center';this.parentElement.style.justifyContent='center';this.parentElement.style.fontSize='20px';">

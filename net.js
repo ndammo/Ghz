@@ -334,7 +334,13 @@ G.equipped = {
 
   function serverLoad() {
     if (!SYNC.online) return Promise.resolve(null);
-    return fetch(API + '/api/load', {
+
+    // Таймаут 10 секунд — если сервер не отвечает, считаем ошибкой
+    var timeoutPromise = new Promise(function(_, reject) {
+      setTimeout(function() { reject(new Error('timeout')); }, 10000);
+    });
+
+    var fetchPromise = fetch(API + '/api/load', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ initData: TG_INIT, startParam: START_PARAM }),
@@ -345,27 +351,105 @@ G.equipped = {
         return { ok: false };
       }
       return r.json();
-    })
-    .catch(function (e) { 
-      console.error('❌ [serverLoad] ошибка:', e.message);
-      throw e; 
     });
+
+    return Promise.race([fetchPromise, timeoutPromise])
+      .catch(function (e) { 
+        console.error('❌ [serverLoad] ошибка:', e.message);
+        throw e; 
+      });
+  }
+
+  // ═══════════════════════════════
+  //  ОФЛАЙН — СТОП ИГРЫ
+  // ═══════════════════════════════
+
+  var _connDown = false;   // текущий статус соединения
+  var _pingTimer = null;   // таймер повторных попыток
+
+  function _showConnOverlay() {
+    var el = document.getElementById('connOverlay');
+    if (el) el.classList.remove('hidden');
+  }
+
+  function _hideConnOverlay() {
+    var el = document.getElementById('connOverlay');
+    if (el) el.classList.add('hidden');
+  }
+
+  function _onConnLost() {
+    if (_connDown) return;
+    _connDown = true;
+    console.warn('📵 [conn] Соединение потеряно');
+    if (typeof window.gameActive !== 'undefined') window.gameActive = false;
+    if (typeof window._loopRunning !== 'undefined') window._loopRunning = false;
+    _showConnOverlay();
+    _schedulePing();
+  }
+
+  function _onConnRestored() {
+    if (!_connDown) return;
+    _connDown = false;
+    console.log('✅ [conn] Соединение восстановлено');
+    if (_pingTimer) { clearTimeout(_pingTimer); _pingTimer = null; }
+    _hideConnOverlay();
+    // Возобновляем игру
+    if (SYNC.started) {
+      if (typeof window.gameActive !== 'undefined') window.gameActive = true;
+      if (typeof window._loopRunning !== 'undefined' && !window._loopRunning) {
+        if (typeof startGame === 'function') startGame();
+      }
+    }
+    // Сохраняем актуальное состояние
+    if (SYNC.started && SYNC.serverConfirmed) {
+      var snap = serializeState();
+      snap.updatedAt = Date.now();
+      fetch(API + '/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData: TG_INIT, data: snap }),
+      }).catch(function() {});
+    }
+  }
+
+  function _schedulePing() {
+    if (_pingTimer) return;
+    _pingTimer = setTimeout(function() {
+      _pingTimer = null;
+      _doPing();
+    }, 5000);
+  }
+
+  function _doPing() {
+    fetch(API + '/api/ping', { method: 'GET' })
+      .then(function(r) {
+        if (r.ok) _onConnRestored();
+        else _schedulePing();
+      })
+      .catch(function() { _schedulePing(); });
   }
 
   function serverSaveInstant(data) {
     if (!SYNC.online || !SYNC.serverConfirmed) return Promise.resolve({ ok: false });
-    
+
     var snap = serializeState();
-    Object.keys(data).forEach(function(key) {
-      snap[key] = data[key];
-    });
+    Object.keys(data).forEach(function(key) { snap[key] = data[key]; });
     snap.updatedAt = Date.now();
-    
+
     return fetch(API + '/api/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ initData: TG_INIT, data: snap }),
-    }).then(function (r) { return r.json(); });
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (r && r.ok) _onConnRestored();
+      return r;
+    })
+    .catch(function(e) {
+      _onConnLost();
+      throw e;
+    });
   }
 
   // ⚡ БАТЧ-СОХРАНЕНИЕ — КАЖДЫЕ 10 СЕКУНД (только дельта изменений)
@@ -412,6 +496,7 @@ G.equipped = {
     }).then(function (r) { return r.json(); })
       .then(function (r) {
         if (r && r.ok) {
+          _onConnRestored();
           SYNC.lastHp        = currentHp;
           SYNC.lastGold      = currentGold;
           SYNC.lastXp        = currentXp;
@@ -444,7 +529,7 @@ G.equipped = {
           console.warn('⚠️ [save] rate limit, пауза 6s');
         }
       })
-      .catch(function () {})
+      .catch(function () { _onConnLost(); })
       .then(function () { SYNC.pushing = false; });
   }
 
@@ -659,11 +744,21 @@ function saveInstant(data) {
   // ═══════════════════════════════
 
   function startSyncLoops() {
-    if (SYNC.booted) return; // ✅ защита от дублирования слушателей
+    if (SYNC.booted) return;
     SYNC.batchTimer = setInterval(serverSaveBatch, 60000);
 
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) flush();
+    });
+
+    window.addEventListener('online', function() {
+      console.log('🌐 [online] Сеть восстановлена');
+      if (_connDown) setTimeout(_doPing, 1000);
+    });
+
+    window.addEventListener('offline', function() {
+      console.log('📵 [offline] Сеть отключена');
+      _onConnLost();
     });
 
     if (window.Telegram && window.Telegram.WebApp) {
@@ -772,33 +867,54 @@ function boot() {
   // ✅ НОВОЕ: проверка авторизации
   if (!AUTH.authorized) {
     console.warn('⚠️ [boot] Нет авторизации в Telegram:', AUTH.error);
-    lsSetStatus('❌ ' + AUTH.error, 100);
-    
-    // Показываем кнопку "Открыть в Telegram"
-    var barWrap = document.querySelector('.ls-bar-wrap');
-    if (barWrap && !document.querySelector('.ls-telegram-btn')) {
-      var btn = document.createElement('button');
-      btn.className = 'ls-telegram-btn';
-      btn.innerHTML = '📱 ОТКРЫТЬ В TELEGRAM';
-      btn.style.cssText = 'margin-top:12px;padding:10px 24px;background:linear-gradient(90deg,#1a3a6a,#2a6aaa);border:2px solid #4a8aff;border-radius:10px;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;font-family:"Courier New",monospace;letter-spacing:1px;';
-      btn.onclick = function() {
-        // Пытаемся открыть через Telegram Deep Link
+
+    // Показываем ошибку через _showNoServerError чтобы барьер остался
+    lsSetStatus('', 100);
+    var barFill2 = document.getElementById('lsBar');
+    if (barFill2) {
+      barFill2.style.width = '100%';
+      barFill2.style.background = 'linear-gradient(90deg,#1a3a6a,#2a6aaa)';
+    }
+
+    var statusEl2 = document.getElementById('lsStatus');
+    if (statusEl2) {
+      statusEl2.innerHTML =
+        '<span style="color:#4a8aff;font-size:13px;">📱 Открой игру в Telegram</span>' +
+        '<br><span style="font-size:10px;color:#888;margin-top:4px;display:block;">Игра работает только через Telegram</span>';
+    }
+
+    // Кнопка "Открыть в Telegram"
+    var barWrap2 = document.querySelector('.ls-bar-wrap');
+    if (barWrap2 && !document.querySelector('.ls-telegram-btn')) {
+      var tgBtn = document.createElement('button');
+      tgBtn.className = 'ls-telegram-btn';
+      tgBtn.innerHTML = '📱 ОТКРЫТЬ В TELEGRAM';
+      tgBtn.style.cssText = [
+        'margin-top:16px',
+        'padding:10px 24px',
+        'background:linear-gradient(90deg,#1a3a6a,#2a6aaa)',
+        'border:2px solid #4a8aff',
+        'border-radius:10px',
+        'color:#fff',
+        'font-size:13px',
+        'font-weight:bold',
+        'cursor:pointer',
+        'font-family:"Courier New",monospace',
+        'letter-spacing:1px',
+        'display:block',
+        'margin-left:auto',
+        'margin-right:auto',
+        'box-shadow:0 0 12px rgba(74,138,255,0.3)',
+      ].join(';');
+      tgBtn.onclick = function() {
         var botUsername = window.BOT_USERNAME || 'pixel_rpg_bot';
-        var link = 'https://t.me/' + botUsername + '?start=' + (START_PARAM || '');
+        var link = 'https://t.me/' + botUsername + (START_PARAM ? '?start=' + START_PARAM : '');
         window.open(link, '_blank');
       };
-      barWrap.parentNode.insertBefore(btn, barWrap.nextSibling);
-      
-      // Убираем анимацию прогресса
-      var barFill = document.getElementById('lsBar');
-      if (barFill) barFill.style.width = '100%';
+      barWrap2.parentNode.insertBefore(tgBtn, barWrap2.nextSibling);
     }
-    
-    // Показываем выбор персонажа всё равно (но кнопка будет заблокирована)
-    // или скрываем экран загрузки
-    setTimeout(function() {
-      lsHide();
-    }, 3000);
+
+    // Экран загрузки остаётся — игра заблокирована
     return;
   }
 
@@ -831,26 +947,28 @@ function boot() {
   serverLoad().then(function (r) {
     _stopProgress();
 
+    // ❌ Нет ответа или сервер вернул ошибку — блокируем игру
     if (!r || !r.ok) {
       console.warn('⚠️ [serverLoad] ответ не ok:', r);
       _showNoServerError();
-      _bootFinalize();
+      // НЕ вызываем _bootFinalize() — игра остаётся заблокирована
       return;
     }
 
     var server = r.save;
     var currentTgId = getTgId();
 
+    // ❌ Данные другого пользователя — блокируем
     if (server && server.data && server.data.tgId && currentTgId && server.data.tgId !== currentTgId) {
       console.warn('⚠️ Сервер вернул данные другого пользователя, игнорируем');
-      _showNoServerError();
-      _bootFinalize();
+      _showNoServerError('Ошибка идентификации. Повторите попытку.');
       return;
     }
 
     if (server && server.data && server.data.charId &&
         typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
 
+      // ✅ Данные загружены — запускаем игру
       SYNC.serverConfirmed = true;
       lsSetStatus('Применение данных', 90);
 
@@ -862,33 +980,72 @@ function boot() {
         setTimeout(function () { _bootFinalize(); }, 300);
       }
     } else if (!server || !server.data) {
-      // Новый пользователь — персонаж не выбран
+      // ✅ Новый пользователь — персонаж не выбран, разрешаем выбор
       _bootFinalize();
     } else {
-      // charId есть, но не найден в CHARS
+      // ✅ charId есть, но не найден в CHARS (старый/удалённый) — разрешаем выбор
       _bootFinalize();
     }
   }).catch(function (err) {
     _stopProgress();
     console.error('❌ [boot] serverLoad ошибка:', err.message);
     _showNoServerError();
-    _bootFinalize();
+    // НЕ вызываем _bootFinalize() — игра остаётся заблокирована
   });
 }
 
-  function _showNoServerError() {
+  function _showNoServerError(customMsg) {
+    var msg = customMsg || 'Нет соединения с сервером';
+
+    // Обновляем статус
     var statusEl = document.getElementById('lsStatus');
     if (statusEl) {
-      statusEl.innerHTML = '❌ Нет соединения с сервером<br><span style="font-size:10px;color:#e74c3c;">Проверьте интернет</span>';
+      statusEl.innerHTML =
+        '<span style="color:#e74c3c;font-size:13px;">❌ ' + msg + '</span>' +
+        '<br><span style="font-size:10px;color:#888;margin-top:4px;display:block;">Проверьте интернет и повторите</span>';
     }
+
+    // Полоска — красная, показывает ошибку
+    var barFill = document.getElementById('lsBar');
+    if (barFill) {
+      barFill.style.width = '100%';
+      barFill.style.background = 'linear-gradient(90deg,#8B0000,#e74c3c)';
+    }
+
+    // Кнопка "Повторить" — если ещё нет
     var barWrap = document.querySelector('.ls-bar-wrap');
     if (barWrap && !document.querySelector('.ls-retry-btn')) {
       var btn = document.createElement('button');
       btn.className = 'ls-retry-btn';
       btn.textContent = '🔄 ПОВТОРИТЬ';
-      btn.style.cssText = 'margin-top:12px;padding:8px 20px;background:#2a2a5a;border:1px solid #f5c542;border-radius:8px;color:#f5c542;font-size:12px;font-family:Courier New,monospace;cursor:pointer;';
+      btn.style.cssText = [
+        'margin-top:16px',
+        'padding:10px 28px',
+        'background:#0d0d1a',
+        'border:2px solid #f5c542',
+        'border-radius:10px',
+        'color:#f5c542',
+        'font-size:13px',
+        'font-family:"Courier New",monospace',
+        'letter-spacing:1px',
+        'cursor:pointer',
+        'display:block',
+        'width:160px',
+        'margin-left:auto',
+        'margin-right:auto',
+        'box-shadow:0 0 12px rgba(245,197,66,0.25)',
+      ].join(';');
       btn.onclick = function() { location.reload(); };
       barWrap.parentNode.insertBefore(btn, barWrap.nextSibling);
+    }
+
+    // Оставляем loadingScreen видимым — игра НЕ должна быть доступна
+    var ls = document.getElementById('loadingScreen');
+    if (ls) {
+      ls.style.display = '';
+      ls.style.pointerEvents = 'all';
+      ls.classList.remove('fade-out');
+      ls.classList.remove('hidden-done');
     }
   }
 

@@ -392,6 +392,10 @@ app.get('/', (req, res) => {
   res.json({ ok: true, service: 'pixel-rpg', db: mongoose.connection.readyState === 1 });
 });
 
+app.get('/api/ping', (req, res) => {
+  res.json({ ok: true });
+});
+
 app.post('/api/load', async (req, res) => {
   const tg = authUser(req, res); 
   if (!tg) return;

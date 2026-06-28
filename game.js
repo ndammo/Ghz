@@ -736,6 +736,7 @@ function flashRed() {
 var _loopRunning = false;
 
 function loop(ts) {
+  if (!gameActive) { _loopRunning = false; return; } // стоп при офлайне
   const dt = Math.min((ts - lastTime) / 1000, 0.1);
   lastTime = ts;
   update(dt);
