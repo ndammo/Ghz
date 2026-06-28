@@ -1914,6 +1914,51 @@ app.post('/admin/api/user/:tgId/reset', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Админ: сброс прогресса ВСЕХ пользователей ──
+app.post('/admin/api/reset-all', requireAdmin, async (req, res) => {
+  try {
+    const { confirm } = req.body;
+    if (confirm !== 'RESET_ALL') {
+      return res.status(400).json({ ok: false, error: 'confirmation_required' });
+    }
+
+    const users = await Save.find({}, 'tgId refBy refMilestones').lean();
+
+    let processed = 0;
+    for (const user of users) {
+      const oldMilestones = user.refMilestones || {};
+      const clearedMilestones = {};
+      Object.keys(oldMilestones).forEach(k => { clearedMilestones[k] = 0; });
+
+      await Save.updateOne({ tgId: user.tgId }, {
+        $set: {
+          charId:        null,
+          level:         1,
+          cp:            0,
+          floor:         1,
+          updatedAt:     Date.now(),
+          refMilestones: clearedMilestones,
+          refClaimVer:   0,
+          data: {
+            tgId:   user.tgId,
+            charId: null,
+            refBy:  user.refBy || null,
+          }
+        }
+      });
+      processed++;
+    }
+
+    console.log(`🔄 [admin] Массовый сброс: ${processed} игроков`);
+    await logAdminAction(req.admin.login, 'reset_all_progress', 'ALL', { count: processed });
+
+    res.json({ ok: true, count: processed });
+  } catch (e) {
+    console.error('❌ [admin] reset-all error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── Админ: подтверждение транзакции ──
 app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) => {
   try {
@@ -2100,7 +2145,7 @@ app.get('/admin/api/stats', requireAdmin, async (req, res) => {
         active24h,
         floors,
         topCP,
-        online: adminSessions.size
+        online: await Save.countDocuments({ updatedAt: { $gt: Date.now() - 5 * 60 * 1000 } })
       }
     });
   } catch (e) {

@@ -317,7 +317,7 @@ body {
       <div class="stats-grid" id="statsGrid">
         <div class="stat-card"><div class="stat-num" id="statUsers">0</div><div class="stat-label">Игроков</div></div>
         <div class="stat-card"><div class="stat-num" id="statActive">0</div><div class="stat-label">За 24ч</div></div>
-        <div class="stat-card"><div class="stat-num" id="statOnline">0</div><div class="stat-label">Онлайн</div></div>
+        <div class="stat-card"><div class="stat-num" id="statOnline">0</div><div class="stat-label">Онлайн (5м)</div></div>
         <div class="stat-card"><div class="stat-num" id="statWithChar">0</div><div class="stat-label">С персонажем</div></div>
       </div>
       <div class="stat-card full">
@@ -327,6 +327,14 @@ body {
       <div class="stat-card full">
         <div class="stat-label">Этажи</div>
         <div id="floorsStats"></div>
+      </div>
+      <div class="stat-card full" style="border-color:#3a1a1a;">
+        <div class="stat-label" style="color:#e74c3c;font-weight:bold;font-size:13px;margin-bottom:10px;">⚠️ ОПАСНАЯ ЗОНА</div>
+        <button onclick="massResetProgress()" style="width:100%;padding:12px;background:linear-gradient(90deg,#5a1a1a,#8a2a2a);border:1px solid #c0392b;border-radius:8px;color:#ff6b6b;font-size:14px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
+          🔄 Сбросить прогресс ВСЕХ игроков
+        </button>
+        <div style="font-size:9px;color:#556;margin-top:6px;text-align:center;">Удалит персонажей, инвентарь, валюту у всех. Рефералы сохранятся, награды за них сбросятся для повторного получения.</div>
+        <div id="massResetResult" style="font-size:12px;min-height:18px;margin-top:8px;text-align:center;"></div>
       </div>
     </div>
 
@@ -1214,6 +1222,50 @@ body {
   // ═══════════════════════════════
   //  ЗАПУСК
   // ═══════════════════════════════
+
+  // ═══════════════════════════════
+  //  МАССОВЫЙ СБРОС
+  // ═══════════════════════════════
+
+  function massResetProgress() {
+    if (!SESSION) return;
+    var result = document.getElementById('massResetResult');
+
+    if (!confirm('⚠️ ВНИМАНИЕ! Сброс прогресса ВСЕХ игроков!\n\nБудет удалено у КАЖДОГО игрока:\n• Персонаж и класс\n• Инвентарь и экипировка\n• Золото, PIXR, GRAM\n• Уровень, этаж, навыки, руда\n• Реферальные награды сбросятся (можно забрать снова)\n\nРефералы (связи) сохранятся.\n\nОтменить нельзя! Продолжить?')) return;
+
+    var code = prompt('Введите RESET_ALL для подтверждения:');
+    if (code !== 'RESET_ALL') {
+      result.style.color = '#e74c3c';
+      result.textContent = '❌ Отменено — код не совпал';
+      return;
+    }
+
+    result.style.color = '#f5c542';
+    result.textContent = '⏳ Сброс всех игроков...';
+
+    fetch(API + '/admin/api/reset-all?session=' + SESSION, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: 'RESET_ALL' })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (r.ok) {
+        result.style.color = '#2ecc71';
+        result.textContent = '✅ Сброшено ' + r.count + ' игроков';
+        loadDashboard();
+      } else {
+        result.style.color = '#e74c3c';
+        result.textContent = '❌ Ошибка: ' + (r.error || '?');
+      }
+    })
+    .catch(function() {
+      result.style.color = '#e74c3c';
+      result.textContent = '❌ Ошибка соединения';
+    });
+  }
+
+  window.massResetProgress = massResetProgress;
 
   checkSession();
 
