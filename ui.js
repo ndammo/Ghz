@@ -1258,10 +1258,14 @@ function renderFriendsData(r, body) {
     '<button onclick="friendsShare(\'' + r.refLink + '\')" style="flex:1;padding:9px;font-size:11px;font-family:Courier New,monospace;border-radius:7px;border:1.5px solid #2ecc71;background:rgba(46,204,113,0.1);color:#2ecc71;cursor:pointer;">✈️ Поделиться</button>' +
     '</div></div>';
 
+  var gramSvg = '<img src="images/gram.png" width="13" height="13" style="vertical-align:middle;image-rendering:pixelated;margin-right:2px;">';
   var rewardHtml =
     '<div style="margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid #2a2a5a;border-radius:8px;font-size:10px;color:#667;">' +
     coinSvg + ' <span style="color:#f5c542;font-weight:bold">500 золота</span> за каждые 5 уровней друга · ' +
-    '<span style="color:#aaa">Уровни 5, 10, 15, 20...</span></div>';
+    '<span style="color:#aaa">Уровни 5, 10, 15, 20...</span>' +
+    '<div style="margin-top:6px;padding-top:6px;border-top:1px solid #1e2040;">' +
+    gramSvg + ' <span style="color:#4fc3f7;font-weight:bold">+5% GRAM</span> от каждого пополнения баланса друга — автоматически на ваш счёт</div>' +
+    '</div>';
 
   var claimHtml = '';
   if (r.pendingGold > 0) {
