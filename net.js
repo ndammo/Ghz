@@ -400,15 +400,42 @@ G.equipped = {
         if (typeof startGame === 'function') startGame();
       }
     }
-    // Сохраняем актуальное состояние
+    // После восстановления соединения — сначала проверяем сервер,
+    // только потом сохраняем (защита от перезаписи после сброса)
     if (SYNC.started && SYNC.serverConfirmed) {
-      var snap = serializeState();
-      snap.updatedAt = Date.now();
-      fetch(API + '/api/save', {
+      fetch(API + '/api/load', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData: TG_INIT, data: snap }),
-      }).catch(function() {});
+        body: JSON.stringify({ initData: TG_INIT }),
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(r) {
+        if (!r || !r.ok) return;
+        var srv = r.save;
+        if (!srv || !srv.data) return;
+        // Если на сервере _resetAt свежее нашего updatedAt — применяем серверные данные
+        var serverResetAt = (srv.data._resetAt) || 0;
+        var clientTs = SYNC.lastServerTs || 0;
+        if (serverResetAt > clientTs) {
+          console.warn('🛑 [conn] Обнаружен сброс, применяем серверные данные');
+          SYNC.serverConfirmed = false;
+          if (typeof window.forceReload === 'function') {
+            window.forceReload();
+          } else {
+            location.reload();
+          }
+          return;
+        }
+        // Всё ок — сохраняем
+        var snap = serializeState();
+        snap.updatedAt = Date.now();
+        fetch(API + '/api/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initData: TG_INIT, data: snap }),
+        }).catch(function() {});
+      })
+      .catch(function() {});
     }
   }
 
@@ -443,7 +470,21 @@ G.equipped = {
     })
     .then(function(r) { return r.json(); })
     .then(function(r) {
-      if (r && r.ok) _onConnRestored();
+      if (r && r.ok) {
+        _onConnRestored();
+        if (r.updatedAt) SYNC.lastServerTs = r.updatedAt;
+      } else if (r && r.error === 'reset_detected') {
+        // Сервер заблокировал save — на сервере был сброс прогресса
+        console.warn('🛑 [instant] reset_detected — перезагружаем данные с сервера');
+        SYNC.serverConfirmed = false;
+        if (typeof window.forceReload === 'function') {
+          window.forceReload().then(function(ok) {
+            if (!ok) location.reload();
+          });
+        } else {
+          location.reload();
+        }
+      }
       return r;
     })
     .catch(function(e) {
@@ -523,6 +564,16 @@ G.equipped = {
             // Сбрасываем last-значения чтобы не перезаписать обратно
             SYNC.lastGold = G.gold;
             SYNC.lastPixr = G.pixr;
+          }
+        } else if (r && r.error === 'reset_detected') {
+          console.warn('🛑 [batch] reset_detected — перезагружаем данные с сервера');
+          SYNC.serverConfirmed = false;
+          if (typeof window.forceReload === 'function') {
+            window.forceReload().then(function(ok) {
+              if (!ok) location.reload();
+            });
+          } else {
+            location.reload();
           }
         } else if (r && r.error === 'rate_limit') {
           SYNC.rlBackoffUntil = Date.now() + 6000;
