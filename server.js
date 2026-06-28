@@ -2651,8 +2651,29 @@ app.post('/api/upgrade', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'max_level' });
     }
     
+    // ✅ Вычисляем стоимость PIXR на сервере (синхронизация с клиентом)
+    let pixrCost = 0;
+    if (currentLv >= 20 && currentLv < 30) {
+      pixrCost = 15;
+    } else if (currentLv >= 30 && currentLv < 40) {
+      pixrCost = 30;
+    } else if (currentLv >= 40 && currentLv < 50) {
+      pixrCost = 60;
+    } else if (currentLv >= 50 && currentLv < 60) {
+      pixrCost = 100;
+    } else if (currentLv >= 60) {
+      pixrCost = 100;
+    }
+    
+    // Проверяем PIXR
+    const currentPixr = user.data.pixr || 0;
+    if (currentPixr < pixrCost) {
+      return res.status(400).json({ ok: false, error: 'not_enough_pixr' });
+    }
+    
     const incObj = {
       'data.gold': -cost,
+      'data.pixr': -pixrCost,
     };
     incObj['data.upg.' + upgId] = 1;
     if (stat && bonus) {
@@ -2662,7 +2683,8 @@ app.post('/api/upgrade', async (req, res) => {
     const result = await Save.findOneAndUpdate(
       { 
         tgId: tg.id,
-        'data.gold': { $gte: cost }
+        'data.gold': { $gte: cost },
+        'data.pixr': { $gte: pixrCost }
       },
       {
         $inc: incObj,
@@ -2672,14 +2694,15 @@ app.post('/api/upgrade', async (req, res) => {
     );
     
     if (!result) {
-      return res.status(400).json({ ok: false, error: 'not_enough_gold' });
+      return res.status(400).json({ ok: false, error: 'not_enough_resources' });
     }
     
-    console.log(`✅ [upgrade] ${tg.id} купил ${upgId}, осталось ${result.data.gold}`);
+    console.log(`✅ [upgrade] ${tg.id} купил ${upgId} (уровень ${currentLv+1}), осталось золота: ${result.data.gold}, PIXR: ${result.data.pixr}`);
     
     res.json({
       ok: true,
       gold: result.data.gold || 0,
+      pixr: result.data.pixr || 0,
       upgLevel: (result.data.upg && result.data.upg[upgId]) || 1,
       baseStats: result.data.baseStats || {}
     });

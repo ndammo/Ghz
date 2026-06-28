@@ -33,8 +33,25 @@ function setUpgTab(t) { _upgTab = t; renderUpgrades(); }
 function upgCost(u) {
   const lv = G.upg[u.id] || 0;
   if (u.currency === 'pixr') return { gold: 0, pixr: u.baseCost };
-  const goldCost = Math.floor(u.baseCost * Math.pow(1.6, lv));
-  const pixrCost = lv >= 15 ? (lv - 14) : 0;
+  
+  // ✅ Золото: фиксируется после 20 уровня
+  const effectiveLv = Math.min(lv, 20);
+  const goldCost = Math.floor(u.baseCost * Math.pow(1.6, effectiveLv));
+  
+  // ✅ Прогрессивная шкала PIXR (с 20 уровня)
+  let pixrCost = 0;
+  if (lv >= 20 && lv < 30) {
+    pixrCost = 15;      // 20-29 уровень
+  } else if (lv >= 30 && lv < 40) {
+    pixrCost = 30;      // 30-39 уровень
+  } else if (lv >= 40 && lv < 50) {
+    pixrCost = 60;      // 40-49 уровень
+  } else if (lv >= 50 && lv < 60) {
+    pixrCost = 100;     // 50-59 уровень
+  } else if (lv >= 60) {
+    pixrCost = 100;     // 60+ (если maxLv больше)
+  }
+  
   return { gold: goldCost, pixr: pixrCost };
 }
 
