@@ -525,23 +525,33 @@ app.post('/api/save', async (req, res) => {
     data.tgId = tg.id;
     
     const currentDoc = await Save.findOne({ tgId: tg.id }).lean();
-    if (currentDoc && currentDoc.data && currentDoc.data.updatedAt) {
+    if (currentDoc) {
       const clientUpdatedAt = data.updatedAt || 0;
-      const serverUpdatedAt = currentDoc.data.updatedAt || 0;
-      
+      const serverData = currentDoc.data || {};
+      const serverUpdatedAt = serverData.updatedAt || 0;
+
+      // ✅ Если был сброс — клиент не знает об этом, блокируем его старые данные
+      const resetAt = serverData._resetAt || 0;
+      if (resetAt > clientUpdatedAt) {
+        console.log(`🛑 [save] Блок после сброса для ${tg.id}: resetAt=${resetAt} > clientAt=${clientUpdatedAt}`);
+        // Принудительно шлём reload через SSE и блокируем save
+        notifyClient(tg.id, 'reload', { reason: 'progress_reset' });
+        return res.json({ ok: false, error: 'reset_detected', updatedAt: serverUpdatedAt, resetAt });
+      }
+
       if (serverUpdatedAt > clientUpdatedAt) {
         console.log(`⚠️ [save] Игнорируем устаревшие данные для ${tg.id}`);
         return res.json({ ok: true, updatedAt: serverUpdatedAt, ignored: true });
       }
 
       // ✅ Защита от перезаписи AdminUpdatedAt
-      const adminUpdatedAt = (currentDoc.data._adminUpdatedAt) || 0;
+      const adminUpdatedAt = serverData._adminUpdatedAt || 0;
       if (adminUpdatedAt > clientUpdatedAt) {
         console.log(`🛡️ [save] Мёрж с админскими изменениями для ${tg.id}`);
-        if (currentDoc.data.gram      !== undefined) data.gram      = currentDoc.data.gram;
-        if (currentDoc.data.gold      !== undefined) data.gold      = currentDoc.data.gold;
-        if (currentDoc.data.pixr      !== undefined) data.pixr      = currentDoc.data.pixr;
-        if (currentDoc.data.inventory !== undefined) data.inventory = currentDoc.data.inventory;
+        if (serverData.gram      !== undefined) data.gram      = serverData.gram;
+        if (serverData.gold      !== undefined) data.gold      = serverData.gold;
+        if (serverData.pixr      !== undefined) data.pixr      = serverData.pixr;
+        if (serverData.inventory !== undefined) data.inventory = serverData.inventory;
         data._adminUpdatedAt = adminUpdatedAt;
       }
     }
@@ -1961,18 +1971,22 @@ app.post('/admin/api/user/:tgId/reset', requireAdmin, async (req, res) => {
     const clearedMilestones = {};
     Object.keys(oldMilestones).forEach(k => { clearedMilestones[k] = 0; });
 
+    const resetNow = Date.now();
     const resetUpdate = {
       charId:        null,
       level:         1,
       cp:            0,
       floor:         1,
-      updatedAt:     Date.now(),
+      updatedAt:     resetNow,
       refMilestones: clearedMilestones,
       refClaimVer:   0,
       data: {
-        tgId:   tgId,
-        charId: null,
-        refBy:  user.refBy || null,
+        tgId:            tgId,
+        charId:          null,
+        refBy:           user.refBy || null,
+        updatedAt:       resetNow,
+        _adminUpdatedAt: resetNow,
+        _resetAt:        resetNow,
       }
     };
 
@@ -2006,19 +2020,23 @@ app.post('/admin/api/reset-all', requireAdmin, async (req, res) => {
       const clearedMilestones = {};
       Object.keys(oldMilestones).forEach(k => { clearedMilestones[k] = 0; });
 
+      const resetNow = Date.now();
       await Save.updateOne({ tgId: user.tgId }, {
         $set: {
           charId:        null,
           level:         1,
           cp:            0,
           floor:         1,
-          updatedAt:     Date.now(),
+          updatedAt:     resetNow,
           refMilestones: clearedMilestones,
           refClaimVer:   0,
           data: {
-            tgId:   user.tgId,
-            charId: null,
-            refBy:  user.refBy || null,
+            tgId:            user.tgId,
+            charId:          null,
+            refBy:           user.refBy || null,
+            updatedAt:       resetNow,
+            _adminUpdatedAt: resetNow,
+            _resetAt:        resetNow,
           }
         }
       });
