@@ -1872,6 +1872,48 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Админ: сброс прогресса пользователя (сохраняет рефералов) ──
+app.post('/admin/api/user/:tgId/reset', requireAdmin, async (req, res) => {
+  try {
+    const { tgId } = req.params;
+
+    const user = await Save.findOne({ tgId }).lean();
+    if (!user) return res.status(404).json({ ok: false, error: 'user_not_found' });
+
+    // Обнуляем выплаченные награды (значения→0), но сохраняем сам список рефералов (ключи)
+    const oldMilestones = user.refMilestones || {};
+    const clearedMilestones = {};
+    Object.keys(oldMilestones).forEach(k => { clearedMilestones[k] = 0; });
+
+    const resetUpdate = {
+      charId:        null,
+      level:         1,
+      cp:            0,
+      floor:         1,
+      updatedAt:     Date.now(),
+      refMilestones: clearedMilestones,
+      refClaimVer:   0,
+      data: {
+        tgId:   tgId,
+        charId: null,
+        refBy:  user.refBy || null,
+      }
+    };
+
+    await Save.updateOne({ tgId }, { $set: resetUpdate });
+
+    console.log(`🔄 [admin] Прогресс сброшен для ${tgId} (рефералы сохранены, награды сброшены)`);
+    await logAdminAction(req.admin.login, 'reset_progress', tgId, { preserved: ['refBy'], cleared: ['refMilestones_values', 'refClaimVer'] });
+
+    notifyClient(tgId, 'reload', { reason: 'progress_reset' });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ [admin] reset error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── Админ: подтверждение транзакции ──
 app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) => {
   try {
