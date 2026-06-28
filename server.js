@@ -225,11 +225,11 @@ const PlaytimeRatingSchema = new mongoose.Schema({
   firstName:    { type: String, default: '' },
   charId:       { type: String, default: null },
   level:        { type: Number, default: 1 },
-  totalSeconds: { type: Number, default: 0 },   // общее время за все дни
-  todaySeconds: { type: Number, default: 0 },   // время сегодня
-  todayDate:    { type: String, default: '' },   // YYYY-MM-DD
-  sessions:     { type: Number, default: 0 },   // кол-во сессий
-  lastSeenAt:   { type: Number, default: 0 },   // последний онлайн
+  totalSeconds: { type: Number, default: 0 },  // всё накопленное время
+  todaySeconds: { type: Number, default: 0 },  // секунд сегодня
+  todayDate:    { type: String, default: '' },  // YYYY-MM-DD
+  sessions:     { type: Number, default: 0 },
+  lastSeenAt:   { type: Number, default: 0 },
   updatedAt:    { type: Number, default: 0 },
 }, { minimize: false });
 PlaytimeRatingSchema.index({ totalSeconds: -1 });
@@ -569,37 +569,59 @@ app.post('/api/save', async (req, res) => {
     try {
       const todayStr = new Date().toISOString().slice(0, 10);
       const dailyTasks = data.dailyTasks || {};
-      const todaySeconds = (dailyTasks.date === todayStr) ? (dailyTasks.seconds || 0) : 0;
+      // Секунд сыграно сегодня согласно клиенту
+      const clientTodaySeconds = (dailyTasks.date === todayStr) ? (dailyTasks.seconds || 0) : 0;
 
       const ptDoc = await PlaytimeRating.findOne({ tgId: tg.id }).lean();
-      const prevTodayDate    = ptDoc ? ptDoc.todayDate    : '';
-      const prevTodaySeconds = (ptDoc && prevTodayDate === todayStr) ? (ptDoc.todaySeconds || 0) : 0;
 
-      // Дельта: сколько секунд добавилось
-      const totalDelta = (prevTodayDate !== todayStr)
-        ? todaySeconds          // новый день — сегодняшние секунды целиком
-        : Math.max(0, todaySeconds - prevTodaySeconds); // тот же день — только прирост
+      if (!ptDoc) {
+        // Первая запись: totalSeconds = сегодняшние секунды
+        // (прошлые дни не восстановить, но хотя бы не теряем сегодня)
+        await PlaytimeRating.create({
+          tgId:         tg.id,
+          username:     tg.username,
+          firstName:    tg.firstName,
+          charId:       data.charId || null,
+          level:        Number(data.level) || 1,
+          totalSeconds: clientTodaySeconds,
+          todaySeconds: clientTodaySeconds,
+          todayDate:    todayStr,
+          sessions:     0,
+          lastSeenAt:   data.updatedAt,
+          updatedAt:    data.updatedAt,
+        });
+      } else {
+        const isSameDay = ptDoc.todayDate === todayStr;
+        const prevTodaySeconds = isSameDay ? (ptDoc.todaySeconds || 0) : 0;
 
-      await PlaytimeRating.findOneAndUpdate(
-        { tgId: tg.id },
-        {
-          $set: {
-            username:     tg.username,
-            firstName:    tg.firstName,
-            charId:       data.charId || null,
-            level:        Number(data.level) || 1,
-            todaySeconds: todaySeconds,
-            todayDate:    todayStr,
-            lastSeenAt:   data.updatedAt,
-            updatedAt:    data.updatedAt,
-          },
-          $inc: { totalSeconds: totalDelta },
-        },
-        { upsert: true, new: false }
-      );
+        // Сколько новых секунд появилось за этот save
+        const todayDelta = Math.max(0, clientTodaySeconds - prevTodaySeconds);
+
+        // Если день сменился — старые todaySeconds уже вошли в total в прошлый раз,
+        // поэтому прибавляем только новые секунды нового дня
+        const totalDelta = isSameDay ? todayDelta : clientTodaySeconds;
+
+        await PlaytimeRating.findOneAndUpdate(
+          { tgId: tg.id },
+          {
+            $set: {
+              username:     tg.username,
+              firstName:    tg.firstName,
+              charId:       data.charId || null,
+              level:        Number(data.level) || 1,
+              todaySeconds: clientTodaySeconds,
+              todayDate:    todayStr,
+              lastSeenAt:   data.updatedAt,
+              updatedAt:    data.updatedAt,
+            },
+            $inc: { totalSeconds: totalDelta },
+          }
+        );
+      }
     } catch (ptErr) {
       console.error('⚠️ [playtime] update error:', ptErr.message);
     }
+
     const duration = Date.now() - startTime;
     console.log(`✅ [save] Сохранено для ${tg.id} (${duration}ms)`);
     res.json({ ok: true, updatedAt: data.updatedAt });
@@ -2208,11 +2230,11 @@ app.get('/admin/api/stats', requireAdmin, async (req, res) => {
   }
 });
 
-// ── Админ: рейтинг по времени ──
+// ── Админ: рейтинг по времени (топ-50) ──
 app.get('/admin/api/playtime', requireAdmin, async (req, res) => {
   try {
-    const limit    = parseInt(req.query.limit) || 100;
-    const sortBy   = req.query.sort || 'total';
+    const limit     = Math.min(parseInt(req.query.limit) || 50, 200);
+    const sortBy    = req.query.sort || 'total';
     const sortField = sortBy === 'today' ? 'todaySeconds' : sortBy === 'sessions' ? 'sessions' : 'totalSeconds';
 
     const top = await PlaytimeRating.find()
@@ -3198,8 +3220,7 @@ app.post('/api/playtime/rating', async (req, res) => {
 
     const myDoc = await PlaytimeRating.findOne({ tgId: tg.id }, 'totalSeconds todaySeconds').lean();
     res.json({
-      ok: true,
-      players,
+      ok: true, players,
       myTotal: (myDoc && myDoc.totalSeconds) || 0,
       myToday: (myDoc && myDoc.todaySeconds) || 0,
       tgId: tg.id,
@@ -3210,7 +3231,7 @@ app.post('/api/playtime/rating', async (req, res) => {
   }
 });
 
-// Счётчик сессий (вызывается при входе в игру)
+// ── Счётчик сессий при входе в игру ──
 app.post('/api/playtime/session', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
